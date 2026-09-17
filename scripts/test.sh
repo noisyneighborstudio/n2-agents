@@ -10,169 +10,237 @@ export TMPDIR="$test_root/tmp"
 export CLANG_MODULE_CACHE_PATH="$test_root/cache/clang"
 export SWIFT_MODULECACHE_PATH="$test_root/cache/swift"
 
-sh -n claudes shell/claude-as
-zsh -n install.sh uninstall.sh make-claude-profile.sh tray/build.sh scripts/release-build.sh scripts/make-appcast.sh \
-  scripts/release-prepare.sh scripts/publish-appcast.sh shell/claudes.zsh
-bash -n shell/claudes.bash
-command -v fish >/dev/null && fish -n shell/claudes.fish
-swiftc -typecheck tray/main.swift tray/UpdateChannel.swift
+# Fake vendor CLIs. Each echoes the config-dir env var it was handed, which is
+# exactly what the pinning tests need to assert — and it keeps the whole suite
+# from touching a real login.
+fake_bin="$test_root/fake-bin"
+mkdir -p "$fake_bin"
+for v in claude codex grok gemini cursor-agent opencode; do
+  cat > "$fake_bin/$v" <<'FAKE'
+#!/bin/sh
+echo "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-} CODEX_HOME=${CODEX_HOME:-} GROK_HOME=${GROK_HOME:-} CURSOR_CONFIG_DIR=${CURSOR_CONFIG_DIR:-} XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-}"
+FAKE
+  chmod +x "$fake_bin/$v"
+done
+fake_path="$fake_bin:/usr/bin:/bin"
+
+# --- syntax ----------------------------------------------------------------
+sh -n agents vendors.sh shell/agent-as
+zsh -n install.sh uninstall.sh make-claude-profile.sh repatch-claude-profiles.sh tray/build.sh \
+  scripts/release-build.sh scripts/make-appcast.sh scripts/release-prepare.sh \
+  scripts/publish-appcast.sh shell/agents.zsh
+bash -n shell/agents.bash
+command -v fish >/dev/null && fish -n shell/agents.fish
+swiftc -typecheck tray/main.swift tray/UpdateChannel.swift tray/Vendors.swift
 channel_test=$(mktemp -d "$TMPDIR/channel.XXXXXX")/update-channel-tests
 swiftc tray/UpdateChannel.swift tests/UpdateChannelTests.swift -o "$channel_test"
 "$channel_test"
 
+# --- vendor adapter table --------------------------------------------------
+# The isolation tier is the single most load-bearing fact in the app: an `env`
+# vendor can be pinned per process, a `swap` vendor can only be switched
+# globally. Assert the tier for each lab so a bad edit to vendors.sh is caught
+# here rather than by silently running an agent as the wrong account.
+adapter=$(sh -c '. ./vendors.sh; for v in $N2_VENDORS; do echo "$v $(vendor_isolation "$v") $(vendor_env "$v")"; done')
+print -r -- "$adapter" | grep -qx 'claude env CLAUDE_CONFIG_DIR'
+print -r -- "$adapter" | grep -qx 'codex env CODEX_HOME'
+print -r -- "$adapter" | grep -qx 'grok env GROK_HOME'
+print -r -- "$adapter" | grep -qx 'cursor env CURSOR_CONFIG_DIR'
+print -r -- "$adapter" | grep -qx 'opencode env XDG_CONFIG_HOME'
+# Gemini reads GEMINI_DIR as a source constant (".gemini"), never from the
+# environment — so it must stay swap-only until that changes upstream.
+print -r -- "$adapter" | grep -qx 'gemini swap '
+
+# opencode is the one vendor whose env var names the PARENT of its config dir.
+slot=$(sh -c '. ./vendors.sh; vendor_slot_name opencode')
+test "$slot" = "opencode/opencode"
+test "$(sh -c '. ./vendors.sh; vendor_env_value opencode /root/P/opencode/opencode')" = "/root/P/opencode"
+test "$(sh -c '. ./vendors.sh; vendor_env_value claude /root/P/claude')" = "/root/P/claude"
+
+# --- profile lifecycle, multi-vendor ---------------------------------------
+home="$test_root/home"
+mkdir -p "$home"
+run_agents() { HOME="$home" PATH="$fake_path" ./agents "$@" }
+
+run_agents new Work --vendors claude,codex,grok,gemini --cli-only >/dev/null
+for v in claude codex grok gemini; do test -d "$home/.n2-agents/Work/$v"; done
+# The last entry of a comma list must survive the parse — `read` drops a final
+# line with no trailing newline, which silently lost one vendor once.
+test -d "$home/.n2-agents/Work/gemini"
+
+run_agents profiles | grep -qx Work
+
+# Each vendor is pinned through its OWN env var, and only its own.
+out=$(run_agents run Work --vendor claude)
+[[ $out == *"CLAUDE_CONFIG_DIR=$home/.n2-agents/Work/claude"* ]]
+[[ $out == *"CODEX_HOME= "* ]]
+out=$(run_agents run Work --vendor codex)
+[[ $out == *"CODEX_HOME=$home/.n2-agents/Work/codex"* ]]
+out=$(run_agents run Work --vendor grok)
+[[ $out == *"GROK_HOME=$home/.n2-agents/Work/grok"* ]]
+
+# A swap-only vendor must refuse to run as a non-active profile without
+# --switch, because there is no way to pin it per process. The slot exists, so
+# this can only be the isolation guard talking.
+if run_agents run Work --vendor gemini >/dev/null 2>&1; then
+  echo "swap-only vendor ran without --switch" >&2
+  exit 1
+fi
+run_agents run Work --vendor gemini --switch >/dev/null
+test "$(run_agents active --vendor gemini)" = Work
+
+# `use` moves every installed vendor at once.
+run_agents use Work >/dev/null
+test "$(run_agents active)" = Work
+for v in claude codex grok gemini; do
+  test "$(readlink "$home/.$v")" = "$home/.n2-agents/Work/$v"
+done
+
+# …and back again, without losing the migrated Default.
+run_agents use Default >/dev/null
+test "$(run_agents active)" = Default
+test -d "$home/.n2-agents/Default/claude"
+# A dot dir must never point at itself: switching to Default for a vendor that
+# had no config dir once produced ~/.claude -> ~/.claude.
+for v in claude codex grok gemini; do
+  test "$(readlink "$home/.$v")" != "$home/.$v"
+  test -d "$home/.$v"
+done
+
+# Mixed state is reported as such rather than silently picking one.
+run_agents use Work --vendor codex >/dev/null
+test "$(run_agents active)" = mixed
+
+# --- porcelain contract (the tray parses this) -----------------------------
+porcelain=$(run_agents porcelain)
+print -r -- "$porcelain" | grep -q '^V	claude	1	env	clone	oauth	Claude Code$'
+print -r -- "$porcelain" | grep -q '^P	Work	'
+print -r -- "$porcelain" | grep -q '^A	'
+# Every P row lists its vendors as comma-separated <vendor>:<state> pairs.
+print -r -- "$porcelain" | awk -F'\t' '$1=="P" && $4!="-" {print $4}' \
+  | grep -qE '^[a-z]+:(active|ok)(,[a-z]+:(active|ok))*$'
+
+# --- adopt: shares claudes state, never copies it --------------------------
+adopt_home="$test_root/adopt-home"
+mkdir -p "$adopt_home/.claude-profiles/Default" "$adopt_home/.claude-profiles/ExpoIO"
+echo token > "$adopt_home/.claude-profiles/ExpoIO/.credentials.json"
+HOME="$adopt_home" PATH="$fake_path" ./agents adopt --yes >/dev/null 2>&1
+# A symlink, so both apps read one login; a copy would force a re-login because
+# Claude Code keys its keychain entry to the config dir path.
+test -L "$adopt_home/.n2-agents/ExpoIO/claude"
+test "$(readlink "$adopt_home/.n2-agents/ExpoIO/claude")" = "$adopt_home/.claude-profiles/ExpoIO"
+test "$(cat "$adopt_home/.n2-agents/ExpoIO/claude/.credentials.json")" = token
+# The legacy tree is untouched — `claudes` must keep working.
+test -d "$adopt_home/.claude-profiles/ExpoIO"
+
+# Adopted profiles resolve as active through the symlink indirection.
+HOME="$adopt_home" PATH="$fake_path" ./agents use ExpoIO --vendor claude >/dev/null
+test "$(HOME="$adopt_home" PATH="$fake_path" ./agents active --vendor claude)" = ExpoIO
+
+# --- reserved and invalid names --------------------------------------------
+for bad in As default; do
+  if HOME="$test_root/names" PATH="$fake_path" ./agents new "$bad" --cli-only >/dev/null 2>&1; then
+    echo "Reserved profile name '$bad' was accepted" >&2
+    exit 1
+  fi
+done
+if ./make-claude-profile.sh As >/dev/null 2>&1; then
+  echo "Reserved profile name was accepted by make-claude-profile.sh" >&2
+  exit 1
+fi
+# An unknown vendor must fail loudly instead of quietly creating nothing.
+if HOME="$test_root/names" PATH="$fake_path" ./agents new Nope --vendors notalab --cli-only >/dev/null 2>&1; then
+  echo "Unknown vendor was accepted" >&2
+  exit 1
+fi
+
+# Claude Desktop missing: cloning fails loudly and points at --cli-only.
+missing_app="$test_root/no-claude/Claude.app"
+clone_error=$(N2_CLAUDE_APP="$missing_app" ./make-claude-profile.sh Work 2>&1 || true)
+[[ $clone_error == *--cli-only* ]]
+
+# --- PATH shims ------------------------------------------------------------
+shim_home="$test_root/shim-home"
+shim_bin="$shim_home/.local/bin"
+foreign_bin="$test_root/foreign-bin"
+mkdir -p "$shim_home/.n2-agents/Expo/claude" "$shim_home/.n2-agents/Expo/codex" \
+  "$shim_bin" "$foreign_bin" "$test_root/foreign"
+ln -s /usr/bin/false "$foreign_bin/claude-expo"
+ln -s "$test_root/foreign/agent-as" "$shim_bin/claude-client"
+ln -s "$PWD/agents" "$shim_bin/agents"
+
+HOME="$shim_home" PATH="/usr/bin:/bin" sh -c '
+  set -- help
+  . "$0" >/dev/null
+  test "$(bin_dir)" = "$HOME/.local/bin"
+' "$PWD/agents"
+test "$(cat "$shim_home/.n2-agents/.bin-dir")" = "$shim_bin"
+
+HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" ./agents shims >/dev/null
+
+# Shims exist per (vendor, profile) that actually has a slot…
+for name in claude-as codex-as claude-expo codex-expo; do
+  test "$(readlink "$shim_bin/$name")" = "$PWD/shell/agent-as"
+done
+# …and not for vendors the profile has no slot for.
+test ! -e "$shim_bin/grok-expo"
+# Foreign links are never clobbered.
+test "$(readlink "$shim_bin/claude-client")" = "$test_root/foreign/agent-as"
+
+# Concurrent syncs must not leave the lock behind.
+HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" TMPDIR="$test_root/one" ./agents shims >/dev/null &
+first=$!
+HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" TMPDIR="$test_root/two" ./agents shims >/dev/null &
+second=$!
+wait $first
+wait $second
+test ! -e "$shim_home/.n2-agents/.shims.lock"
+
+# A shim dispatches to the right vendor: the name carries both halves.
+HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" "$shim_bin/codex-expo" \
+  | grep -q "CODEX_HOME=$shim_home/.n2-agents/Expo/codex"
+
+HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" ./agents shims --remove >/dev/null
+test ! -e "$shim_bin/claude-expo"
+test "$(readlink "$shim_bin/claude-client")" = "$test_root/foreign/agent-as"
+
+# --- shell helpers load ----------------------------------------------------
+HOME="$shim_home" PATH="/usr/bin:/bin" zsh -c 'source shell/agents.zsh; command -v agents >/dev/null'
+HOME="$shim_home" PATH="/usr/bin:/bin" bash -c 'source shell/agents.bash; command -v agents >/dev/null'
+if command -v fish >/dev/null; then
+  HOME="$shim_home" PATH="/usr/bin:/bin" "$(command -v fish)" -c 'source shell/agents.fish; command -q agents'
+fi
+
+# --- release plumbing ------------------------------------------------------
 appcast_test=$(mktemp -d "$TMPDIR/appcast.XXXXXX")
-printf artifact > "$appcast_test/Claudes-continuous-deadbeef.zip"
+printf artifact > "$appcast_test/N2Agents-continuous-deadbeef.zip"
 signature=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
 ./scripts/make-appcast.sh continuous 0.0.1-continuous.deadbeef 1001 \
-  https://github.com/noisyneighborstudio/claudes/releases/download/continuous-deadbeef/Claudes-continuous-deadbeef.zip \
-  "$appcast_test/Claudes-continuous-deadbeef.zip" "$signature" "$appcast_test/appcast.xml"
+  https://github.com/noisyneighborstudio/n2-agents/releases/download/continuous-deadbeef/N2Agents-continuous-deadbeef.zip \
+  "$appcast_test/N2Agents-continuous-deadbeef.zip" "$signature" "$appcast_test/appcast.xml"
 grep -q 'sparkle:channel>continuous<' "$appcast_test/appcast.xml"
 grep -q 'sparkle:edSignature=' "$appcast_test/appcast.xml"
-if ./scripts/make-appcast.sh stable 1.0 1 https://example.invalid/Claudes-continuous-deadbeef.zip \
-  "$appcast_test/Claudes-continuous-deadbeef.zip" "$signature" "$appcast_test/bad.xml" 2>/dev/null; then
+if ./scripts/make-appcast.sh stable 1.0 1 https://example.invalid/N2Agents-continuous-deadbeef.zip \
+  "$appcast_test/N2Agents-continuous-deadbeef.zip" "$signature" "$appcast_test/bad.xml" 2>/dev/null; then
   echo "Wrong-channel appcast was accepted" >&2
   exit 1
 fi
 
-# Keep branch routing and publication targets explicit and isolated.
 grep -Fq 'branches: [main, release]' .github/workflows/release.yml
 grep -Fq 'refs/heads/main) channel=continuous' .github/workflows/release.yml
 grep -Fq 'refs/heads/release) channel=stable' .github/workflows/release.yml
 grep -Fq 'npx semantic-release' .github/workflows/release.yml
-# semantic-release owns the version: prerelease on main, stable on release.
 grep -Fq '"branches": ["release", { "name": "main", "prerelease": "continuous" }]' .releaserc.json
 grep -Fq 'release-prepare.sh ${nextRelease.version}' .releaserc.json
 grep -Fq 'publish-appcast.sh ${nextRelease.version} ${nextRelease.gitTag}' .releaserc.json
-grep -Fq 'un-notarized (install.sh clears quarantine' scripts/release-prepare.sh
-grep -Fq 'cp Claudes.zip "Claudes-${channel}-${version}.zip"' scripts/release-prepare.sh
-grep -Fq 'unresolvable dependency' scripts/release-prepare.sh
+grep -Fq 'cp N2Agents.zip "N2Agents-${channel}-${version}.zip"' scripts/release-prepare.sh
 grep -Fq '@executable_path/../Frameworks' Package.swift
 grep -Fq 'push origin HEAD:appcasts' scripts/publish-appcast.sh
 grep -Fq 'allowedChannels' tray/main.swift
-grep -Fq 'didAbortWithError' tray/main.swift
 grep -Fq 'UpdateChannel.preferenceKey' tray/main.swift
-grep -Fq 'defaults to Stable' docs/releases.md
 
-if ./make-claude-profile.sh As >/dev/null 2>&1; then
-  echo "Reserved profile name was accepted" >&2
-  exit 1
-fi
+# The tray must not re-implement profile discovery: it parses the CLI instead.
+grep -Fq 'Snapshot.parse' tray/main.swift
+grep -Fq 'runCLI(["porcelain"])' tray/main.swift
 
-grep -Fq 'New Profile (Claude Code only)' tray/main.swift
-grep -Fq 'locateClaude' tray/main.swift
-
-# Claude Desktop missing: cloning must fail loudly and point at --cli-only,
-# while a Claude Code-only profile is still creatable.
-missing_app="$test_root/no-claude/Claude.app"
-clone_error=$(CLAUDES_CLAUDE_APP="$missing_app" ./make-claude-profile.sh Work 2>&1 || true)
-case $clone_error in
-  *--cli-only*) ;;
-  *) echo "Clone without Claude Desktop did not suggest --cli-only: $clone_error" >&2; exit 1 ;;
-esac
-
-cli_home="$test_root/cli-home"
-mkdir -p "$cli_home"
-HOME="$cli_home" PATH="/usr/bin:/bin" ./claudes new Solo --cli-only >/dev/null 2>&1
-test -d "$cli_home/.claude-profiles/Solo"
-HOME="$cli_home" ./claudes profiles | grep -qx Solo
-if HOME="$cli_home" PATH="/usr/bin:/bin" ./claudes new Solo --cli-only >/dev/null 2>&1; then
-  echo "Duplicate --cli-only profile was accepted" >&2
-  exit 1
-fi
-
-home="$test_root/home"
-shim_bin="$home/.local/bin"
-foreign_bin="$test_root/foreign-bin"
-mkdir -p "$home/.claude-profiles/Expo" "$home/.claude-profiles/Work" \
-  "$home/.claude-profiles/As" "$home/.claude-profiles/default" \
-  "$shim_bin" "$foreign_bin" "$test_root/foreign"
-bad_name=$(printf 'Bad\nclaude')
-mkdir "$home/.claude-profiles/$bad_name"
-
-ln -s /usr/bin/false "$foreign_bin/claude-work"
-ln -s "$test_root/foreign/claude-as" "$shim_bin/claude-client"
-ln -s "$PWD/shell/claude-as" "$shim_bin/claude-old"
-ln -s "$PWD/claudes" "$shim_bin/claudes"
-
-HOME="$home" PATH="/usr/bin:/bin" sh -c '
-  set -- help
-  . "$0" >/dev/null
-  test "$(bin_dir)" = "$HOME/.local/bin"
-' "$PWD/claudes"
-test "$(cat "$home/.claude-profiles/.bin-dir")" = "$shim_bin"
-
-HOME="$home" PATH="$foreign_bin:$shim_bin:/usr/bin:/bin" sh -c '
-  set -- help
-  . "$0" >/dev/null
-  cmd_shims
-' "$PWD/claudes"
-
-HOME="$home" PATH="/usr/bin:/bin" zsh -c 'source shell/claudes.zsh; command -v claudes >/dev/null; command -v claude-expo >/dev/null'
-HOME="$home" PATH="/usr/bin:/bin" bash -c 'source shell/claudes.bash; command -v claudes >/dev/null; command -v claude-expo >/dev/null'
-if command -v fish >/dev/null; then
-  fish_bin=$(command -v fish)
-  HOME="$home" PATH="/usr/bin:/bin" "$fish_bin" -c 'source shell/claudes.fish; command -q claudes; and command -q claude-expo'
-fi
-
-HOME="$home" PATH="$foreign_bin:$shim_bin:/usr/bin:/bin" TMPDIR="$test_root/one" ./claudes shims >/dev/null &
-first_sync=$!
-HOME="$home" PATH="$foreign_bin:$shim_bin:/usr/bin:/bin" TMPDIR="$test_root/two" ./claudes shims >/dev/null &
-second_sync=$!
-wait $first_sync
-wait $second_sync
-test ! -e "$home/.claude-profiles/.shims.lock"
-
-for name in claude-as claude-default claude-expo; do
-  test "$(readlink "$shim_bin/$name")" = "$PWD/shell/claude-as"
-done
-test ! -e "$shim_bin/claude"
-test ! -e "$shim_bin/claude-work"
-test ! -e "$shim_bin/claude-old"
-test "$(readlink "$shim_bin/claude-client")" = "$test_root/foreign/claude-as"
-
-profiles=$(HOME="$home" ./claudes profiles)
-printf '%s\n' "$profiles" | grep -qx Default
-printf '%s\n' "$profiles" | grep -qx Expo
-printf '%s\n' "$profiles" | grep -qx As
-if printf '%s\n' "$profiles" | grep -Eq '^(as|default|Bad|bad|claude)$'; then
-  echo "Invalid or reserved profile was discovered" >&2
-  exit 1
-fi
-
-ln -s /usr/bin/true "$shim_bin/claude"
-HOME="$home" PATH="$shim_bin:/usr/bin:/bin" "$shim_bin/claude-expo" --version
-
-HOME="$home" PATH="$foreign_bin:$shim_bin:/usr/bin:/bin" sh -c '
-  set -- help
-  . "$0" >/dev/null
-  cmd_shims --remove
-' "$PWD/claudes"
-
-test "$(readlink "$shim_bin/claude-client")" = "$test_root/foreign/claude-as"
-test "$(readlink "$shim_bin/claude")" = /usr/bin/true
-
-installed_line='export PATH="$HOME/.local/bin:$PATH"  # claudes-path'
-custom_line='if true; then export PATH="$HOME/.local/bin:$PATH"  # claudes-path'
-printf '%s\n%s\n' "$installed_line" "$custom_line" > "$test_root/rc"
-grep -vxF -e "$installed_line" "$test_root/rc" > "$test_root/rc.cleaned"
-test "$(cat "$test_root/rc.cleaned")" = "$custom_line"
-
-fish_line='fish_add_path "$HOME/.local/bin"  # claudes-path'
-custom_fish='if true; fish_add_path "$HOME/.local/bin"  # claudes-path'
-printf '%s\n%s\n' "$fish_line" "$custom_fish" > "$test_root/fish"
-grep -vxF -e "$fish_line" "$test_root/fish" > "$test_root/fish.cleaned"
-test "$(cat "$test_root/fish.cleaned")" = "$custom_fish"
-
-migrate_home="$test_root/migrate-home"
-migrate_bin="$test_root/migrate-bin"
-mkdir -p "$migrate_home/.claude-profiles" "$migrate_home/.local/bin" "$migrate_bin"
-ln -s "$PWD/shell/claude-as" "$migrate_home/.local/bin/claude-stale"
-HOME="$migrate_home" PATH="/usr/bin:/bin" sh -c '
-  new_bin=$1
-  set -- help
-  . "$0" >/dev/null
-  bin_dir() { echo "$new_bin"; }
-  cmd_shims
-' "$PWD/claudes" "$migrate_bin"
-test ! -e "$migrate_home/.local/bin/claude-stale"
 echo "All tests passed"

@@ -1,0 +1,48 @@
+#!/bin/sh
+# agent-as — run any supported agent CLI pinned to a profile, from ANY shell or app.
+#
+#   claude-as <Profile|--next|--best> [claude args…]
+#   codex-as  <Profile|--next|--best> [codex args…]
+#   <vendor>-<profile> [args…]          e.g. claude-work, codex-expo, grok-personal
+#
+# Every one of those names is a symlink to this file. They are real executables
+# on PATH, not shell functions, so editors, GUI apps, scripts and
+# non-interactive shells can use them too. `agents shims` creates and removes
+# the symlinks as vendors and profiles come and go.
+#
+# The invoked name carries both halves of the decision: everything before the
+# first dash is the vendor, everything after is the profile (or the literal
+# "as", which means the profile is the first argument instead).
+set -eu
+
+invoked=$(basename "$0")
+vendor=${invoked%%-*}
+suffix=${invoked#*-}
+
+# Resolve symlinks to find the sibling `agents` CLI — this file lives in
+# N2 Agents.app/Contents/Resources; the PATH entries are symlinks to it.
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case $link in
+    /*) self=$link ;;
+    *)  self=$(dirname "$self")/$link ;;
+  esac
+done
+dir=$(cd "$(dirname "$self")" && pwd)
+cli=$dir/agents
+[ -x "$cli" ] || cli=$dir/../agents  # dev-tree layout: shell/agent-as
+[ -x "$cli" ] || { echo "$invoked: agents CLI not found next to $self" >&2; exit 1; }
+
+if [ "$suffix" = as ]; then
+  if [ $# -lt 1 ]; then
+    echo "usage: $invoked <Profile|--next|--best> [$vendor args…]" >&2
+    "$cli" list >&2
+    exit 1
+  fi
+  profile=$1
+  shift
+  exec "$cli" run "$profile" --vendor "$vendor" "$@"
+fi
+
+exec "$cli" run "$suffix" --vendor "$vendor" "$@"

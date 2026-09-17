@@ -12,7 +12,7 @@ channel=${CLAUDES_CHANNEL:?CLAUDES_CHANNEL must be stable or continuous}
 : ${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}
 
 build=${CLAUDES_BUILD_NUMBER:-${GITHUB_RUN_ID:-0}}
-artifact="Claudes-${channel}-${version}.zip"
+artifact="N2Agents-${channel}-${version}.zip"
 [[ -f $artifact ]] || { echo "✗ missing $artifact — prepare did not run" >&2; exit 1 }
 
 key="${RUNNER_TEMP:-$TMPDIR}/sparkle-private-key"

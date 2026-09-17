@@ -1,55 +1,58 @@
 #!/bin/zsh
-# Builds tray/build/Claudes.app with the profile scripts embedded in Resources.
+# Builds tray/build/N2Agents.app with the CLI + adapter table embedded in Resources.
+# The bundle is N2Agents.app on disk (no space) while CFBundleDisplayName reads
+# "N2 Agents" — Finder and the menu bar show the pretty name, and every script
+# that touches the path stays free of quoting hazards.
 # Signing: uses a "Developer ID Application" identity if one is in the keychain
-# (override with CLAUDES_SIGN_IDENTITY), otherwise falls back to ad-hoc.
+# (override with N2_SIGN_IDENTITY), otherwise falls back to ad-hoc.
 set -euo pipefail
 cd "${0:A:h}"
 
 command -v swift >/dev/null || { echo "✗ swift not found. Install Xcode Command Line Tools: xcode-select --install" >&2; exit 1 }
 
-app="build/Claudes.app"
+app="build/N2Agents.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Frameworks"
 
 echo "Compiling…"
-swift build --package-path .. -c release --product ClaudeTray
+swift build --package-path .. -c release --product N2AgentsTray
 bin_dir=$(swift build --package-path .. -c release --show-bin-path)
-cp "$bin_dir/ClaudeTray" "$app/Contents/MacOS/ClaudeTray"
+cp "$bin_dir/N2AgentsTray" "$app/Contents/MacOS/N2AgentsTray"
 sparkle_framework=$(find ../.build -type d -name Sparkle.framework -print -quit)
 [[ -n $sparkle_framework ]] || { echo "✗ Sparkle.framework was not produced" >&2; exit 1; }
 ditto "$sparkle_framework" "$app/Contents/Frameworks/Sparkle.framework"
 swiftc -O icon-badge.swift -o "$app/Contents/Resources/icon-badge"
 cp Info.plist "$app/Contents/"
 
-# Version: explicit CLAUDES_VERSION (CI) > latest git tag (source builds) > 0.0.0.
+# Version: explicit N2_VERSION (CI) > latest git tag (source builds) > 0.0.0.
 # Sparkle uses these values when comparing entries in the selected appcast.
-ver=${CLAUDES_VERSION:-$(git -C .. describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)}
+ver=${N2_VERSION:-$(git -C .. describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)}
 ver=${ver:-0.0.0}
-build_ver=${CLAUDES_BUILD_VERSION:-1}
+build_ver=${N2_BUILD_VERSION:-1}
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $ver" "$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $build_ver" "$app/Contents/Info.plist"
-if [[ -n ${CLAUDES_SPARKLE_PUBLIC_KEY:-} ]]; then
-  /usr/libexec/PlistBuddy -c "Set :SUPublicEDKey $CLAUDES_SPARKLE_PUBLIC_KEY" "$app/Contents/Info.plist"
-elif [[ ${CLAUDES_RELEASE_BUILD:-0} == 1 ]]; then
-  echo "✗ CLAUDES_SPARKLE_PUBLIC_KEY is required for release builds" >&2
+if [[ -n ${N2_SPARKLE_PUBLIC_KEY:-} ]]; then
+  /usr/libexec/PlistBuddy -c "Set :SUPublicEDKey $N2_SPARKLE_PUBLIC_KEY" "$app/Contents/Info.plist"
+elif [[ ${N2_RELEASE_BUILD:-0} == 1 ]]; then
+  echo "✗ N2_SPARKLE_PUBLIC_KEY is required for release builds" >&2
   exit 1
 fi
 echo "Version: $ver ($build_ver)"
-cp ../make-claude-profile.sh ../repatch-claude-profiles.sh ../claudes "$app/Contents/Resources/"
-cp ../shell/claudes.zsh ../shell/claudes.bash ../shell/claudes.fish ../shell/claude-as "$app/Contents/Resources/"
-chmod +x "$app/Contents/Resources/"*.sh "$app/Contents/Resources/claudes" "$app/Contents/Resources/claude-as"
+cp ../make-claude-profile.sh ../repatch-claude-profiles.sh ../agents ../vendors.sh "$app/Contents/Resources/"
+cp ../shell/agents.zsh ../shell/agents.bash ../shell/agents.fish ../shell/agent-as "$app/Contents/Resources/"
+chmod +x "$app/Contents/Resources/"*.sh "$app/Contents/Resources/agents" "$app/Contents/Resources/agent-as"
 
-# App icon: build multi-res icns from claudes.png
-iconset=$(mktemp -d)/claudes.iconset
+# App icon: build multi-res icns from n2agents.png
+iconset=$(mktemp -d)/n2agents.iconset
 mkdir -p "$iconset"
 for sz in 16 32 128 256 512; do
-  sips -z $sz $sz claudes.png --out "$iconset/icon_${sz}x${sz}.png" >/dev/null
-  sips -z $((sz*2)) $((sz*2)) claudes.png --out "$iconset/icon_${sz}x${sz}@2x.png" >/dev/null
+  sips -z $sz $sz n2agents.png --out "$iconset/icon_${sz}x${sz}.png" >/dev/null
+  sips -z $((sz*2)) $((sz*2)) n2agents.png --out "$iconset/icon_${sz}x${sz}@2x.png" >/dev/null
 done
-iconutil -c icns "$iconset" -o "$app/Contents/Resources/claudes.icns"
+iconutil -c icns "$iconset" -o "$app/Contents/Resources/n2agents.icns"
 rm -rf "${iconset:h}"
 
-identity=${CLAUDES_SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Developer ID Application/{print $2; exit}')}
+identity=${N2_SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Developer ID Application/{print $2; exit}')}
 if [[ -n ${identity:-} ]]; then
   echo "Signing with: $identity"
   sparkle="$app/Contents/Frameworks/Sparkle.framework/Versions/B"

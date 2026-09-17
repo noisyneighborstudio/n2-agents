@@ -8,8 +8,8 @@
     }],
     ["@semantic-release/github", {
       "assets": [
-        { "path": "Claudes.zip", "name": "Claudes.zip", "label": "Claudes.app (zip)" },
-        { "path": "Claudes-*-*.zip", "label": "Sparkle update archive" }
+        { "path": "N2Agents.zip", "name": "N2Agents.zip", "label": "N2Agents.app (zip)" },
+        { "path": "N2Agents-*-*.zip", "label": "Sparkle update archive" }
       ]
     }],
     ["@semantic-release/exec", {

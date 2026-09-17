@@ -2,8 +2,8 @@
 # semantic-release prepare: build the signed (and, with notary credentials,
 # notarized) app for the version semantic-release computed, and leave both
 # archives in the checkout for the GitHub release:
-#   Claudes.zip                        — what install.sh resolves
-#   Claudes-<channel>-<version>.zip    — what the appcast enclosure points at
+#   N2Agents.zip                        — what install.sh resolves
+#   N2Agents-<channel>-<version>.zip    — what the appcast enclosure points at
 set -euo pipefail
 cd "${0:A:h}/.."
 
@@ -26,23 +26,23 @@ else
   ./scripts/release-build.sh "$version" "$build"
 fi
 
-codesign --verify --deep --strict --verbose=2 tray/build/Claudes.app
+codesign --verify --deep --strict --verbose=2 tray/build/N2Agents.app
 
 # Every @rpath dependency must resolve inside the bundle. A missing rpath kills
 # the app in dyld before main(), which is how 0.10.1 shipped un-launchable.
-binary=tray/build/Claudes.app/Contents/MacOS/ClaudeTray
+binary=tray/build/N2Agents.app/Contents/MacOS/N2AgentsTray
 otool -l "$binary" | grep -q '@executable_path/../Frameworks' \
   || { echo "✗ $binary has no @executable_path/../Frameworks rpath" >&2; exit 1 }
 for dep in $(otool -L "$binary" | awk '/@rpath\//{print $1}'); do
-  [[ -f "tray/build/Claudes.app/Contents/Frameworks/${dep#@rpath/}" ]] \
+  [[ -f "tray/build/N2Agents.app/Contents/Frameworks/${dep#@rpath/}" ]] \
     || { echo "✗ unresolvable dependency: $dep" >&2; exit 1 }
 done
 if [[ -n ${NOTARY_KEY:-} ]]; then
-  xcrun stapler validate tray/build/Claudes.app
+  xcrun stapler validate tray/build/N2Agents.app
 fi
 
 setopt null_glob   # zsh errors on a non-matching glob, even for rm -f
-rm -f Claudes-*-*.zip
+rm -f N2Agents-*-*.zip
 unsetopt null_glob
-cp Claudes.zip "Claudes-${channel}-${version}.zip"
+cp N2Agents.zip "N2Agents-${channel}-${version}.zip"
 echo "✓ Prepared $version ($channel, build $build)"

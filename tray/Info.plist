@@ -3,32 +3,32 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleExecutable</key>
-	<string>ClaudeTray</string>
+	<string>N2AgentsTray</string>
 	<key>CFBundleIconFile</key>
-	<string>claudes</string>
+	<string>n2agents</string>
 	<key>CFBundleIdentifier</key>
-	<string>dev.sethwebster.claudes</string>
+	<string>dev.sethwebster.n2agents</string>
 	<key>CFBundleName</key>
-	<string>Claudes</string>
+	<string>N2Agents</string>
 	<key>CFBundleDisplayName</key>
-	<string>Claudes</string>
+	<string>N2 Agents</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
-	<key>ClaudesStableFeedURL</key>
-	<string>https://raw.githubusercontent.com/noisyneighborstudio/claudes/appcasts/stable/appcast.xml</string>
-	<key>ClaudesContinuousFeedURL</key>
-	<string>https://raw.githubusercontent.com/noisyneighborstudio/claudes/appcasts/continuous/appcast.xml</string>
+	<key>N2AgentsStableFeedURL</key>
+	<string>https://raw.githubusercontent.com/noisyneighborstudio/n2-agents/appcasts/stable/appcast.xml</string>
+	<key>N2AgentsContinuousFeedURL</key>
+	<string>https://raw.githubusercontent.com/noisyneighborstudio/n2-agents/appcasts/continuous/appcast.xml</string>
 	<key>SUPublicEDKey</key>
-	<string>CLAUDES_SPARKLE_PUBLIC_KEY</string>
+	<string>N2_SPARKLE_PUBLIC_KEY</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Claudes opens Terminal to run profile setup scripts and Claude Code sessions.</string>
+	<string>N2 Agents opens your terminal to run profile setup scripts and agent sessions.</string>
 </dict>
 </plist>

@@ -6,8 +6,12 @@ typealias UpdaterDelegateProtocol = SPUUpdaterDelegate
 protocol UpdaterDelegateProtocol {}
 #endif
 
-// Claudes — menu bar launcher for Claude profiles (desktop instances + Claude Code CLI).
-// Profiles are discovered from /Applications/Claude-*.app and ~/.claude-profiles/.
+// N2 Agents — menu bar launcher for cross-vendor agent profiles.
+//
+// A profile is an IDENTITY holding one slot per lab (Claude, Codex, Grok, …),
+// so switching moves every vendor at once. The whole profile/vendor model is
+// owned by the `agents` CLI; this app parses `agents porcelain` and shells back
+// out for anything with side effects, so the two cannot drift.
 // Helper scripts are embedded in the app bundle (Contents/Resources).
 //
 // Resident duties beyond the menu:
@@ -15,11 +19,18 @@ protocol UpdaterDelegateProtocol {}
 //    silently rebuilds idle clones in the background.
 //  - Self-update: delegates signed automatic and manual updates to Sparkle.
 
+// A profile as the menu needs it: the CLI's porcelain row plus the two
+// Claude-desktop paths the clone/delete/reveal actions operate on.
 struct Profile {
     let name: String
     let hasApp: Bool
     let dataDir: String
     let configDir: String
+    /// vendor id -> "active" | "ok"; absent means no slot for that vendor.
+    let slots: [String: String]
+
+    var isDefault: Bool { name == "Default" }
+    func isActive(for vendor: String) -> Bool { slots[vendor] == "active" }
 }
 
 // A Claude Code CLI session: projects/<slug>/<uuid>.jsonl inside a config dir.
@@ -83,9 +94,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
     private var statusItem: NSStatusItem!
     private let fm = FileManager.default
     private let home = NSHomeDirectory()
-    private var configRoot: String { home + "/.claude-profiles" }
+    private var configRoot: String { home + "/.n2-agents" }
     private let claudeBundleID = "com.anthropic.claudefordesktop"
-    private let newIssueURL = "https://github.com/noisyneighborstudio/claudes/issues/new"
+    private let newIssueURL = "https://github.com/noisyneighborstudio/n2-agents/issues/new"
 
     private var repatchInFlight = Set<String>()
     private var appsDirSource: DispatchSourceFileSystemObject?
@@ -107,7 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         if let r = Bundle.main.resourcePath, fm.fileExists(atPath: r + "/make-claude-profile.sh") {
             return r
         }
-        return home + "/Development/Claudes"
+        return home + "/Development/n2-agents"
     }
 
     // Claude Desktop is not always in /Applications: a per-user install lands in
@@ -131,7 +142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        if let r = Bundle.main.resourcePath, let icon = NSImage(contentsOfFile: r + "/claudes.icns") {
+        if let r = Bundle.main.resourcePath, let icon = NSImage(contentsOfFile: r + "/n2agents.icns") {
             icon.size = NSSize(width: 18, height: 18)
             statusItem.button?.image = icon
             statusItem.button?.imagePosition = .imageLeft
@@ -166,6 +177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        cachedSnapshot = nil
         let profiles = discoverProfiles()
         let desktopPath = claudeAppPath
         let claudeInstalled = desktopPath != nil
@@ -183,41 +195,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         }
 
         let active = activeProfileName()
+        let snap = snapshot()
+        let terms = installedTerminals()
 
-        // Once profiles exist, the un-profiled original earns its own entry — its
-        // CLI half exists whether or not the desktop app is installed.
-        if !profiles.isEmpty {
-            let dot = isDefaultRunning() ? "🟢" : "⚪️"
-            let item = NSMenuItem(title: "\(dot) Default", action: nil, keyEquivalent: "")
-            item.state = active == "Default" ? .on : .off
-            let sub = NSMenu()
-            if active != "Default" {
-                sub.addItem(actionItem("Set as Active (Global)", #selector(setActiveDefault(_:)), nil))
-                sub.addItem(.separator())
-            }
-            if claudeInstalled {
-                sub.addItem(actionItem("Open Desktop App", #selector(openDefaultDesktop(_:)), nil))
-            }
-            sub.addItem(actionItem("Open Claude Code (\(preferredTerminal.name))", #selector(openDefaultTerminal(_:)), nil))
-            let dTerms = installedTerminals()
-            if dTerms.count > 1 {
-                let inItem = NSMenuItem(title: "Open Claude Code In", action: nil, keyEquivalent: "")
-                let inMenu = NSMenu()
-                for t in dTerms {
-                    inMenu.addItem(actionItem(t.name, #selector(openDefaultTerminalIn(_:)), t.bundleId))
-                }
-                inItem.submenu = inMenu
-                sub.addItem(inItem)
-            }
-            sub.addItem(actionItem("Copy Command:  claude", #selector(copyDefaultCommand(_:)), nil))
-            sub.addItem(actionItem("Reveal Data Dir", #selector(revealDefaultData(_:)), nil))
-            sub.addItem(actionItem("Transfer Session…", #selector(transferDefaultSession(_:)), nil))
-            item.submenu = sub
-            menu.addItem(item)
-        }
-
+        // Default is an ordinary row now — the CLI reports it like any other
+        // profile — so it no longer needs a hand-written duplicate of this block.
         for profile in profiles {
-            var marker = isRunning(profile) ? "🟢" : "⚪️"
+            var marker = (profile.isDefault ? isDefaultRunning() : isRunning(profile)) ? "🟢" : "⚪️"
             var suffix = ""
             if repatchInFlight.contains(profile.name) {
                 marker = "⏳"
@@ -227,30 +211,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
             }
             let item = NSMenuItem(title: "\(marker) \(profile.name)\(suffix)", action: nil, keyEquivalent: "")
             item.state = active == profile.name ? .on : .off
+
             let sub = NSMenu()
             if active != profile.name {
-                sub.addItem(actionItem("Set as Active (Global)", #selector(setActiveProfile(_:)), profile.name))
+                sub.addItem(actionItem("Set as Active (all vendors)", #selector(setActiveProfile(_:)), profile.name))
                 sub.addItem(.separator())
             }
-            if profile.hasApp {
-                sub.addItem(actionItem("Open Desktop App", #selector(openDesktop(_:)), profile.name))
+            if profile.hasApp && claudeInstalled {
+                sub.addItem(actionItem("Open Claude Desktop",
+                                       profile.isDefault ? #selector(openDefaultDesktop(_:)) : #selector(openDesktop(_:)),
+                                       profile.name))
             }
-            sub.addItem(actionItem("Open Claude Code (\(preferredTerminal.name))", #selector(openTerminal(_:)), profile.name))
-            let terms = installedTerminals()
-            if terms.count > 1 {
-                let inItem = NSMenuItem(title: "Open Claude Code In", action: nil, keyEquivalent: "")
-                let inMenu = NSMenu()
-                for t in terms {
-                    inMenu.addItem(actionItem(t.name, #selector(openTerminalIn(_:)), profile.name + "|" + t.bundleId))
+
+            // One entry per vendor this profile actually holds a slot for. A
+            // vendor with no slot is simply absent rather than shown broken.
+            let slotted = snap.installedVendors.filter { profile.slots[$0.id] != nil }
+            if slotted.isEmpty {
+                sub.addItem(NSMenuItem(title: "No vendor slots yet", action: nil, keyEquivalent: ""))
+            }
+            for v in slotted {
+                let tag = profile.isActive(for: v.id) ? "  ✓" : ""
+                sub.addItem(actionItem("Open \(v.label)\(tag)  (\(preferredTerminal.name))",
+                                       #selector(openVendorTerminal(_:)), "\(profile.name)|\(v.id)"))
+                if terms.count > 1 {
+                    let inItem = NSMenuItem(title: "Open \(v.label) In", action: nil, keyEquivalent: "")
+                    let inMenu = NSMenu()
+                    for t in terms {
+                        inMenu.addItem(actionItem(t.name, #selector(openVendorTerminalIn(_:)),
+                                                  "\(profile.name)|\(v.id)|\(t.bundleId)"))
+                    }
+                    inItem.submenu = inMenu
+                    sub.addItem(inItem)
                 }
-                inItem.submenu = inMenu
-                sub.addItem(inItem)
+                sub.addItem(actionItem("Copy Command:  \(v.id)-\(profile.name.lowercased())",
+                                       #selector(copyVendorCommand(_:)), "\(profile.name)|\(v.id)"))
+                sub.addItem(.separator())
             }
-            sub.addItem(actionItem("Copy Command:  \(profileCommand(profile.name))", #selector(copyCommand(_:)), profile.name))
-            sub.addItem(actionItem("Reveal Data Dir", #selector(revealData(_:)), profile.name))
-            sub.addItem(actionItem("Transfer Session…", #selector(transferProfileSession(_:)), profile.name))
-            sub.addItem(.separator())
-            sub.addItem(actionItem("Delete Profile…", #selector(deleteProfile(_:)), profile.name))
+
+            sub.addItem(actionItem("Add Vendor…", #selector(addVendor(_:)), profile.name))
+            sub.addItem(actionItem("Reveal Claude Data Dir", #selector(revealData(_:)), profile.name))
+            sub.addItem(actionItem("Transfer Claude Session…", #selector(transferProfileSession(_:)), profile.name))
+            if !profile.isDefault {
+                sub.addItem(.separator())
+                sub.addItem(actionItem("Delete Profile…", #selector(deleteProfile(_:)), profile.name))
+            }
             item.submenu = sub
             menu.addItem(item)
         }
@@ -275,7 +279,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         }
         channelItem.submenu = channelMenu
         menu.addItem(channelItem)
-        menu.addItem(actionItem("Check for Claudes Updates…", #selector(checkForUpdates(_:)), nil))
+        menu.addItem(actionItem("Check for N2 Agents Updates…", #selector(checkForUpdates(_:)), nil))
         let allTerms = installedTerminals()
         if allTerms.count > 1 {
             let termItem = NSMenuItem(title: "Open Sessions In", action: nil, keyEquivalent: "")
@@ -290,9 +294,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         }
         menu.addItem(.separator())
         menu.addItem(actionItem("Report a Bug…", #selector(reportBug(_:)), nil))
-        let versionItem = NSMenuItem(title: "Claudes v\(currentVersion)", action: nil, keyEquivalent: "")
+        let versionItem = NSMenuItem(title: "N2 Agents v\(currentVersion)", action: nil, keyEquivalent: "")
         menu.addItem(versionItem)
-        menu.addItem(NSMenuItem(title: "Quit Claudes", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "Quit N2 Agents", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
 
     private func actionItem(_ title: String, _ action: Selector, _ profile: String?) -> NSMenuItem {
@@ -304,41 +308,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
 
     // MARK: - Profile discovery
 
-    private func isValidProfileName(_ name: String) -> Bool {
-        let reserved = ["default"]
-        return !reserved.contains(name.lowercased())
-            && name.range(of: #"^[A-Za-z0-9]+$"#, options: .regularExpression) != nil
+    // One porcelain call per menu build; the CLI is the only thing that knows
+    // what a profile is. Cached for the duration of a menu open so a submenu
+    // and its parent can't disagree.
+    private var cachedSnapshot: Snapshot?
+
+    private func snapshot(refresh: Bool = false) -> Snapshot {
+        if !refresh, let c = cachedSnapshot { return c }
+        let r = runCLI(["porcelain"])
+        let snap = r.status == 0 ? Snapshot.parse(r.output) : Snapshot.empty
+        cachedSnapshot = snap
+        return snap
     }
 
     private func discoverProfiles() -> [Profile] {
-        var names = Set<String>()
-        var withApp = Set<String>()
-
-        if let apps = try? fm.contentsOfDirectory(atPath: "/Applications") {
-            for app in apps where app.hasPrefix("Claude-") && app.hasSuffix(".app") {
-                let name = String(app.dropFirst("Claude-".count).dropLast(".app".count))
-                guard isValidProfileName(name) else { continue }
-                names.insert(name)
-                withApp.insert(name)
-            }
-        }
-        // "Default" (the migrated ~/.claude) is the dedicated menu entry, not a profile.
-        if let cfgs = try? fm.contentsOfDirectory(atPath: configRoot) {
-            for cfg in cfgs where isValidProfileName(cfg) {
-                var isDirectory: ObjCBool = false
-                guard fm.fileExists(atPath: configRoot + "/" + cfg, isDirectory: &isDirectory),
-                      isDirectory.boolValue else { continue }
-                names.insert(cfg)
-            }
-        }
-
-        return names.sorted().map { name in
-            Profile(
-                name: name,
-                hasApp: withApp.contains(name),
-                dataDir: home + "/Library/Application Support/Claude-" + name,
-                configDir: configRoot + "/" + name
-            )
+        snapshot().profiles.map { row in
+            Profile(name: row.name,
+                    hasApp: row.name == "Default"
+                        ? (claudeAppPath != nil)
+                        : fm.fileExists(atPath: "/Applications/Claude-\(row.name).app"),
+                    dataDir: row.name == "Default"
+                        ? home + "/Library/Application Support/Claude"
+                        : home + "/Library/Application Support/Claude-" + row.name,
+                    configDir: row.name == "Default"
+                        ? home + "/.claude"
+                        : configRoot + "/" + row.name,
+                    slots: row.slots)
         }
     }
 
@@ -488,7 +483,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
 
     // MARK: - Actions
 
-    // The path is stored in this app's preferences; the claudes CLI reads the same
+    // The path is stored in this app's preferences; the agents CLI reads the same
     // key, so scripts and menu agree on where Claude Desktop lives.
     @objc private func locateClaude(_ sender: NSMenuItem) {
         let panel = NSOpenPanel()
@@ -525,11 +520,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         1.
 
         ## Environment
-        - Claudes version: \(currentVersion)
+        - N2 Agents version: \(currentVersion)
         - macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)
         """
         guard var components = URLComponents(string: newIssueURL) else {
-            alert("Couldn't open GitHub Issues", "Visit github.com/noisyneighborstudio/claudes/issues to report the bug.")
+            alert("Couldn't open GitHub Issues", "Visit github.com/noisyneighborstudio/n2-agents/issues to report the bug.")
             return
         }
         components.queryItems = [
@@ -537,7 +532,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
             URLQueryItem(name: "body", value: body),
         ]
         guard let url = components.url, NSWorkspace.shared.open(url) else {
-            alert("Couldn't open GitHub Issues", "Visit github.com/noisyneighborstudio/claudes/issues to report the bug.")
+            alert("Couldn't open GitHub Issues", "Visit github.com/noisyneighborstudio/n2-agents/issues to report the bug.")
             return
         }
     }
@@ -553,15 +548,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
             if error != nil {
                 DispatchQueue.main.async {
                     self.alert("Couldn't launch Claude-\(p.name)",
-                               "The app may be mid-repatch or damaged. Try “Re-patch All” from the Claudes menu.")
+                               "The app may be mid-repatch or damaged. Try “Re-patch All” from the N2 Agents menu.")
                 }
             }
         }
     }
 
-    // MARK: - claudes CLI (single implementation of profile side effects)
+    // MARK: - agents CLI (single implementation of profile side effects)
 
-    private var cliPath: String { scriptsDir + "/claudes" }
+    private var cliPath: String { scriptsDir + "/agents" }
 
     @discardableResult
     private func runCLI(_ args: [String]) -> (status: Int32, output: String) {
@@ -577,18 +572,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         return (task.terminationStatus, out.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
-    // After `claudes use`, ~/.claude is a symlink to the active profile and the
-    // original default config lives at ~/.claude-profiles/Default.
-    private var isDefaultMigrated: Bool {
-        (try? fm.destinationOfSymbolicLink(atPath: home + "/.claude")) != nil
-    }
-
-    private func activeProfileName() -> String {
-        guard let dest = try? fm.destinationOfSymbolicLink(atPath: home + "/.claude") else { return "Default" }
-        return (dest as NSString).lastPathComponent
-    }
-
-    @objc private func setActiveDefault(_ sender: NSMenuItem) { setActive("Default") }
+    private func activeProfileName() -> String { snapshot().active }
 
     @objc private func setActiveProfile(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String else { return }
@@ -600,15 +584,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         if r.status != 0 { alert("Couldn't switch active profile", r.output) }
     }
 
-    // Runs in the user's login shell so their PATH applies. nil name = default config.
-    private func sessionCommand(_ name: String?) -> String {
-        // Once migrated, "Default" must be pinned explicitly — a bare `claude`
-        // would follow the ~/.claude symlink to whatever profile is active.
-        // env-prefix + &&/|| so the command is valid in zsh, bash, AND fish
-        // (VAR=x cmd and if/then are not) — Terminal/iTerm run the user's shell.
-        let effective = name ?? (isDefaultMigrated ? "Default" : nil)
-        let invoke = effective.map { "env CLAUDE_CONFIG_DIR=\"$HOME/.claude-profiles/\($0)\" claude" } ?? "claude"
-        return "command -v claude >/dev/null 2>&1 && \(invoke) || echo 'Claude Code CLI not found. Install it first: npm install -g @anthropic-ai/claude-code'"
+    // Always go through the CLI rather than composing an env-var prefix here:
+    // it alone knows how each vendor is pinned, and a swap-only vendor (no
+    // config-dir env var) needs --switch, which is a global side effect the
+    // user should see spelled out in the command.
+    private func sessionCommand(profile: String, vendor: Vendor) -> String {
+        var cmd = "\"\(cliPath)\" run \(profile) --vendor \(vendor.id)"
+        if vendor.isolation == "swap" { cmd += " --switch" }
+        return cmd
     }
 
     private func isDefaultRunning() -> Bool {
@@ -629,32 +612,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
 
     @objc private func openDefaultDesktop(_ sender: NSMenuItem) {
         guard let appPath = claudeAppPath else {
-            alert("Claude Desktop not found", "Install it from claude.ai/download, or point Claudes at it with “Locate Claude Desktop…”.")
+            alert("Claude Desktop not found", "Install it from claude.ai/download, or point N2 Agents at it with “Locate Claude Desktop…”.")
             return
         }
         NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: appPath),
                                            configuration: NSWorkspace.OpenConfiguration())
     }
 
-    @objc private func openDefaultTerminal(_ sender: NSMenuItem) {
-        launchSession(sessionCommand(nil), slug: "Default", in: preferredTerminal)
+    // representedObject is "<profile>|<vendor>" (plus "|<bundleId>" for the
+    // explicit terminal picker) — the menu's only encoding.
+    private func parseTarget(_ sender: NSMenuItem) -> (profile: String, vendor: Vendor, bundleId: String?)? {
+        guard let raw = sender.representedObject as? String else { return nil }
+        let parts = raw.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count >= 2, let v = snapshot().vendor(parts[1]) else { return nil }
+        return (parts[0], v, parts.count >= 3 ? parts[2] : nil)
     }
 
-    @objc private func openDefaultTerminalIn(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String,
+    @objc private func openVendorTerminal(_ sender: NSMenuItem) {
+        guard let t = parseTarget(sender) else { return }
+        launchSession(sessionCommand(profile: t.profile, vendor: t.vendor),
+                      slug: "\(t.profile)-\(t.vendor.id)", in: preferredTerminal)
+    }
+
+    @objc private func openVendorTerminalIn(_ sender: NSMenuItem) {
+        guard let t = parseTarget(sender), let id = t.bundleId,
               let spec = terminalSpecs.first(where: { $0.bundleId == id }) else { return }
-        launchSession(sessionCommand(nil), slug: "Default", in: spec)
+        launchSession(sessionCommand(profile: t.profile, vendor: t.vendor),
+                      slug: "\(t.profile)-\(t.vendor.id)", in: spec)
     }
 
-    @objc private func copyDefaultCommand(_ sender: NSMenuItem) {
+    @objc private func copyVendorCommand(_ sender: NSMenuItem) {
+        guard let t = parseTarget(sender) else { return }
         let pb = NSPasteboard.general
         pb.clearContents()
-        pb.setString("claude", forType: .string)
+        pb.setString("\(t.vendor.id)-\(t.profile.lowercased())", forType: .string)
     }
 
-    @objc private func revealDefaultData(_ sender: NSMenuItem) {
-        let dir = home + "/Library/Application Support/Claude"
-        NSWorkspace.shared.open(URL(fileURLWithPath: dir))
+    // Add a lab to an existing profile: one slot dir, plus its PATH shim.
+    @objc private func addVendor(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        let snap = snapshot()
+        let profile = snap.profiles.first { $0.name == name }
+        let candidates = snap.installedVendors.filter { profile?.slots[$0.id] == nil }
+        guard !candidates.isEmpty else {
+            alert("Nothing to add", "“\(name)” already has a slot for every agent CLI installed on this Mac.")
+            return
+        }
+        let dialog = NSAlert()
+        dialog.messageText = "Add a vendor to “\(name)”"
+        dialog.informativeText = "Creates an isolated config dir for that CLI. Sign in to it once afterwards."
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 220, height: 26), pullsDown: false)
+        popup.addItems(withTitles: candidates.map { $0.label })
+        dialog.accessoryView = popup
+        dialog.addButton(withTitle: "Add")
+        dialog.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard dialog.runModal() == .alertFirstButtonReturn else { return }
+        let picked = candidates[max(0, popup.indexOfSelectedItem)]
+        let r = runCLI(["new", name, "--vendors", picked.id, "--cli-only"])
+        if r.status != 0 { alert("Couldn't add \(picked.label)", r.output) }
     }
 
     private func installedTerminals() -> [TerminalSpec] {
@@ -670,29 +686,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
     @objc private func setPreferredTerminal(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
         UserDefaults.standard.set(id, forKey: "preferredTerminal")
-    }
-
-    @objc private func openTerminal(_ sender: NSMenuItem) {
-        guard let p = profile(from: sender) else { return }
-        launchSession(sessionCommand(p.name), slug: p.name, in: preferredTerminal)
-    }
-
-    @objc private func openTerminalIn(_ sender: NSMenuItem) {
-        guard let combo = sender.representedObject as? String else { return }
-        let parts = combo.split(separator: "|", maxSplits: 1).map(String.init)
-        guard parts.count == 2, let spec = terminalSpecs.first(where: { $0.bundleId == parts[1] }) else { return }
-        launchSession(sessionCommand(parts[0]), slug: parts[0], in: spec)
-    }
-
-    @objc private func copyCommand(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String else { return }
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(profileCommand(name), forType: .string)
-    }
-
-    private func profileCommand(_ name: String) -> String {
-        name.lowercased() == "as" ? "claude-as \(name)" : "claude-\(name.lowercased())"
     }
 
     private func launchSession(_ cmd: String, slug: String, in term: TerminalSpec) {
@@ -730,12 +723,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
             // Warp has no AppleScript/CLI-args path; its supported mechanism is a
             // launch-configuration yaml opened via the warp:// URL scheme.
             let dir = home + "/.warp/launch_configurations"
-            let fileName = "claudes-\(slug).yaml"
+            let fileName = "n2agents-\(slug).yaml"
             let yaml = """
-            name: claudes-\(slug)
+            name: n2agents-\(slug)
             windows:
               - tabs:
-                  - title: Claude \(slug)
+                  - title: \(slug)
                     layout:
                       cwd: "\(home)"
                       commands:
@@ -779,7 +772,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
             return
         }
         if ["as", "default"].contains(name.lowercased()) {
-            self.alert("Reserved name", "“\(name)” conflicts with a built-in Claudes command. Pick another name.")
+            self.alert("Reserved name", "“\(name)” conflicts with a built-in N2 Agents command. Pick another name.")
             return
         }
         if fm.fileExists(atPath: "/Applications/Claude-\(name).app") {
@@ -791,7 +784,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
             if r.status != 0 { self.alert("Couldn't create profile", r.output) }
             return
         }
-        runInTerminal("\"\(scriptsDir)/claudes\" new \(name)")
+        runInTerminal("\"\(scriptsDir)/agents\" new \(name)")
     }
 
     @objc private func repatchAll(_ sender: NSMenuItem) {
@@ -828,13 +821,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
 
     // MARK: - Session transfer (move a CLI session between profile config dirs)
 
-    private func configDir(forProfileNamed name: String?) -> String {
-        if let name = name { return configRoot + "/" + name }
-        return isDefaultMigrated ? configRoot + "/Default" : home + "/.claude"
-    }
-
-    @objc private func transferDefaultSession(_ sender: NSMenuItem) {
-        transferUI(fromName: nil)
+    // Session transfer is Claude-shaped for now (Codex transcripts move fine
+    // via `agents transfer --vendor codex`, but this picker only reads Claude's
+    // projects/ layout), so it addresses the profile's claude slot.
+    private func claudeConfigDir(forProfileNamed name: String) -> String {
+        let slot = configRoot + "/" + name + "/claude"
+        if fm.fileExists(atPath: slot) { return slot }
+        return name == "Default" ? home + "/.claude" : slot
     }
 
     @objc private func transferProfileSession(_ sender: NSMenuItem) {
@@ -896,21 +889,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         return "\(df.string(from: s.mtime))  ·  \(project)  ·  \(s.snippet)"
     }
 
-    private func transferUI(fromName: String?) {
-        let srcCfg = configDir(forProfileNamed: fromName)
-        let srcLabel = fromName ?? "Default"
-        let sessions = discoverSessions(configDir: srcCfg)
+    private func transferUI(fromName: String) {
+        let srcLabel = fromName
+        let sessions = discoverSessions(configDir: claudeConfigDir(forProfileNamed: fromName))
         guard !sessions.isEmpty else {
             alert("No sessions in “\(srcLabel)”", "This profile has no Claude Code sessions yet.")
             return
         }
-        var targets: [(name: String?, label: String)] = []
-        if fromName != nil { targets.append((nil, "Default")) }
-        for p in discoverProfiles() where p.name != fromName {
-            targets.append((p.name, p.name))
-        }
+        // Only profiles that actually hold a Claude slot can receive one.
+        let targets: [(name: String, label: String)] = snapshot().profiles
+            .filter { $0.name != fromName && $0.slots["claude"] != nil }
+            .map { ($0.name, $0.name) }
         guard !targets.isEmpty else {
-            alert("No destination profile", "Create another profile first (🤖 → New Profile…).")
+            alert("No destination profile", "Create another profile with a Claude slot first (🤖 → New Profile…).")
             return
         }
 
@@ -963,9 +954,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
             return
         }
 
-        let effectiveDest = dest.name ?? (isDefaultMigrated ? "Default" : nil)
-        let invoke = effectiveDest.map { "env CLAUDE_CONFIG_DIR=\"$HOME/.claude-profiles/\($0)\" claude --resume \(session.id)" }
-            ?? "claude --resume \(session.id)"
+        // Resume through the CLI so the pinning rules stay in one place.
+        let invoke = "\"\(cliPath)\" run \(dest.name) --vendor claude --start-from-session=\(session.id)"
         let resumeCmd = session.cwd.map { "cd \"\($0)\" && \(invoke)" } ?? invoke
 
         let done = NSAlert()
@@ -1012,8 +1002,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
 
     private func automationDeniedAlert(appName: String = "Terminal") {
         let alert = NSAlert()
-        alert.messageText = "Claudes can't control \(appName)"
-        alert.informativeText = "macOS blocked Claudes from controlling \(appName). Enable it under Privacy & Security → Automation → Claudes → \(appName), then try again."
+        alert.messageText = "N2 Agents can't control \(appName)"
+        alert.informativeText = "macOS blocked N2 Agents from controlling \(appName). Enable it under Privacy & Security → Automation → N2 Agents → \(appName), then try again."
         alert.addButton(withTitle: "Open Settings")
         alert.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)

@@ -1,220 +1,231 @@
 <p align="center">
-  <img src="docs/logo.png" alt="Claudes" width="120">
+  <img src="docs/logo.png" alt="N2 Agents" width="120">
 </p>
 
-<h1 align="center">Claudes</h1>
+<h1 align="center">N2 Agents</h1>
 
 <p align="center">
-  <strong>Run multiple isolated Claude accounts on one Mac.</strong><br>
-  Work · personal · client — each with its own dock icon, login, and Claude Code config.<br>
-  A menu bar app plus a small CLI. Roll-your-own Multi-Claude.
+  <strong>One identity, every lab.</strong><br>
+  Work · personal · client — each profile holds its own Claude, Codex, Grok, Gemini,
+  Cursor and opencode login, switched together or pinned one at a time.<br>
+  A menu bar app plus a small CLI.
 </p>
 
 <p align="center">
-  <a href="https://github.com/noisyneighborstudio/claudes/releases/latest"><img src="https://img.shields.io/github/v/release/noisyneighborstudio/claudes?label=release&amp;color=151718" alt="Latest release"></a>
+  <a href="https://github.com/noisyneighborstudio/n2-agents/releases/latest"><img src="https://img.shields.io/github/v/release/noisyneighborstudio/n2-agents?label=release&amp;color=151718" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/platform-macOS-151718" alt="Platform: macOS">
   <a href="#license"><img src="https://img.shields.io/badge/license-MIT-151718" alt="License: MIT"></a>
 </p>
 
 <p align="center">
   <a href="#install"><b>Install</b></a> ·
+  <a href="#the-model">The model</a> ·
   <a href="#everyday-use">Everyday use</a> ·
-  <a href="#sessions--rotation">Sessions</a> ·
-  <a href="#the-claudes-cli">CLI</a> ·
-  <a href="#the-menu-bar-app">Menu bar app</a> ·
+  <a href="#supported-labs">Supported labs</a> ·
+  <a href="#the-agents-cli">CLI</a> ·
+  <a href="#coming-from-claudes">Coming from Claudes</a> ·
   <a href="#troubleshooting">Troubleshooting</a>
 </p>
 
 <br>
 
-<p align="center">
-  <img src="docs/menu-v4.png" alt="Claudes menu: profiles with running and active indicators, per-profile actions — Set as Active, desktop app, terminal session, Transfer Session, delete" width="560">
-</p>
-
-<br>
+N2 Agents is a fork of [`claudes`](https://github.com/noisyneighborstudio/claudes),
+generalised from one lab to all of them. `claudes` is still maintained and the two
+run side by side — see [Coming from Claudes](#coming-from-claudes).
 
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/noisyneighborstudio/claudes/main/install.sh | zsh
+curl -fsSL https://raw.githubusercontent.com/noisyneighborstudio/n2-agents/main/install.sh | zsh
 ```
 
 <details>
 <summary>Prefer to read before you pipe?</summary>
 
 ```sh
-git clone https://github.com/noisyneighborstudio/claudes && cd claudes
+git clone https://github.com/noisyneighborstudio/n2-agents && cd n2-agents
 ./install.sh
 ```
 
 </details>
 
-The installer prefers the signed release and falls back to building from source (prompting for Xcode Command Line Tools if missing). It puts `claudes` and the per-profile commands on your `PATH`, and adds tab completion for **zsh**, **bash**, and **fish** — whichever you have.
+The installer prefers the signed release and falls back to building from source
+(prompting for Xcode Command Line Tools if missing). It puts `agents` and the
+per-profile commands on your `PATH`, and adds tab completion for **zsh**,
+**bash**, and **fish** — whichever you have.
 
 Then:
 
-1. Menu bar → **Claudes icon** → **New Profile…** → e.g. `Work`
-2. Sign in once in the new desktop app, and once in the CLI (`/login`)
-3. Optional — add `Claudes.app` to **System Settings → Login Items**
+1. Menu bar → **N2 Agents icon** → **New Profile…** → e.g. `Work`
+2. Sign in once per lab in that profile
+3. Optional — add `N2 Agents` to **System Settings → Login Items**
 
-> [!TIP]
-> `./uninstall.sh` reverses all of it. Add `--purge` to also remove profiles.
+## The model
 
-<br>
+A profile is an **identity**, not a login. `Work` holds one slot per lab:
 
-## What a profile is
+```
+~/.n2-agents/
+  Work/
+    claude/        -> CLAUDE_CONFIG_DIR
+    codex/         -> CODEX_HOME
+    grok/          -> GROK_HOME
+  Personal/
+    claude/
+    codex/
+```
 
-One **profile** = one cloned desktop app + one isolated CLI config.
+So `agents use Work` moves Claude, Codex and Grok in one step, instead of
+switching each tool by hand and hoping you got them all.
 
-|             | Lives at                          | Isolated via        |
-| ----------- | --------------------------------- | ------------------- |
-| **Desktop** | `/Applications/Claude-<Name>.app` | `--user-data-dir`   |
-| **CLI**     | `~/.claude-profiles/<Name>`       | `CLAUDE_CONFIG_DIR` |
+Underneath there are **two isolation tiers**, and which one a lab gets is not a
+preference — it is whatever that CLI actually supports:
 
-Logins live outside the app bundle, so they survive every rebuild.
+| Tier | What it means | Labs |
+|---|---|---|
+| `env` | The CLI reads a config-dir environment variable, so a profile can be pinned **per process**. Two profiles run side by side, and a running session keeps its profile no matter what you switch to later. | Claude, Codex, Grok, Cursor, opencode |
+| `swap` | No such variable exists, so the only lever is swapping the dot dir symlink. **One profile at a time**, and switching is global. | Gemini |
 
-<br>
+`agents vendors` prints the live table. A `swap` lab refuses to run as a
+non-active profile unless you pass `--switch`, because that switch is a global
+side effect you should see coming.
 
 ## Everyday use
 
-Every profile gets a command named after it:
-
 ```sh
-claude-expo               # Claude Code with the Expo profile
-claude-as Expo --resume   # same, explicit + tab-completable
-claudes run Expo          # what both of the above call
+agents list                     # profiles × labs, and which is active
+agents use Work                 # switch every lab at once
+agents use Work --vendor codex  # …or just one
+
+claude-work                     # run Claude Code as Work
+codex-work                      # run Codex as Work
+grok-personal                   # run Grok as Personal
+
+agents run Work --vendor codex  # the long form of the same thing
+agents run --best               # whichever profile has the most Claude quota left
 ```
 
-These are real executables on `PATH` (symlinks next to `claudes`), not shell functions — so editors, GUI apps, `Makefile`s, cron jobs and non-interactive shells can use them too, with no rc file sourced. `claudes new`/`delete` keep them in sync; `claudes shims` re-syncs by hand. A name that already exists as a real binary is never overwritten.
+The `<vendor>-<profile>` commands are real executables on `PATH`, not shell
+functions, so editors, GUI apps and scripts get them too.
 
-> [!TIP]
-> **Per-project auto-switching.** Put `export CLAUDE_CONFIG_DIR=$HOME/.claude-profiles/Work` in a repo's `.envrc` (direnv).
+## Supported labs
 
-<br>
+| Lab | CLI | Config home | Isolation | Desktop app | Usage API | Sessions |
+|---|---|---|---|---|---|---|
+| Claude | `claude` | `~/.claude` | `CLAUDE_CONFIG_DIR` | cloned per profile | ✅ | ✅ |
+| Codex | `codex` | `~/.codex` | `CODEX_HOME` | `codex app` | — | ✅ |
+| Grok | `grok` | `~/.grok` | `GROK_HOME` | — | — | — |
+| Cursor | `cursor-agent` | `~/.cursor` | `CURSOR_CONFIG_DIR` | — | — | — |
+| opencode | `opencode` | `~/.config/opencode` | `XDG_CONFIG_HOME` | — | — | — |
+| Gemini | `gemini` | `~/.gemini` | *none* | — | — | — |
+
+Every one of those isolation levers was verified against the shipped binary
+rather than taken from documentation. Gemini's `GEMINI_DIR` looks like an
+environment variable but is a source constant equal to `".gemini"`, which is
+why it is the one `swap` lab.
+
+Only Claude currently exposes a server-side quota endpoint, so `agents best`
+works for Claude and tells you plainly that the others have nothing to rank.
+
+**Adding a lab** means adding one `case` arm to each accessor in
+[`vendors.sh`](vendors.sh). Nothing in `agents` or the menu bar app needs to
+change.
+
+## The `agents` CLI
+
+```
+agents list                           profiles × vendors
+agents vendors                        labs found here, and how each isolates
+agents active [--vendor <v>]          active profile ("mixed" if labs disagree)
+agents use <Profile> [--vendor <v>]   switch
+agents run <Profile|--next|--best> [--vendor <v>] [--start-from-session=<id>]
+agents best [--vendor <v>]            per-profile usage (5h/7d windows)
+agents new <Name> [--vendors a,b] [--cli-only]
+agents delete <Name> [--everything] [--yes]
+agents adopt [--yes]                  import existing `claudes` profiles
+agents sessions [Profile] [--vendor <v>]
+agents transfer <id> --to <Profile>|--next|--best [--vendor <v>]
+agents desktop [Name|--next|--best] [--vendor <v>]
+agents shims [--remove]               sync <vendor>-<profile> commands on PATH
+agents repatch [Name]                 rebuild Claude clones after an update
+```
+
+The CLI is the single authoritative implementation. The menu bar app parses
+`agents porcelain` and shells back out for anything with side effects, so the
+two cannot drift.
 
 ## Sessions & rotation
 
-Sessions belong to a profile, but they don't have to stay there. Claudes can list them, move them between profiles, and rotate new work across your accounts — handy when one account hits its usage limit mid-task.
+Claude and Codex transcripts can be listed and moved between profiles:
 
 ```sh
-claudes sessions                    # id · date · project · first prompt
-claudes transfer <id> --to Work     # move a session (transcript + todos + env)
-claudes transfer <id> --next        # …or to the next profile in rotation
-claudes run --next                  # new session on the next profile
-claudes desktop --next              # next profile's desktop app
+agents sessions Work --vendor codex
+agents transfer <id> --to Personal --vendor codex
+agents run Personal --vendor codex --start-from-session=<id>
 ```
 
-Rotation is blind; `--best` is not. It asks each account's **server-side usage
-data** (the same numbers the CLI's `/usage` screen shows — all devices and
-surfaces included) and picks the profile with the most 5-hour-window headroom:
+`--best` picks the profile with the most Claude quota left (from the same OAuth
+endpoint the CLI's own `/usage` screen reads — real server-side numbers, not a
+local guess). `--next` round-robins.
+
+## Coming from Claudes
+
+Both apps can be installed at once. They use different roots
+(`~/.claude-profiles` vs `~/.n2-agents`), different PATH commands (`claudes` vs
+`agents`) and different bundle ids.
 
 ```sh
-claudes best                        # per-profile usage: 5h% · 7d% · resets
-claudes run --best                  # new session on the emptiest account
+agents adopt
 ```
 
-And the one-liner for *keep going on another account*:
+Each `claudes` profile becomes `~/.n2-agents/<Name>/claude` as a **symlink** to
+the existing directory — shared, not copied. Both tools then read and write one
+login. A copy would force a re-login, because Claude Code keys its keychain
+entry to the config dir's path, and would leave two diverging copies of the same
+account.
+
+Add other labs to an adopted profile with:
 
 ```sh
-claudes run --best --start-from-session=<id>    # (or --next for blind rotation)
+agents new ExpoIO --vendors codex,grok
 ```
-
-That finds the session wherever it lives, moves it to the best (or next)
-profile — never the one it's already on — jumps to the session's project
-directory, and resumes it there — same conversation, different account.
-
-Rotation is round-robin over all profiles, `Default` included. One shared pointer: `run`, `desktop`, and `transfer` advance it together. Transfers are also in the tray — each profile's menu has **Transfer Session…** with a session picker and a one-click **Open Now** after the move.
-
-<br>
-
-## The `claudes` CLI
-
-Everything the tray does is also a command — the tray shells out to the same script, so the two can't drift.
-
-| Command                          | What it does                                                                 |
-| -------------------------------- | ---------------------------------------------------------------------------- |
-| `claudes list`                   | Profiles: ✓ active, 🟢 running                                                |
-| `claudes use <Profile>`          | Switch the **global** active profile                                         |
-| `claudes run <Profile\|--next\|--best>` | New session — pinned, rotating, or emptiest account; `--start-from-session=<id>` moves + resumes |
-| `claudes best`                   | Per-profile server-side usage (5h/7d windows)                                |
-| `claudes sessions [Profile]`     | List sessions (id · date · project · prompt)                                 |
-| `claudes transfer <id> --to <P>` | Move a session between profiles (`--next`/`--best` pick for you)             |
-| `claudes new <Name>`             | Create a profile (`--cli-only` skips the desktop clone)                      |
-| `claudes app-path`               | Print where Claude Desktop was found                                         |
-| `claudes delete <Name>`          | Delete (`--everything` removes data + config)                                |
-| `claudes repatch [Name]`         | Rebuild clone(s) after a Claude update                                       |
-| `claudes desktop [Name\|--next\|--best]` | Open a profile's desktop app                                         |
-| `claudes shims`                  | Re-sync `claude-as` / `claude-<profile>` on `PATH`                            |
-
-> [!NOTE]
-> **Global switching.** `claudes use` turns `~/.claude` into a symlink to the active profile (the first switch migrates your original `~/.claude` to `~/.claude-profiles/Default`). From then on, *anything* that reads the default config dir — plain `claude` in any terminal, editors, IDE plugins — follows the active profile. Running sessions keep the profile they started with, and `claude-<profile>` / `CLAUDE_CONFIG_DIR` still pin a single invocation regardless of the global setting.
-
-<br>
 
 ## The menu bar app
 
-- **Profiles at a glance** — 🟢 running, ✓ active
-- **Per profile** — Set as Active, open the desktop app, open a Claude Code terminal session (Terminal, iTerm2, Warp, Ghostty, kitty, Alacritty, WezTerm), **Transfer Session…**, reveal data dir, delete
-- **New Profile…** — clones and patches `Claude.app`, with progress in Terminal. No Claude Desktop? It becomes **New Profile (Claude Code only)…** and creates a CLI-only profile; install the desktop app later and create the profile again to add the clone
-- **Locate Claude Desktop…** — shown when the app isn't found. `/Applications` and `~/Applications` are checked automatically, so this is for anywhere else
-- **Auto-repatch** — detects Claude Desktop updates (version drift between the original and each clone) and silently rebuilds idle clones in the background; running ones are picked up after they quit. ⬆️ while an update is pending, ⏳ while rebuilding. Prefer manual? Toggle it off and use **Re-patch All**
-- **Automatic updates** — signed Sparkle updates on the Stable channel by default; choose Stable or Continuous from **Update Channel**, and use **Check for Claudes Updates…** at any time
-
-Release maintainers should see [docs/releases.md](docs/releases.md) for branch mapping, required configuration, signing, notarization, and appcast publication.
-
-<br>
-
-## Under the hood
-
-<details>
-<summary><b>How a clone is built</b> — <code>make-claude-profile.sh</code>, in four steps</summary>
-
-<br>
-
-1. Copies `Claude.app` → `Claude-<Name>.app`, strips quarantine xattrs.
-2. Patches `CFBundleIdentifier` + `CFBundleDisplayName` for a separate identity. `CFBundleName` **must stay `Claude`** — Electron derives the helper-app path from it and aborts otherwise.
-3. Replaces the main executable with a wrapper that adds `--user-data-dir="~/Library/Application Support/Claude-<Name>"`, so isolation holds for Finder and Dock launches too.
-4. Re-signs only what changed: the main binary ad-hoc with its original entitlements (minus team-provisioned ones, plus `disable-library-validation` so a team-less binary may load Anthropic's team-signed Electron Framework), then the outer bundle seal. Helpers and frameworks keep Anthropic's original signatures.
-
-> [!WARNING]
-> Never `codesign --deep` — it strips Electron's JIT entitlements and the app crashes at launch.
-
-</details>
-
-<details>
-<summary><b>How a session transfer works</b></summary>
-
-<br>
-
-Transfers move the transcript (`projects/<slug>/<id>.jsonl`) plus its per-session side data (`session-env`, `file-history`, `todos`) between config dirs — nothing is copied or left behind, and the destination refuses an id it already has.
-
-</details>
-
-<br>
+- Every profile, with its labs listed and the active one ticked
+- Open any lab in your terminal of choice (Terminal, iTerm2, Warp, Ghostty, kitty, Alacritty, WezTerm)
+- **Add Vendor…** to give an existing profile another lab
+- Claude Desktop clones, auto-repatched when Claude updates
+- Claude session transfer between profiles
+- Sparkle self-updates on a stable or continuous channel
 
 ## Troubleshooting
 
-| Symptom                                    | Fix                                                                           |
-| ------------------------------------------ | ----------------------------------------------------------------------------- |
-| Clone won't launch after a Claude update   | Claudes menu → **Re-patch All**                                               |
-| "Claudes can't control Terminal"           | System Settings → Privacy & Security → Automation → Claudes → enable Terminal |
-| Keychain prompt on a clone's first login   | Normal (signing identity differs) — click **Always Allow**                    |
-| `claude` not found in a profile terminal   | `npm install -g @anthropic-ai/claude-code`                                    |
-| `claudes` not found after an update        | Re-run `install.sh` (relinks the PATH symlink)                                |
-| `claude-<profile>` not found               | `claudes shims` (needs a writable `/opt/homebrew/bin`, `/usr/local/bin` or `~/.local/bin`) |
-| Clone crashes at launch (SIGTRAP / dyld)   | Re-signed manually with `--deep`? Re-patch                                    |
+**`agents: unknown vendor 'x'`** — run `agents vendors` for the known ids.
 
-<br>
+**A lab shows `-` for every profile** — its CLI isn't on `PATH`. `agents vendors`
+prints the install command.
 
-## Releases & contributing
+**Gemini won't run as a profile** — Gemini is `swap`-only. Either
+`agents use <Profile> --vendor gemini` first, or pass `--switch` to `agents run`.
 
-Releases are automated with semantic-release on pushes to `main` — use [conventional commits](https://www.conventionalcommits.org) (`feat:`, `fix:`, `BREAKING CHANGE:`) so versions and release notes generate themselves. CI builds `Claudes.zip`, signs and notarizes it when credentials are configured, and attaches it to the GitHub release; the app's self-update picks it up from there.
+**`agents active` says `mixed`** — your labs are on different profiles, which is
+allowed. `agents list` shows which is where; `agents use <Profile>` realigns them.
 
-> [!IMPORTANT]
-> **Unofficial.** Not affiliated with Anthropic. Profile creation clones and re-signs your locally installed `Claude.app` for personal use; the clones' built-in auto-update is intentionally inert (use **Re-patch All** instead). Use at your own risk.
+**A shim is missing** — `agents shims`. Shims exist only for
+(lab, profile) pairs that actually have a slot.
 
-<br>
+## Development
+
+```sh
+./scripts/test.sh      # syntax, adapter table, profile lifecycle, shims, release plumbing
+./tray/build.sh        # builds tray/build/N2Agents.app
+```
+
+The bundle is `N2Agents.app` on disk with `CFBundleDisplayName` set to
+"N2 Agents" — Finder and the menu bar show the pretty name while no script has
+to deal with a space in the path.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

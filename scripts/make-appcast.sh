@@ -11,7 +11,7 @@ output=${7:?output path required}
 
 [[ $channel == stable || $channel == continuous ]] || { echo "invalid channel" >&2; exit 1; }
 [[ $version =~ '^[A-Za-z0-9.-]+$' ]] || { echo "invalid version" >&2; exit 1; }
-[[ $download_url == *"/Claudes-${channel}-"* ]] || { echo "artifact URL does not match channel" >&2; exit 1; }
+[[ $download_url == *"/N2Agents-${channel}-"* ]] || { echo "artifact URL does not match channel" >&2; exit 1; }
 [[ ${download_url:t} == ${artifact:t} ]] || { echo "artifact URL filename mismatch" >&2; exit 1; }
 [[ $build_version =~ '^[0-9]+(\.[0-9]+)*$' ]] || { echo "invalid build version" >&2; exit 1; }
 [[ ${#signature} -eq 88 && $signature =~ '^[A-Za-z0-9+/]{86}==$' ]] || { echo "invalid signature" >&2; exit 1; }

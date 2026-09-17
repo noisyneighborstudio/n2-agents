@@ -2,3 +2,4 @@ tray/build/
 .DS_Store
 .build/
 Package.resolved
+.test-tmp/

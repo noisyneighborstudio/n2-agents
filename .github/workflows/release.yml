@@ -49,15 +49,15 @@ jobs:
       - name: Release
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          CLAUDES_SIGN_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION }}
-          CLAUDES_SPARKLE_PUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
+          N2_SIGN_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION }}
+          N2_SPARKLE_PUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_KEY_ISSUER: ${{ secrets.NOTARY_KEY_ISSUER }}
           NOTARY_KEY: ${{ secrets.NOTARY_KEY_P8 }}
         run: |
           set -euo pipefail
-          test -n "$CLAUDES_SIGN_IDENTITY"; test -n "$CLAUDES_SPARKLE_PUBLIC_KEY"; test -n "$SPARKLE_PRIVATE_KEY"
+          test -n "$N2_SIGN_IDENTITY"; test -n "$N2_SPARKLE_PUBLIC_KEY"; test -n "$SPARKLE_PRIVATE_KEY"
           npm install --no-audit --no-fund
           npx semantic-release
       - name: Remove temporary credentials

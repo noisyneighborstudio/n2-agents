@@ -1,0 +1,73 @@
+import Foundation
+
+// The tray's view of the world, parsed from `agents porcelain`.
+//
+// Deliberately dumb: every rule about what a profile is, which vendors exist,
+// how each one isolates and which is active lives in vendors.sh + agents. The
+// menu renders whatever the CLI reports, so the two can never drift — the old
+// single-vendor app duplicated that discovery in Swift and had to be kept in
+// step by hand.
+
+struct Vendor {
+    let id: String
+    let installed: Bool
+    let isolation: String   // "env" — concurrent, pinned per process; "swap" — one at a time
+    let desktop: String     // "clone" | "launch" | "none"
+    let usage: String       // "oauth" | "none"
+    let label: String
+
+    var hasUsageAPI: Bool { usage == "oauth" }
+    var clonesDesktopApp: Bool { desktop == "clone" }
+}
+
+struct ProfileRow {
+    let name: String
+    let desktopRunning: Bool
+    /// vendor id -> "active" | "ok". Absent means this profile has no slot for it.
+    let slots: [String: String]
+
+    var vendors: [String] { slots.keys.sorted() }
+    func isActive(for vendor: String) -> Bool { slots[vendor] == "active" }
+}
+
+struct Snapshot {
+    let vendors: [Vendor]
+    let profiles: [ProfileRow]
+    let active: String
+
+    var installedVendors: [Vendor] { vendors.filter { $0.installed } }
+    func vendor(_ id: String) -> Vendor? { vendors.first { $0.id == id } }
+
+    static let empty = Snapshot(vendors: [], profiles: [], active: "Default")
+
+    // Lines are tab-separated records tagged V / P / A. Anything unrecognised is
+    // skipped rather than fatal: a newer CLI may emit tags this build predates.
+    static func parse(_ text: String) -> Snapshot {
+        var vendors: [Vendor] = []
+        var profiles: [ProfileRow] = []
+        var active = "Default"
+
+        for line in text.split(separator: "\n") {
+            let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            switch f.first {
+            case "V" where f.count >= 7:
+                vendors.append(Vendor(id: f[1], installed: f[2] == "1", isolation: f[3],
+                                      desktop: f[4], usage: f[5], label: f[6]))
+            case "P" where f.count >= 4:
+                var slots: [String: String] = [:]
+                if f[3] != "-" {
+                    for pair in f[3].split(separator: ",") {
+                        let kv = pair.split(separator: ":", maxSplits: 1).map(String.init)
+                        if kv.count == 2 { slots[kv[0]] = kv[1] }
+                    }
+                }
+                profiles.append(ProfileRow(name: f[1], desktopRunning: f[2] == "1", slots: slots))
+            case "A" where f.count >= 2:
+                active = f[1]
+            default:
+                continue
+            }
+        }
+        return Snapshot(vendors: vendors, profiles: profiles, active: active)
+    }
+}
