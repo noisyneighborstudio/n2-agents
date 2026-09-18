@@ -183,7 +183,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         let claudeInstalled = desktopPath != nil
 
         if !claudeInstalled {
-            menu.addItem(NSMenuItem(title: "⚠️ Claude Desktop not found — Claude Code profiles still work",
+            menu.addItem(NSMenuItem(title: "⚠️ Claude Desktop not found — CLI profiles still work",
                                     action: nil, keyEquivalent: ""))
             menu.addItem(actionItem("Locate Claude Desktop…", #selector(locateClaude(_:)), nil))
             menu.addItem(actionItem("Download Claude Desktop…", #selector(downloadClaude(_:)), nil))
@@ -217,14 +217,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
                 sub.addItem(actionItem("Set as Active (all vendors)", #selector(setActiveProfile(_:)), profile.name))
                 sub.addItem(.separator())
             }
-            if profile.hasApp && claudeInstalled {
-                sub.addItem(actionItem("Open Claude Desktop",
-                                       profile.isDefault ? #selector(openDefaultDesktop(_:)) : #selector(openDesktop(_:)),
-                                       profile.name))
-            }
-
             // One entry per vendor this profile actually holds a slot for. A
             // vendor with no slot is simply absent rather than shown broken.
+            // Vendor-specific extras (Claude Desktop, session transfer) live
+            // inside that vendor's block, so the profile menu reads as N labs.
             let slotted = snap.installedVendors.filter { profile.slots[$0.id] != nil }
             if slotted.isEmpty {
                 sub.addItem(NSMenuItem(title: "No vendor slots yet", action: nil, keyEquivalent: ""))
@@ -245,12 +241,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
                 }
                 sub.addItem(actionItem("Copy Command:  \(v.id)-\(profile.name.lowercased())",
                                        #selector(copyVendorCommand(_:)), "\(profile.name)|\(v.id)"))
+                if v.id == "claude" {
+                    if profile.hasApp && claudeInstalled {
+                        sub.addItem(actionItem("Open Claude Desktop",
+                                               profile.isDefault ? #selector(openDefaultDesktop(_:)) : #selector(openDesktop(_:)),
+                                               profile.name))
+                        sub.addItem(actionItem("Reveal Claude Desktop Data", #selector(revealData(_:)), profile.name))
+                    }
+                    sub.addItem(actionItem("Transfer Claude Code Session…", #selector(transferProfileSession(_:)), profile.name))
+                }
                 sub.addItem(.separator())
             }
 
             sub.addItem(actionItem("Add Vendor…", #selector(addVendor(_:)), profile.name))
-            sub.addItem(actionItem("Reveal Claude Data Dir", #selector(revealData(_:)), profile.name))
-            sub.addItem(actionItem("Transfer Claude Session…", #selector(transferProfileSession(_:)), profile.name))
             if !profile.isDefault {
                 sub.addItem(.separator())
                 sub.addItem(actionItem("Delete Profile…", #selector(deleteProfile(_:)), profile.name))
@@ -260,14 +263,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         }
 
         menu.addItem(.separator())
-        // Without Claude Desktop there is nothing to clone, but a Claude Code
-        // profile is just a config dir — creating one must stay possible.
-        menu.addItem(actionItem(claudeInstalled ? "New Profile…" : "New Profile (Claude Code only)…",
-                                #selector(newProfile(_:)), nil))
+        menu.addItem(actionItem("New Profile…", #selector(newProfile(_:)), nil))
         if claudeInstalled {
-            menu.addItem(actionItem("Re-patch All (after Claude update)", #selector(repatchAll(_:)), nil))
+            menu.addItem(actionItem("Re-patch Claude Desktop Clones", #selector(repatchAll(_:)), nil))
         }
-        let toggle = actionItem("Auto-repatch after Claude updates", #selector(toggleAutoRepatch(_:)), nil)
+        let toggle = actionItem("Auto-repatch Claude Desktop Clones", #selector(toggleAutoRepatch(_:)), nil)
         toggle.state = autoRepatchEnabled ? .on : .off
         menu.addItem(toggle)
         let channelItem = NSMenuItem(title: "Update Channel", action: nil, keyEquivalent: "")
@@ -754,10 +754,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
     @objc private func newProfile(_ sender: NSMenuItem) {
         let cliOnly = claudeAppPath == nil
         let alert = NSAlert()
-        alert.messageText = cliOnly ? "New Claude Code profile" : "New Claude profile"
-        alert.informativeText = cliOnly
-            ? "Name, letters/numbers only (e.g. Work). Creates a Claude Code config dir with its own login. Claude Desktop isn't installed, so there's no desktop app to clone — install it later and create the profile again to add one."
-            : "Name, letters/numbers only (e.g. Work). Clones Claude.app into an isolated instance with its own login, plus a Claude Code config dir."
+        let labels = snapshot().installedVendors.map(\.label).joined(separator: ", ")
+        alert.messageText = "New profile"
+        alert.informativeText = "Name, letters/numbers only (e.g. Work). Creates an isolated config dir with its own login for each installed agent (\(labels))."
+            + (cliOnly
+               ? " Claude Desktop isn't installed, so there's no desktop app to clone — install it later and create the profile again to add one."
+               : " Also clones Claude.app into an isolated instance.")
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
         alert.accessoryView = field
         alert.addButton(withTitle: "Create")
@@ -794,7 +796,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
     @objc private func deleteProfile(_ sender: NSMenuItem) {
         guard let p = profile(from: sender) else { return }
         if isRunning(p) {
-            alert("“\(p.name)” is running", "Quit that Claude instance first, then delete the profile.")
+            alert("“\(p.name)” is running", "Quit this profile’s Claude Desktop first, then delete it.")
             return
         }
         if repatchInFlight.contains(p.name) {
