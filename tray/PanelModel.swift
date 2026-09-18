@@ -18,6 +18,12 @@ struct Usage {
     let sevenDay: Int?
     let note: Note
 
+    /// Quota left in whichever window is tighter — the one that stops you first.
+    var remaining: Int? {
+        guard note == .ok, let f = fiveHour else { return nil }
+        return 100 - max(f, sevenDay ?? 0)
+    }
+
     /// profile -> usage. Unknown notes are dropped: a newer CLI may add some.
     static func parse(_ text: String) -> [String: Usage] {
         var rows: [String: Usage] = [:]

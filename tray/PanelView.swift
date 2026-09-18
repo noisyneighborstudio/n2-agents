@@ -285,7 +285,8 @@ private struct ProfileCard: View {
             detailRow
             FlowLayout(spacing: 4) {
                 ForEach(data.snapshot.installedVendors.filter { profile.slots[$0.id] != nil }, id: \.id) { v in
-                    VendorChip(vendor: v, active: profile.isActive(for: v.id), selected: selected?.id == v.id) {
+                    VendorChip(vendor: v, active: profile.isActive(for: v.id), selected: selected?.id == v.id,
+                               remaining: v.id == data.quotaVendor?.id ? model.usage[profile.name]?.remaining : nil) {
                         model.selection = selected?.id == v.id ? nil : Selection(profile: profile.name, vendor: v.id)
                     }
                 }
@@ -430,12 +431,32 @@ private struct VendorChip: View {
     let vendor: Vendor
     let active: Bool
     let selected: Bool
+    /// Quota left, 0–100. Nil for labs with no usage API — no line is drawn
+    /// rather than a guessed one.
+    let remaining: Int?
     let action: () -> Void
 
     // Filled = active for this lab, outlined = holds a slot, dashed = a swap
     // vendor, where switching is a global side effect.
     var body: some View {
         Button(action: action) {
+            VStack(spacing: 2) {
+                chip
+                if let r = remaining { RemainingLine(percent: r) }
+            }
+            .fixedSize()
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(helpText)
+    }
+
+    private var helpText: String {
+        let state = active ? "\(vendor.label) — active in this profile" : "\(vendor.label) — slot ready"
+        return remaining.map { "\(state) · \($0)% quota left" } ?? state
+    }
+
+    private var chip: some View {
             HStack(spacing: 3) {
                 if vendor.isolation == "swap" { Image(systemName: "arrow.left.arrow.right").font(.system(size: 8)) }
                 Text(vendor.label)
@@ -449,10 +470,31 @@ private struct VendorChip: View {
             .overlay(RoundedRectangle(cornerRadius: 4)
                 .strokeBorder(selected ? Color.clear : Color.primary.opacity(active ? 0 : 0.25),
                               style: StrokeStyle(lineWidth: 1, dash: vendor.isolation == "swap" ? [2.5, 2] : [])))
-            .contentShape(Rectangle())
+    }
+}
+
+// Quota left under a chip: green while there is room, then amber, orange and
+// red as it runs out.
+private struct RemainingLine: View {
+    let percent: Int
+
+    private var color: Color {
+        switch percent {
+        case 51...: return Color(nsColor: .systemGreen)
+        case 26...50: return Color(nsColor: .systemYellow)
+        case 11...25: return Color(nsColor: .systemOrange)
+        default: return Color(nsColor: .systemRed)
         }
-        .buttonStyle(.plain)
-        .help(active ? "\(vendor.label) — active in this profile" : "\(vendor.label) — slot ready")
+    }
+
+    var body: some View {
+        GeometryReader { g in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(0.12))
+                Capsule().fill(color).frame(width: g.size.width * CGFloat(min(max(percent, 0), 100)) / 100)
+            }
+        }
+        .frame(height: 2)
     }
 }
 
