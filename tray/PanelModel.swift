@@ -10,6 +10,7 @@ struct Usage {
         case ok
         case noToken = "no-token"
         case staleToken = "stale-token"
+        case rateLimited = "rate-limited"
         case fetchError = "fetch-error"
         case noUsageAPI = "no-usage-api"
     }
@@ -17,6 +18,7 @@ struct Usage {
     let fiveHour: Int?
     let sevenDay: Int?
     let note: Note
+    var fetchedAt = Date()
 
     /// Quota left in whichever window is tighter — the one that stops you first.
     var remaining: Int? {
@@ -35,6 +37,14 @@ struct Usage {
                                note: note)
         }
         return rows
+    }
+
+    /// A failed read doesn't erase a good one: the last numbers stay, dated by
+    /// their own fetchedAt so the panel can say how old they are.
+    static func merge(_ old: [String: Usage], _ new: [String: Usage]) -> [String: Usage] {
+        new.mapValues { $0 }.merging(old) { fresh, previous in
+            (fresh.note == .rateLimited || fresh.note == .fetchError) && previous.note == .ok ? previous : fresh
+        }.filter { new[$0.key] != nil }
     }
 }
 

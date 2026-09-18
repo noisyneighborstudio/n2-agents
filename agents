@@ -363,7 +363,7 @@ usage_table() {  # vendor
   [ -n "$ut_args" ] || return 0
   # shellcheck disable=SC2086
   /usr/bin/python3 - $ut_args <<'PYEOF'
-import hashlib, json, subprocess, sys, time, urllib.request
+import hashlib, json, subprocess, sys, time, urllib.error, urllib.request
 
 def creds(cfg, is_default):
     # Keychain service is "Claude Code-credentials[-<sha256(cfgdir)[:8]>]";
@@ -409,6 +409,8 @@ for pair in sys.argv[1:]:
         seven = r.get('seven_day') or {}
         print(f"{name}\t{five.get('utilization', '-')}\t{seven.get('utilization', '-')}"
               f"\t{(five.get('resets_at') or '-')[:16]}\tok")
+    except urllib.error.HTTPError as e:
+        print(f"{name}\t-\t-\t-\t{'rate-limited' if e.code == 429 else 'fetch-error'}")
     except Exception:
         print(f"{name}\t-\t-\t-\tfetch-error")
 PYEOF
@@ -438,7 +440,7 @@ EOF
 
 # --porcelain prints usage_table's rows untouched — the tray's quota meters
 # parse it, so like `agents porcelain` it is a contract, not a display:
-#   <profile> <5h%> <7d%> <5h-resets UTC> <note: ok|no-token|stale-token|fetch-error|no-usage-api>
+#   <profile> <5h%> <7d%> <5h-resets UTC> <note: ok|no-token|stale-token|rate-limited|fetch-error|no-usage-api>
 cmd_best() {
   vsel="" porcelain=0
   while [ $# -gt 0 ]; do
@@ -597,8 +599,20 @@ cmd_login() {
     for f in $(vendor_cred_files "$v"); do rm -f "$cfg/$f"; done
   fi
   echo "Now sign in with the account '$name' should use."
+  in_args=$(vendor_login "$v")
+  if [ -z "$in_args" ]; then
+    exec_vendor "$v" "$cfg" "$cli"   # no login subcommand: the CLI asks on start
+  fi
+  echo "(The browser signs in with whatever account it's already using — switch it there first if needed.)"
   # shellcheck disable=SC2086
-  exec_vendor "$v" "$cfg" "$cli" $(vendor_login "$v")
+  ( exec_vendor "$v" "$cfg" "$cli" $in_args ) || die "sign-in did not complete"
+  who=$(vendor_whoami "$v")
+  if [ -n "$who" ]; then
+    echo ""
+    echo "'$name' $(vendor_label "$v") is now:"
+    # shellcheck disable=SC2086
+    ( exec_vendor "$v" "$cfg" "$cli" $who ) || true
+  fi
 }
 
 # --- shims -----------------------------------------------------------------
@@ -1177,6 +1191,7 @@ cmd_profiles() { all_profiles; }
 #
 #   V <vendor> <installed 0|1> <isolation> <desktop> <usage> <label> <sessions>
 #   P <profile> <desktop-running 0|1> <vendor,vendor,…  or "-">
+#   S <profile> <vendor> <slot-dir> <account or "">   one per slot
 #   A <active-summary>
 cmd_porcelain() {
   for v in $N2_VENDORS; do
@@ -1193,6 +1208,7 @@ cmd_porcelain() {
       [ -d "$d" ] || continue
       if [ "$(active_profile "$v")" = "$n" ]; then s="$v:active"; else s="$v:ok"; fi
       if [ -z "$slots" ]; then slots=$s; else slots="$slots,$s"; fi
+      printf 'S\t%s\t%s\t%s\t%s\n' "$n" "$v" "$d" "$(vendor_account "$v" "$d")"
     done
     printf 'P\t%s\t%s\t%s\n' "$n" "$r" "${slots:--}"
   done

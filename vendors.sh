@@ -152,6 +152,27 @@ vendor_login() {
   esac
 }
 
+# Account a slot is signed in to, read from the vendor's own files; empty when
+# unknown. Cheap on purpose — the tray reads it on every refresh.
+vendor_account() {  # vendor, slot dir
+  case $1 in
+    claude) grep -o '"emailAddress": *"[^"]*"' "$2/.claude.json" 2>/dev/null | head -1 | sed 's/.*: *"//; s/"$//' ;;
+  esac
+  true
+}
+
+# Prints who the CLI is signed in as, run after `agents login` so the terminal
+# confirms the account instead of leaving it to guesswork.
+vendor_whoami() {
+  case $1 in
+    claude)   echo "auth status --text" ;;
+    codex)    echo "login status" ;;
+    cursor)   echo "status" ;;
+    opencode) echo "auth list" ;;
+    *)        echo "" ;;
+  esac
+}
+
 vendor_cred_files() {
   case $1 in
     gemini) echo "oauth_creds.json google_accounts.json" ;;

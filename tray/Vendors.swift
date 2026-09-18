@@ -36,6 +36,12 @@ struct Snapshot {
     let vendors: [Vendor]
     let profiles: [ProfileRow]
     let active: String
+    /// profile -> vendor -> slot directory / signed-in account, from S rows.
+    var slotDirs: [String: [String: String]] = [:]
+    var accounts: [String: [String: String]] = [:]
+
+    func account(_ profile: String, _ vendor: String) -> String? { accounts[profile]?[vendor] }
+    func slotDir(_ profile: String, _ vendor: String) -> String? { slotDirs[profile]?[vendor] }
 
     var installedVendors: [Vendor] { vendors.filter { $0.installed } }
     func vendor(_ id: String) -> Vendor? { vendors.first { $0.id == id } }
@@ -48,6 +54,8 @@ struct Snapshot {
         var vendors: [Vendor] = []
         var profiles: [ProfileRow] = []
         var active = "Default"
+        var slotDirs: [String: [String: String]] = [:]
+        var accounts: [String: [String: String]] = [:]
 
         for line in text.split(separator: "\n") {
             let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
@@ -65,13 +73,16 @@ struct Snapshot {
                     }
                 }
                 profiles.append(ProfileRow(name: f[1], desktopRunning: f[2] == "1", slots: slots))
+            case "S" where f.count >= 5:
+                slotDirs[f[1], default: [:]][f[2]] = f[3]
+                if !f[4].isEmpty { accounts[f[1], default: [:]][f[2]] = f[4] }
             case "A" where f.count >= 2:
                 active = f[1]
             default:
                 continue
             }
         }
-        return Snapshot(vendors: vendors, profiles: profiles, active: active)
+        return Snapshot(vendors: vendors, profiles: profiles, active: active, slotDirs: slotDirs, accounts: accounts)
     }
 }
 

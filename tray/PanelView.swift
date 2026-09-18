@@ -78,6 +78,7 @@ private struct PanelHeader: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .focusable(false)
                 .help("Switch every lab to one profile")
             }
             Button { popUpSettingsMenu() } label: {
@@ -87,6 +88,7 @@ private struct PanelHeader: View {
                     .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.08)))
             }
             .buttonStyle(.plain)
+            .focusable(false)
             .help("Settings")
         }
         .padding(.horizontal, Metrics.side)
@@ -284,8 +286,12 @@ private struct ProfileCard: View {
                     let usage = v.id == data.quotaVendor?.id ? model.usage[profile.name] : nil
                     VendorChip(vendor: v, active: profile.isActive(for: v.id), selected: selected?.id == v.id,
                                remaining: usage?.remaining,
-                               signedOut: usage?.note == .noToken || usage?.note == .staleToken) {
+                               signedOut: usage?.note == .noToken || usage?.note == .staleToken,
+                               account: data.snapshot.account(profile.name, v.id)) {
                         model.selection = selected?.id == v.id ? nil : Selection(profile: profile.name, vendor: v.id)
+                    }
+                    .contextMenu {
+                        Button("Sign In Again…") { actions.signIn(profile: profile.name, vendor: v.id, confirm: true) }
                     }
                 }
                 if addable {
@@ -310,6 +316,11 @@ private struct ProfileCard: View {
         .contextMenu {
             if !isActive { Button("Make Active for All Labs") { actions.setActive(profile: profile.name, vendor: nil) } }
             if addable { Button("Add Lab…") { actions.addVendor(profile: profile.name) } }
+            Menu("Sign In Again") {
+                ForEach(data.snapshot.installedVendors.filter { profile.slots[$0.id] != nil }, id: \.id) { v in
+                    Button("\(v.label)…") { actions.signIn(profile: profile.name, vendor: v.id, confirm: true) }
+                }
+            }
             if profile.hasApp { Button("Reveal Claude Desktop Data") { actions.revealData(profile: profile.name) } }
             if !profile.isDefault {
                 Divider()
@@ -368,6 +379,7 @@ private struct VendorChip: View {
     /// rather than a guessed one.
     let remaining: Int?
     let signedOut: Bool
+    let account: String?
     let action: () -> Void
 
     // Filled = active for this lab, outlined = holds a slot, dashed = a swap
@@ -381,9 +393,14 @@ private struct VendorChip: View {
     }
 
     private var helpText: String {
-        let state = active ? "\(vendor.label) — active in this profile" : "\(vendor.label) — slot ready"
-        if signedOut { return "\(state) · signed out" }
-        return remaining.map { "\(state) · \($0)% quota left" } ?? state
+        var parts = [active ? "\(vendor.label) — active in this profile" : "\(vendor.label) — slot ready"]
+        if let account { parts.append(account) }
+        if signedOut {
+            parts.append("signed out")
+        } else if let r = remaining {
+            parts.append("\(r)% quota left")
+        }
+        return parts.joined(separator: " · ")
     }
 
     private var chip: some View {
@@ -428,7 +445,8 @@ private struct RemainingLine: View {
     var body: some View {
         GeometryReader { g in
             ZStack(alignment: .leading) {
-                Rectangle().fill(Color.primary.opacity(0.12))
+                // Tinted track: even an empty bar reads as "out".
+                Rectangle().fill(color.opacity(0.25))
                 Rectangle().fill(color).frame(width: g.size.width * CGFloat(min(max(percent, 0), 100)) / 100)
             }
         }
@@ -453,8 +471,13 @@ private struct VendorDrawer: View {
         switch usage?.note {
         case .ok?:
             if let five = usage?.fiveHour, let seven = usage?.sevenDay { parts.append("5h \(five)% · 7d \(seven)% used") }
+            // Kept from an earlier read because the latest one failed.
+            if let at = usage?.fetchedAt, Date().timeIntervalSince(at) > 360 {
+                parts.append("as of \(Int(Date().timeIntervalSince(at) / 60))m ago")
+            }
         case .noToken?: parts.append("not signed in")
         case .staleToken?: parts.append("token expired")
+        case .rateLimited?: parts.append("quota check rate-limited, retrying later")
         case .fetchError?: parts.append("quota check failed")
         case .noUsageAPI?: break
         case nil: if data.quotaVendor?.id == vendor.id && model.usageLoading { parts.append("checking quota…") }
@@ -514,6 +537,10 @@ private struct VendorDrawer: View {
             }
             DrawerRow(title: "Sign in again…") {
                 actions.signIn(profile: profile.name, vendor: vendor.id, confirm: true)
+            } trailing: {
+                if let account = data.snapshot.account(profile.name, vendor.id) {
+                    Text(account).lineLimit(1).truncationMode(.middle)
+                }
             }
             .help("Sign this profile's \(vendor.label) out and back in, e.g. after using the wrong account")
             if vendor.hasSessions {

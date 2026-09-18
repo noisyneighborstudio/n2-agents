@@ -26,6 +26,17 @@
 	<string>ITXyxjy/n8pI5es/iFcKozvPUtEghdndxYPy/KSAxr8=</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>dev.sethwebster.n2agents</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>n2agents</string>
+			</array>
+		</dict>
+	</array>
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>

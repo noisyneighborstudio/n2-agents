@@ -243,22 +243,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
                          terminals: terminals)
     }
 
-    // Quota is a network call per profile, so it runs beside the panel rather
-    // than in front of it, and is reused for a minute. One fetch at a time.
+    // Quota is a network call per profile against a rate-limited endpoint the
+    // labs' own CLIs also poll, so it runs beside the panel, is reused for 5
+    // minutes, and backs off to 15 after a 429. One fetch at a time: a fetch
+    // that becomes due while another is in flight runs right after it, so a
+    // result read before a sign-in never stands in for one after it.
     private var usageFetchedAt: Date?
+    private var usageRefetch = false
+    private var usageTTL: TimeInterval = 300
 
     private func refreshUsage(force: Bool) {
-        guard !model.usageLoading, let vendor = model.data?.quotaVendor else { return }
-        if !force, let t = usageFetchedAt, Date().timeIntervalSince(t) < 60 { return }
+        guard let vendor = model.data?.quotaVendor else { return }
+        let due = force || usageFetchedAt.map { Date().timeIntervalSince($0) >= usageTTL } ?? true
+        guard due else { return }
+        if model.usageLoading {
+            usageRefetch = true
+            return
+        }
         model.usageLoading = true
         DispatchQueue.global(qos: .utility).async {
             let r = self.runCLI(["best", "--porcelain", "--vendor", vendor.id])
             DispatchQueue.main.async {
                 self.model.usageLoading = false
                 self.usageFetchedAt = Date()
-                self.model.usage = r.status == 0 ? Usage.parse(r.output) : [:]
+                let fresh = r.status == 0 ? Usage.parse(r.output) : [:]
+                self.usageTTL = fresh.values.contains { $0.note == .rateLimited } ? 900 : 300
+                self.model.usage = Usage.merge(self.model.usage, fresh)
+                if self.usageRefetch {
+                    self.usageRefetch = false
+                    self.refreshUsage(force: true)
+                }
             }
         }
+    }
+
+    // n2agents://refresh — sent by the commands the panel starts in a terminal
+    // (sign-in) when they finish, so the panel shows the result at once
+    // instead of on the next open.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard urls.contains(where: { $0.scheme == "n2agents" && $0.host == "refresh" }) else { return }
+        usageFetchedAt = nil
+        refreshPanel()
     }
 
     func retryUsage() {
@@ -647,7 +672,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         if confirm {
             let ask = NSAlert()
             ask.messageText = "Sign \(v.label) in “\(profile)” out and back in?"
-            ask.informativeText = "The current \(v.label) login for this profile is removed, then a terminal opens so you can sign in with the right account."
+            let current = model.data?.snapshot.account(profile, id).map { " (\($0))" } ?? ""
+            ask.informativeText = "The current \(v.label) login for this profile\(current) is removed, then a terminal opens so you can sign in with the right account. The browser uses whichever account it's already signed in to — switch it there first if needed."
                 + (v.isolation == "swap" ? " \(v.label) has one global login, so this also makes “\(profile)” its active profile." : "")
             ask.addButton(withTitle: "Sign Out and Sign In")
             ask.addButton(withTitle: "Cancel")
@@ -656,7 +682,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         }
         var cmd = "\"\(cliPath)\" login \(profile) --vendor \(id)"
         if v.isolation == "swap" { cmd += " --switch" }
-        usageFetchedAt = nil
+        // Whatever the outcome, tell the panel to re-read when it's over.
+        cmd += "; open -g 'n2agents://refresh'"
         launchSession(cmd, slug: "\(profile)-\(id)-login", in: preferredTerminal)
     }
 
