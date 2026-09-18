@@ -78,7 +78,6 @@ private struct PanelHeader: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .focusable(false)
                 .help("Switch every lab to one profile")
             }
             Button { popUpSettingsMenu() } label: {
@@ -88,7 +87,6 @@ private struct PanelHeader: View {
                     .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.08)))
             }
             .buttonStyle(.plain)
-            .focusable(false)
             .help("Settings")
         }
         .padding(.horizontal, Metrics.side)

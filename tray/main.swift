@@ -192,6 +192,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         popover.contentSize = hosting.view.fittingSize
         NSApp.activate(ignoringOtherApps: true)
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        // A pointer panel: no control starts out keyboard-focused (and ringed).
+        hosting.view.window?.makeFirstResponder(nil)
         refreshPanel()
     }
 
