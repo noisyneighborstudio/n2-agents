@@ -374,12 +374,7 @@ private struct VendorChip: View {
     // vendor, where switching is a global side effect.
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 2) {
-                chip
-                if let r = remaining { RemainingLine(percent: r) }
-            }
-            .fixedSize()
-            .contentShape(Rectangle())
+            chip.contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(helpText)
@@ -406,14 +401,18 @@ private struct VendorChip: View {
             .foregroundStyle(selected ? Color.white : Color.primary)
             .background(RoundedRectangle(cornerRadius: 4)
                 .fill(selected ? Color.accentColor : active ? Color.primary.opacity(0.14) : Color.clear))
+            .overlay(alignment: .bottom) {
+                if let r = remaining { RemainingLine(percent: r) }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 4))
             .overlay(RoundedRectangle(cornerRadius: 4)
                 .strokeBorder(selected ? Color.clear : Color.primary.opacity(active ? 0 : 0.25),
                               style: StrokeStyle(lineWidth: 1, dash: vendor.isolation == "swap" ? [2.5, 2] : [])))
     }
 }
 
-// Quota left under a chip: green while there is room, then amber, orange and
-// red as it runs out.
+// Quota left along a chip's bottom edge: green while there is room, then
+// amber, orange and red as it runs out.
 private struct RemainingLine: View {
     let percent: Int
 
@@ -429,8 +428,8 @@ private struct RemainingLine: View {
     var body: some View {
         GeometryReader { g in
             ZStack(alignment: .leading) {
-                Capsule().fill(Color.primary.opacity(0.12))
-                Capsule().fill(color).frame(width: g.size.width * CGFloat(min(max(percent, 0), 100)) / 100)
+                Rectangle().fill(Color.primary.opacity(0.12))
+                Rectangle().fill(color).frame(width: g.size.width * CGFloat(min(max(percent, 0), 100)) / 100)
             }
         }
         .frame(height: 2)
