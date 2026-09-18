@@ -86,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     private var statusItem: NSStatusItem!
     private let model = PanelModel()
     private let popover = NSPopover()
+    private lazy var hosting = NSHostingController(rootView: PanelView(model: model, actions: self))
     private let fm = FileManager.default
     private let home = NSHomeDirectory()
     private var configRoot: String { home + "/.n2-agents" }
@@ -147,11 +148,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePanel)
 
-        let hosting = NSHostingController(rootView: PanelView(model: model, actions: self))
         hosting.sizingOptions = .preferredContentSize
         popover.contentViewController = hosting
         popover.behavior = .transient
         popover.animates = false
+
+        // The panel is ready before anyone clicks: data loads now and every few
+        // minutes, and opening shows the last read at once while a fresh one
+        // runs behind it. Nothing ever waits on the CLI to draw.
+        refreshPanel()
+        Timer.scheduledTimer(withTimeInterval: 180, repeats: true) { [weak self] _ in self?.refreshPanel() }
 
         // Auto-repatch: event-driven — watch /Applications for bundle swaps
         // (Claude's updater renames the new version into place, which modifies
@@ -181,9 +187,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
             return
         }
         guard let button = statusItem.button else { return }
-        refreshPanel()
+        // Size from the already-loaded content so the first frame is the
+        // finished panel, not an empty one that grows into place.
+        popover.contentSize = hosting.view.fittingSize
         NSApp.activate(ignoringOtherApps: true)
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        refreshPanel()
     }
 
     // Anything that opens a window, dialog or terminal closes the panel first:
