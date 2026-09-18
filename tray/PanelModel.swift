@@ -51,7 +51,6 @@ struct PanelData {
     var desktopInstalled: Bool { desktopVersion != nil }
     /// The lab whose quota the panel can show (Claude alone, today).
     var quotaVendor: Vendor? { snapshot.installedVendors.first { $0.hasUsageAPI } }
-    var sessionVendor: Vendor? { snapshot.vendor("claude") }
 }
 
 struct Selection: Equatable {
@@ -105,7 +104,8 @@ protocol PanelActions: AnyObject {
     func setActive(profile: String, vendor: String?)
     func copyCommand(profile: String, vendor: String)
     func openDesktop(profile: String)
-    func transferSession(profile: String)
+    func transferSession(profile: String, vendor: String)
+    func signIn(profile: String, vendor: String, confirm: Bool)
     func resumeSession(_ session: SessionInfo)
     func addVendor(profile: String)
     func revealData(profile: String)

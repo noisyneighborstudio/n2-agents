@@ -35,17 +35,6 @@ struct Profile {
     func isActive(for vendor: String) -> Bool { slots[vendor] == "active" }
 }
 
-// A Claude Code CLI session: projects/<slug>/<uuid>.jsonl inside a config dir.
-struct SessionInfo {
-    let id: String
-    let profile: String
-    let projectSlug: String
-    let jsonlPath: String
-    let cwd: String?
-    let snippet: String
-    let mtime: Date
-}
-
 // Data source for the session picker table (cell-based, single column).
 final class SessionListController: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     var rows: [String] = []
@@ -241,8 +230,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
                          profiles: profiles,
                          desktopVersion: desktopVersion,
                          staleClones: stale,
-                         sessions: discoverSessions(profiles: profiles.filter { $0.slots["claude"] != nil }.map(\.name),
-                                                    limit: 2),
+                         sessions: sessions(["--limit", "2"]),
                          terminals: terminals)
     }
 
@@ -641,6 +629,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         launchSession(sessionCommand(profile: profile, vendor: v), slug: "\(profile)-\(id)", in: spec)
     }
 
+    // Signs the slot out and back in through `agents login`, in a terminal —
+    // the labs sign in through a browser and print codes there. Confirmed
+    // first when it would discard a working login.
+    func signIn(profile: String, vendor id: String, confirm: Bool) {
+        guard let v = model.data?.snapshot.vendor(id) else { return }
+        dismissPanel()
+        if confirm {
+            let ask = NSAlert()
+            ask.messageText = "Sign \(v.label) in “\(profile)” out and back in?"
+            ask.informativeText = "The current \(v.label) login for this profile is removed, then a terminal opens so you can sign in with the right account."
+                + (v.isolation == "swap" ? " \(v.label) has one global login, so this also makes “\(profile)” its active profile." : "")
+            ask.addButton(withTitle: "Sign Out and Sign In")
+            ask.addButton(withTitle: "Cancel")
+            NSApp.activate(ignoringOtherApps: true)
+            guard ask.runModal() == .alertFirstButtonReturn else { return }
+        }
+        var cmd = "\"\(cliPath)\" login \(profile) --vendor \(id)"
+        if v.isolation == "swap" { cmd += " --switch" }
+        usageFetchedAt = nil
+        launchSession(cmd, slug: "\(profile)-\(id)-login", in: preferredTerminal)
+    }
+
     func copyCommand(profile: String, vendor: String) {
         let pb = NSPasteboard.general
         pb.clearContents()
@@ -827,108 +837,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         NSApp.terminate(nil)
     }
 
-    // MARK: - Session transfer (move a CLI session between profile config dirs)
+    // MARK: - Sessions (listed, moved and resumed through the CLI)
 
-    // Session transfer is Claude-shaped for now (Codex transcripts move fine
-    // via `agents transfer --vendor codex`, but this picker only reads Claude's
-    // projects/ layout), so it addresses the profile's claude slot.
-    private func claudeConfigDir(forProfileNamed name: String) -> String {
-        let slot = configRoot + "/" + name + "/claude"
-        if fm.fileExists(atPath: slot) { return slot }
-        return name == "Default" ? home + "/.claude" : slot
+    private func sessions(_ args: [String]) -> [SessionInfo] {
+        let r = runCLI(["sessions", "--porcelain"] + args)
+        return r.status == 0 ? SessionInfo.parse(r.output) : []
     }
 
-    func transferSession(profile name: String) {
+    func transferSession(profile name: String, vendor: String) {
         dismissPanel()
-        transferUI(fromName: name)
+        transferUI(fromName: name, vendor: vendor)
     }
 
     // Resume through the CLI so the pinning rules stay in one place.
     private func resumeCommand(_ s: SessionInfo, in profile: String) -> String {
-        let invoke = "\"\(cliPath)\" run \(profile) --vendor claude --start-from-session=\(s.id)"
+        let invoke = "\"\(cliPath)\" run \(profile) --vendor \(s.vendor) --start-from-session=\(s.id)"
         return s.cwd.map { "cd \"\($0)\" && \(invoke)" } ?? invoke
     }
 
     func resumeSession(_ s: SessionInfo) {
         dismissPanel()
-        launchSession(resumeCommand(s, in: s.profile), slug: s.profile, in: preferredTerminal)
-    }
-
-    // Newest first across the given profiles' Claude slots. Transcript heads are
-    // only read for the sessions that make the cut — a busy profile has
-    // thousands of them.
-    private func discoverSessions(profiles: [String], limit: Int? = nil) -> [SessionInfo] {
-        var files: [(profile: String, slug: String, path: String, mtime: Date)] = []
-        for profile in profiles {
-            let projectsDir = claudeConfigDir(forProfileNamed: profile) + "/projects"
-            guard let slugs = try? fm.contentsOfDirectory(atPath: projectsDir) else { continue }
-            for slug in slugs where !slug.hasPrefix(".") {
-                let dir = projectsDir + "/" + slug
-                guard let names = try? fm.contentsOfDirectory(atPath: dir) else { continue }
-                for file in names where file.hasSuffix(".jsonl") {
-                    let path = dir + "/" + file
-                    let mtime = ((try? fm.attributesOfItem(atPath: path))?[.modificationDate] as? Date) ?? .distantPast
-                    files.append((profile, slug, path, mtime))
-                }
-            }
-        }
-        files.sort { $0.mtime > $1.mtime }
-        return files.prefix(limit ?? files.count).map { f in
-            let (cwd, snippet) = sessionPreview(f.path)
-            return SessionInfo(id: String((f.path as NSString).lastPathComponent.dropLast(".jsonl".count)),
-                               profile: f.profile, projectSlug: f.slug, jsonlPath: f.path,
-                               cwd: cwd, snippet: snippet, mtime: f.mtime)
-        }
-    }
-
-    // Read the head of the transcript for the working dir and first user prompt.
-    private func sessionPreview(_ path: String) -> (cwd: String?, snippet: String) {
-        guard let fh = FileHandle(forReadingAtPath: path) else { return (nil, "") }
-        defer { try? fh.close() }
-        guard let data = try? fh.read(upToCount: 16384),
-              let text = String(data: data, encoding: .utf8) else { return (nil, "") }
-        var cwd: String?
-        var snippet: String?
-        for line in text.split(separator: "\n") {
-            guard let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { continue }
-            if cwd == nil { cwd = obj["cwd"] as? String }
-            if snippet == nil, obj["type"] as? String == "user",
-               let msg = obj["message"] as? [String: Any] {
-                if let s = msg["content"] as? String {
-                    snippet = s
-                } else if let parts = msg["content"] as? [[String: Any]] {
-                    snippet = parts.compactMap { $0["text"] as? String }.first
-                }
-            }
-            if cwd != nil && snippet != nil { break }
-        }
-        let clean = (snippet ?? "")
-            .replacingOccurrences(of: "\n", with: " ")
-            .trimmingCharacters(in: .whitespaces)
-        return (cwd, clean.isEmpty ? "(no prompt)" : String(clean.prefix(80)))
+        launchSession(resumeCommand(s, in: s.profile), slug: "\(s.profile)-\(s.vendor)", in: preferredTerminal)
     }
 
     private func sessionRowLabel(_ s: SessionInfo) -> String {
         let df = DateFormatter()
         df.dateStyle = .short
         df.timeStyle = .short
-        let project = s.cwd.map { ($0 as NSString).lastPathComponent } ?? s.projectSlug
+        let project = s.cwd.map { ($0 as NSString).lastPathComponent } ?? "—"
         return "\(df.string(from: s.mtime))  ·  \(project)  ·  \(s.snippet)"
     }
 
-    private func transferUI(fromName: String) {
+    private func transferUI(fromName: String, vendor: String) {
         let srcLabel = fromName
-        let sessions = discoverSessions(profiles: [fromName])
+        let snap = snapshot()
+        let label = snap.vendor(vendor)?.label ?? vendor
+        let sessions = sessions([fromName, "--vendor", vendor])
         guard !sessions.isEmpty else {
-            alert("No sessions in “\(srcLabel)”", "This profile has no Claude Code sessions yet.")
+            alert("No sessions in “\(srcLabel)”", "This profile has no \(label) sessions yet.")
             return
         }
-        // Only profiles that actually hold a Claude slot can receive one.
-        let targets: [(name: String, label: String)] = snapshot().profiles
-            .filter { $0.name != fromName && $0.slots["claude"] != nil }
+        // Only profiles that hold a slot for this lab can receive one.
+        let targets: [(name: String, label: String)] = snap.profiles
+            .filter { $0.name != fromName && $0.slots[vendor] != nil }
             .map { ($0.name, $0.name) }
         guard !targets.isEmpty else {
-            alert("No destination profile", "Create another profile with a Claude slot first (N2 Agents settings → New Profile…).")
+            alert("No destination profile", "Create another profile with a \(label) slot first (N2 Agents settings → New Profile…).")
             return
         }
 
@@ -965,8 +919,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         container.addSubview(popup)
 
         let dialog = NSAlert()
-        dialog.messageText = "Transfer a session from “\(srcLabel)”"
-        dialog.informativeText = "Moves the session (transcript + per-session data) to another profile. Resume it there from this menu or with claude --resume."
+        dialog.messageText = "Transfer a \(label) session from “\(srcLabel)”"
+        dialog.informativeText = "Moves the session (transcript + per-session data) to another profile. Resume it there from the panel's recent sessions."
         dialog.accessoryView = container
         dialog.addButton(withTitle: "Transfer")
         dialog.addButton(withTitle: "Cancel")
@@ -975,7 +929,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 
         let session = sessions[max(0, table.selectedRow)]
         let dest = targets[max(0, popup.indexOfSelectedItem)]
-        let result = runCLI(["transfer", session.id, "--from", srcLabel, "--to", dest.label])
+        let result = runCLI(["transfer", session.id, "--from", srcLabel, "--to", dest.label, "--vendor", vendor])
         guard result.status == 0 else {
             alert("Transfer failed", result.output)
             return

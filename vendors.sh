@@ -20,6 +20,7 @@
 #   usage       oauth  — server-side quota we can query (Claude only, today)
 #               none
 #   sessions    layout of resumable transcripts, for list/transfer
+#   logout/login  the CLI's own sign-out/sign-in subcommands, for `agents login`
 #
 # POSIX sh on purpose — sourced by `agents`, which any shell may invoke.
 
@@ -129,6 +130,32 @@ vendor_sessions() {
     claude) echo projects ;;   # projects/<slug>/<uuid>.jsonl
     codex)  echo sessions ;;   # sessions/<y>/<m>/<d>/rollout-*.jsonl
     *)      echo none ;;
+  esac
+}
+
+# Sign-out / sign-in subcommands, run with the slot pinned. Empty means the
+# CLI has none: `agents login` then deletes vendor_cred_files from the slot and
+# starts the CLI plainly, which asks for a login on its own.
+vendor_logout() {
+  case $1 in
+    claude|opencode)    echo "auth logout" ;;
+    codex|grok|cursor)  echo "logout" ;;
+    *)                  echo "" ;;
+  esac
+}
+
+vendor_login() {
+  case $1 in
+    claude|opencode)    echo "auth login" ;;
+    codex|grok|cursor)  echo "login" ;;
+    *)                  echo "" ;;
+  esac
+}
+
+vendor_cred_files() {
+  case $1 in
+    gemini) echo "oauth_creds.json google_accounts.json" ;;
+    *)      echo "" ;;
   esac
 }
 

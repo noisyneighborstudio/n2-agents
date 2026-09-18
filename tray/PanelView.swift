@@ -12,10 +12,6 @@ private enum Metrics {
     static let cardRadius: CGFloat = 9
 }
 
-private func meterColor(_ percent: Int) -> Color {
-    percent < 50 ? Color(nsColor: .systemGreen) : percent <= 80 ? Color(nsColor: .systemOrange) : Color(nsColor: .systemRed)
-}
-
 private func profileColor(_ name: String) -> Color { Color(nsColor: ProfileColor.of(name)) }
 
 // MARK: - Root
@@ -285,8 +281,10 @@ private struct ProfileCard: View {
             detailRow
             FlowLayout(spacing: 4) {
                 ForEach(data.snapshot.installedVendors.filter { profile.slots[$0.id] != nil }, id: \.id) { v in
+                    let usage = v.id == data.quotaVendor?.id ? model.usage[profile.name] : nil
                     VendorChip(vendor: v, active: profile.isActive(for: v.id), selected: selected?.id == v.id,
-                               remaining: v.id == data.quotaVendor?.id ? model.usage[profile.name]?.remaining : nil) {
+                               remaining: usage?.remaining,
+                               signedOut: usage?.note == .noToken || usage?.note == .staleToken) {
                         model.selection = selected?.id == v.id ? nil : Selection(profile: profile.name, vendor: v.id)
                     }
                 }
@@ -320,96 +318,31 @@ private struct ProfileCard: View {
         }
     }
 
+    // A card is lab-neutral: the profile, then one chip per lab. Anything
+    // about a single lab lives on its chip and in its drawer.
     private var nameRow: some View {
         HStack(spacing: 7) {
             RoundedRectangle(cornerRadius: 2).fill(profileColor(profile.name)).frame(width: 3, height: 18)
             Text(profile.name).font(.system(size: 13, weight: .medium))
             Spacer()
-            Group {
-                if repatching {
-                    Text("Rebuilding…").foregroundStyle(.secondary)
-                } else if stale {
-                    Text("Update pending").foregroundStyle(Color(nsColor: .systemOrange))
-                } else if profile.hasApp {
-                    HStack(spacing: 5) {
-                        if profile.running { Circle().fill(Color(nsColor: .systemGreen)).frame(width: 6, height: 6) }
-                        Text(profile.running ? "Desktop running" : "Desktop idle")
-                    }
-                    .foregroundStyle(.secondary)
-                }
-            }
-            .font(.system(size: 11))
         }
         .frame(height: 18)
     }
 
-    // Clone state outranks quota: while a clone is behind, that is the thing
-    // to act on.
+    // The one profile-level state: its Claude Desktop clone is a separate app
+    // that falls behind when Claude updates, and needs acting on.
     @ViewBuilder private var detailRow: some View {
         if repatching {
-            ProgressView().progressViewStyle(.linear).controlSize(.small).tint(Color(nsColor: .systemOrange))
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Claude Desktop rebuilding…").font(.system(size: 11)).foregroundStyle(.secondary)
+                ProgressView().progressViewStyle(.linear).controlSize(.small).tint(Color(nsColor: .systemOrange))
+            }
         } else if stale {
-            InlineStatus(text: profile.running ? "Waiting — clone is in use"
-                                               : actions.autoRepatch ? "Queued for rebuild" : "Auto-repatch is off",
+            InlineStatus(text: profile.running ? "Claude Desktop behind · in use"
+                                               : actions.autoRepatch ? "Claude Desktop behind · queued"
+                                                                     : "Claude Desktop behind",
                          button: "Rebuild Now") { actions.rebuildClone(profile.name) }
-        } else if let v = data.quotaVendor, profile.slots[v.id] != nil {
-            QuotaRow(vendor: v, usage: model.usage[profile.name], loading: model.usageLoading) {
-                actions.openSession(profile: profile.name, vendor: v.id, terminal: nil)
-            } retry: {
-                actions.retryUsage()
-            }
         }
-    }
-}
-
-private struct QuotaRow: View {
-    let vendor: Vendor
-    let usage: Usage?
-    let loading: Bool
-    let logIn: () -> Void
-    let retry: () -> Void
-
-    var body: some View {
-        switch usage?.note {
-        case .ok?:
-            HStack(spacing: 10) {
-                Meter(label: "5h", percent: usage?.fiveHour)
-                Meter(label: "7d", percent: usage?.sevenDay)
-            }
-        case .noToken?:
-            InlineStatus(text: "\(vendor.label) quota unavailable — not signed in", button: "Log In", action: logIn)
-        case .staleToken?:
-            InlineStatus(text: "\(vendor.label) quota unavailable — token expired", button: "Log In", action: logIn)
-        case .fetchError?:
-            InlineStatus(text: "Quota check failed", button: "Retry", action: retry)
-        case .noUsageAPI?:
-            EmptyView()
-        case nil:
-            if loading { Text("Checking quota…").font(.system(size: 11)).foregroundStyle(.secondary) }
-        }
-    }
-}
-
-private struct Meter: View {
-    let label: String
-    let percent: Int?
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(label).foregroundStyle(.secondary)
-            GeometryReader { g in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.primary.opacity(0.12))
-                    if let p = percent {
-                        Capsule().fill(meterColor(p)).frame(width: g.size.width * CGFloat(min(max(p, 0), 100)) / 100)
-                    }
-                }
-            }
-            .frame(height: 4)
-            Text(percent.map { "\($0)%" } ?? "–").monospacedDigit().frame(width: 30, alignment: .trailing)
-        }
-        .font(.system(size: 10.5))
-        .frame(height: 11)
     }
 }
 
@@ -434,6 +367,7 @@ private struct VendorChip: View {
     /// Quota left, 0–100. Nil for labs with no usage API — no line is drawn
     /// rather than a guessed one.
     let remaining: Int?
+    let signedOut: Bool
     let action: () -> Void
 
     // Filled = active for this lab, outlined = holds a slot, dashed = a swap
@@ -453,11 +387,16 @@ private struct VendorChip: View {
 
     private var helpText: String {
         let state = active ? "\(vendor.label) — active in this profile" : "\(vendor.label) — slot ready"
+        if signedOut { return "\(state) · signed out" }
         return remaining.map { "\(state) · \($0)% quota left" } ?? state
     }
 
     private var chip: some View {
             HStack(spacing: 3) {
+                if signedOut {
+                    Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 8))
+                        .foregroundStyle(selected ? Color.white : Color(nsColor: .systemOrange))
+                }
                 if vendor.isolation == "swap" { Image(systemName: "arrow.left.arrow.right").font(.system(size: 8)) }
                 Text(vendor.label)
             }
@@ -512,7 +451,15 @@ private struct VendorDrawer: View {
 
     private var summary: String {
         var parts = [vendor.label, vendor.isolation == "swap" ? "one profile at a time" : "pinned per process"]
-        if usage?.note == .ok, let five = usage?.fiveHour { parts.append("\(five)% of 5h used") }
+        switch usage?.note {
+        case .ok?:
+            if let five = usage?.fiveHour, let seven = usage?.sevenDay { parts.append("5h \(five)% · 7d \(seven)% used") }
+        case .noToken?: parts.append("not signed in")
+        case .staleToken?: parts.append("token expired")
+        case .fetchError?: parts.append("quota check failed")
+        case .noUsageAPI?: break
+        case nil: if data.quotaVendor?.id == vendor.id && model.usageLoading { parts.append("checking quota…") }
+        }
         return parts.joined(separator: " · ")
     }
 
@@ -525,7 +472,10 @@ private struct VendorDrawer: View {
                     actions.openSession(profile: profile.name, vendor: vendor.id, terminal: terminal)
                 }
                 if usage?.note == .noToken || usage?.note == .staleToken {
-                    Button("Log In…") { actions.openSession(profile: profile.name, vendor: vendor.id, terminal: nil) }
+                    Button("Log In…") { actions.signIn(profile: profile.name, vendor: vendor.id, confirm: false) }
+                        .buttonStyle(PillButtonStyle(height: 22))
+                } else if usage?.note == .fetchError {
+                    Button("Retry") { actions.retryUsage() }
                         .buttonStyle(PillButtonStyle(height: 22))
                 }
                 // Make this profile the lab's default. A swap lab has one
@@ -557,13 +507,18 @@ private struct VendorDrawer: View {
                     actions.openDesktop(profile: profile.name)
                 } trailing: {
                     HStack(spacing: 5) {
-                        Text(profile.isDefault ? "installed" : data.staleClones[profile.name] == nil ? "clone current" : "clone behind")
+                        if profile.running { Circle().fill(Color(nsColor: .systemGreen)).frame(width: 6, height: 6) }
+                        Text(data.staleClones[profile.name] != nil ? "update pending" : profile.running ? "running" : "idle")
                         Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
                     }
                 }
             }
-            if vendor.id == "claude" {
-                DrawerRow(title: "Transfer session…") { actions.transferSession(profile: profile.name) }
+            DrawerRow(title: "Sign in again…") {
+                actions.signIn(profile: profile.name, vendor: vendor.id, confirm: true)
+            }
+            .help("Sign this profile's \(vendor.label) out and back in, e.g. after using the wrong account")
+            if vendor.hasSessions {
+                DrawerRow(title: "Transfer session…") { actions.transferSession(profile: profile.name, vendor: vendor.id) }
             }
         }
     }
@@ -645,19 +600,19 @@ private struct SessionsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            SectionLabel(title: "Recent sessions", detail: data.sessionVendor?.label ?? "")
+            SectionLabel(title: "Recent sessions", detail: "")
             ForEach(data.sessions.prefix(2), id: \.id) { s in
                 Button { actions.resumeSession(s) } label: {
                     HStack(alignment: .top, spacing: 8) {
                         Circle().fill(profileColor(s.profile)).frame(width: 6, height: 6).padding(.top, 5)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(s.cwd.map { ($0 as NSString).lastPathComponent } ?? s.projectSlug)
+                            Text(s.cwd.map { ($0 as NSString).lastPathComponent } ?? "—")
                                 .font(.system(size: 12.5))
                             Text(s.snippet).font(.system(size: 11)).foregroundStyle(.secondary)
                         }
                         .lineLimit(1)
                         Spacer(minLength: 6)
-                        Text(Self.age.string(from: s.mtime, to: Date()) ?? "")
+                        Text("\(data.snapshot.vendor(s.vendor)?.label ?? s.vendor) · \(Self.age.string(from: s.mtime, to: Date()) ?? "")")
                             .font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                     .padding(.horizontal, 8)

@@ -12,7 +12,8 @@
 #   agents delete <Name> [--everything] [--yes]
 #   agents repatch [Name]                 rebuild Claude clone(s) after an update
 #   agents adopt [--yes]                  import existing `claudes` profiles (shared, not copied)
-#   agents sessions [Profile] [--vendor <v>]
+#   agents login <Profile> [--vendor <v>] [--switch]  sign that slot out and back in
+#   agents sessions [Profile] [--vendor <v>] [--porcelain [--limit N]]
 #   agents transfer <id> --to <Profile>|--next|--best [--from <Profile>] [--vendor <v>]
 #   agents desktop [Name|--next|--best] [--vendor <v>]
 #   agents shims [--remove]               sync <vendor>-<profile> commands on PATH
@@ -510,18 +511,7 @@ cmd_run() {
   cfg=$(config_dir "$name" "$v")
   [ -d "$cfg" ] || die "profile '$name' has no $v slot — create it: agents new $name --vendors $v"
 
-  # A swap-only vendor cannot be pinned per-process: there is no env var to set,
-  # so the only way to run it as this profile is to make the profile active.
-  # That is a global side effect, so it needs an explicit --switch.
-  if [ "$(vendor_isolation "$v")" = swap ]; then
-    cur=$(active_profile "$v")
-    if [ "$cur" != "$name" ]; then
-      [ "$switch" = 1 ] || die "$(vendor_label "$v") has no config-dir env var, so '$name' must be the active profile (currently '$cur').
-  Switch globally and run:  agents run $name --vendor $v --switch
-  Or switch on its own:     agents use $name --vendor $v"
-      switch_vendor "$name" "$v" >&2
-    fi
-  fi
+  pin_swap_vendor "$name" "$v" "$switch" run
 
   if [ -n "$sess" ]; then
     [ "$src" = "$name" ] || cmd_transfer "$sess" --from "$src" --to "$name" --vendor "$v" >&2
@@ -535,6 +525,19 @@ cmd_run() {
     exec_vendor "$v" "$cfg" "$cli" "$(resume_flag "$v")" "$sess" "$@"
   fi
   exec_vendor "$v" "$cfg" "$cli" "$@"
+}
+
+# A swap-only vendor cannot be pinned per-process: there is no env var to set,
+# so the only way to run it as this profile is to make the profile active.
+# That is a global side effect, so it needs an explicit --switch.
+pin_swap_vendor() {  # profile, vendor, switch 0|1, command name for the hint
+  [ "$(vendor_isolation "$2")" = swap ] || return 0
+  ps_cur=$(active_profile "$2")
+  [ "$ps_cur" != "$1" ] || return 0
+  [ "$3" = 1 ] || die "$(vendor_label "$2") has no config-dir env var, so '$1' must be the active profile (currently '$ps_cur').
+  Switch globally and run:  agents $4 $1 --vendor $2 --switch
+  Or switch on its own:     agents use $1 --vendor $2"
+  switch_vendor "$1" "$2" >&2
 }
 
 resume_flag() {
@@ -554,6 +557,48 @@ exec_vendor() {  # vendor, cfg, cli, args...
     exec env "$ev_env=$ev_val" "$@"
   fi
   exec "$@"
+}
+
+# --- login -----------------------------------------------------------------
+
+# Sign one slot out of its lab and straight back in — for when the wrong
+# account got used. Goes through the CLI's own logout/login, pinned exactly as
+# `run` pins it, so the new credentials land where that CLI will look for them.
+# Interactive (browser OAuth), so it belongs in a terminal.
+cmd_login() {
+  usage="usage: agents login <Profile> [--vendor <v>] [--switch]"
+  name="" vsel="" switch=0
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --switch) switch=1; shift ;;
+      --vendor) vsel=${2:-}; shift 2 ;;
+      --vendor=*) vsel=${1#--vendor=}; shift ;;
+      -*) die "unknown flag: $1" ;;
+      *) name=$1; shift ;;
+    esac
+  done
+  [ -n "$name" ] || die "$usage"
+  v=$(one_vendor "$vsel")
+  cli=$(vendor_cli "$v")
+  command -v "$cli" >/dev/null 2>&1 || \
+    die "$(vendor_label "$v") CLI not found — install it: $(vendor_install_hint "$v")"
+  want=$name; name=$(resolve_profile "$want") || die "no profile named '$want' (see: agents list)"
+  cfg=$(config_dir "$name" "$v")
+  [ -d "$cfg" ] || die "profile '$name' has no $v slot — create it: agents new $name --vendors $v"
+  pin_swap_vendor "$name" "$v" "$switch" login
+
+  echo "Signing $(vendor_label "$v") out of '$name'…"
+  out_args=$(vendor_logout "$v")
+  if [ -n "$out_args" ]; then
+    # shellcheck disable=SC2086
+    ( exec_vendor "$v" "$cfg" "$cli" $out_args ) || \
+      echo "agents: '$cli $out_args' reported an error — signing in anyway" >&2
+  else
+    for f in $(vendor_cred_files "$v"); do rm -f "$cfg/$f"; done
+  fi
+  echo "Now sign in with the account '$name' should use."
+  # shellcheck disable=SC2086
+  exec_vendor "$v" "$cfg" "$cli" $(vendor_login "$v")
 }
 
 # --- shims -----------------------------------------------------------------
@@ -850,29 +895,34 @@ warn_unadopted() {
 
 # --- sessions --------------------------------------------------------------
 
-# First "cwd" and first user prompt from the head of a session transcript.
-# Claude and Codex both put cwd in their opening records, so one reader serves
-# both; the prompt key differs, hence the two greps.
+# Working dir and first real prompt of a transcript. Both labs record cwd in
+# their opening records. The prompt is the first text on a user-role line that
+# isn't injected context — Claude's meta lines and <system-reminder>s, Codex's
+# <environment_context> and AGENTS.md — and Codex can put 100 KB of setup before it, so this
+# scans whole lines rather than a fixed head.
 session_meta() {  # path -> cwd \t snippet
-  head=$(head -c 16384 "$1" 2>/dev/null || true)
-  cwd=$(printf '%s' "$head" | grep -o '"cwd":"[^"]*"' | head -1 | sed 's/^"cwd":"//; s/"$//')
-  snippet=$(printf '%s' "$head" | grep -o '"content":"[^"]*' | head -1 | cut -c12- | cut -c1-70)
-  if [ -z "$snippet" ]; then
-    snippet=$(printf '%s' "$head" | grep -o '"text":"[^"]*' | head -1 | cut -c9- | cut -c1-70)
-  fi
+  cwd=$(grep -m1 -o '"cwd":"[^"]*"' "$1" 2>/dev/null | sed 's/^"cwd":"//; s/"$//' || true)
+  snippet=$(grep -m 40 '"role":"user"' "$1" 2>/dev/null | grep -v '"isMeta":true' \
+    | grep -o '"\(text\|content\)":"[^"]*' | sed 's/^"[a-z]*":"//' \
+    | grep -v -e '^<' -e '^# AGENTS.md instructions' -e '^\[Request interrupted' | head -1 | cut -c1-70 || true)
   snippet=$(printf '%s' "$snippet" | sed 's/\\[nt]/ /g; s/\\"/"/g')
   printf '%s\t%s\n' "$cwd" "${snippet:-(no prompt)}"
 }
 
-# Every transcript file for one (profile, vendor), newest first.
-session_files() {  # profile, vendor
-  sf_cfg=$(config_dir "$1" "$2")
-  [ -d "$sf_cfg" ] || return 0
+# Where one (profile, vendor) keeps its transcripts; nothing if it keeps none.
+session_root() {  # profile, vendor
+  sr_cfg=$(config_dir "$1" "$2")
   case $(vendor_sessions "$2") in
-    projects) find "$sf_cfg/projects" -type f -name '*.jsonl' 2>/dev/null ;;
-    sessions) find "$sf_cfg/sessions" -type f -name '*.jsonl' 2>/dev/null ;;
-    *) return 0 ;;
+    projects) echo "$sr_cfg/projects" ;;   # projects/<slug>/<uuid>.jsonl
+    sessions) echo "$sr_cfg/sessions" ;;   # sessions/<y>/<m>/<d>/rollout-*.jsonl
   esac
+}
+
+# Every transcript file for one (profile, vendor).
+session_files() {  # profile, vendor
+  sf_dir=$(session_root "$1" "$2")
+  [ -n "$sf_dir" ] && [ -d "$sf_dir" ] || return 0
+  find "$sf_dir" -type f -name '*.jsonl' 2>/dev/null
 }
 
 # Codex names files rollout-<timestamp>-<uuid>.jsonl; Claude names them <uuid>.jsonl.
@@ -897,16 +947,51 @@ find_session() {  # id, vendor, [profile]
   done | head -1 | grep . || return 1
 }
 
+# Machine-readable, newest first, across every profile and every lab whose
+# transcripts we can read unless narrowed. Transcript heads are read only for
+# the rows that survive --limit. A contract for the tray, like `porcelain`:
+#   <profile> <vendor> <session-id> <mtime epoch> <cwd> <first prompt>
+sessions_porcelain() {  # profiles, vendors, limit ("" = all)
+  for sp_n in $1; do
+    for sp_v in $2; do
+      sp_dir=$(session_root "$sp_n" "$sp_v")
+      [ -n "$sp_dir" ] && [ -d "$sp_dir" ] || continue
+      # One stat per batch of files, not per file: profiles hold thousands.
+      find "$sp_dir" -type f -name '*.jsonl' -exec stat -f "%m%t$sp_n%t$sp_v%t%N" {} + 2>/dev/null
+    done
+  done | sort -rn | { if [ -n "$3" ]; then head -n "$3"; else cat; fi; } | \
+  while IFS="$(printf '\t')" read -r sp_m sp_n sp_v sp_f; do
+    printf '%s\t%s\t%s\t%s\t%s\n' "$sp_n" "$sp_v" "$(session_id_of "$sp_f")" "$sp_m" "$(session_meta "$sp_f")"
+  done
+}
+
 cmd_sessions() {
-  name="" vsel=""
+  name="" vsel="" porcelain=0 limit=""
   while [ $# -gt 0 ]; do
     case $1 in
       --vendor) vsel=${2:-}; shift 2 ;;
       --vendor=*) vsel=${1#--vendor=}; shift ;;
+      --porcelain) porcelain=1; shift ;;
+      --limit) limit=${2:-}; shift 2 ;;
       -*) die "unknown flag: $1" ;;
       *) name=$1; shift ;;
     esac
   done
+  if [ "$porcelain" = 1 ]; then
+    case $limit in ''|*[!0-9]*) [ -z "$limit" ] || die "--limit takes a number" ;; esac
+    if [ -n "$name" ]; then
+      want=$name; profiles=$(resolve_profile "$want") || die "no profile named '$want'"
+    else
+      profiles=$(all_profiles)
+    fi
+    if [ -n "$vsel" ]; then
+      vendors=$(one_vendor "$vsel")
+    else
+      vendors=$(for x in $(vendors_installed); do [ "$(vendor_sessions "$x")" != none ] && echo "$x"; done; true)
+    fi
+    sessions_porcelain "$profiles" "$vendors" "$limit"
+    return 0
+  fi
   v=$(one_vendor "$vsel")
   [ "$(vendor_sessions "$v")" != none ] || \
     die "$(vendor_label "$v") stores sessions in a format agents doesn't read yet"
@@ -1083,15 +1168,15 @@ cmd_profiles() { all_profiles; }
 # above. Padding and emoji belong to the human-facing commands; this one is a
 # contract, and it is the only thing the Swift side parses.
 #
-#   V <vendor> <installed 0|1> <isolation> <desktop> <usage> <label>
+#   V <vendor> <installed 0|1> <isolation> <desktop> <usage> <label> <sessions>
 #   P <profile> <desktop-running 0|1> <vendor,vendor,…  or "-">
 #   A <active-summary>
 cmd_porcelain() {
   for v in $N2_VENDORS; do
     if vendor_installed "$v"; then i=1; else i=0; fi
-    printf 'V\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf 'V\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$v" "$i" "$(vendor_isolation "$v")" "$(vendor_desktop "$v")" \
-      "$(vendor_usage "$v")" "$(vendor_label "$v")"
+      "$(vendor_usage "$v")" "$(vendor_label "$v")" "$(vendor_sessions "$v")"
   done
   for n in $(all_profiles); do
     if profile_running "$n"; then r=1; else r=0; fi
@@ -1108,7 +1193,7 @@ cmd_porcelain() {
 }
 
 cmd_help() {
-  sed -n '3,21p' "$self" | sed 's/^# \{0,3\}//'
+  sed -n '3,22p' "$self" | sed 's/^# \{0,3\}//'
 }
 
 cmd=${1:-help}
@@ -1125,6 +1210,7 @@ case $cmd in
   repatch)  cmd_repatch "$@" ;;
   adopt)    cmd_adopt "$@" ;;
   sessions) cmd_sessions "$@" ;;
+  login)    cmd_login "$@" ;;
   transfer) cmd_transfer "$@" ;;
   desktop)  cmd_desktop "$@" ;;
   shims)    cmd_shims "$@" ;;

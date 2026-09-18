@@ -15,8 +15,10 @@ struct Vendor {
     let desktop: String     // "clone" | "launch" | "none"
     let usage: String       // "oauth" | "none"
     let label: String
+    let sessions: String    // transcript layout, "none" when agents can't read them
 
     var hasUsageAPI: Bool { usage == "oauth" }
+    var hasSessions: Bool { sessions != "none" }
     var clonesDesktopApp: Bool { desktop == "clone" }
 }
 
@@ -52,7 +54,8 @@ struct Snapshot {
             switch f.first {
             case "V" where f.count >= 7:
                 vendors.append(Vendor(id: f[1], installed: f[2] == "1", isolation: f[3],
-                                      desktop: f[4], usage: f[5], label: f[6]))
+                                      desktop: f[4], usage: f[5], label: f[6],
+                                      sessions: f.count > 7 ? f[7] : "none"))
             case "P" where f.count >= 4:
                 var slots: [String: String] = [:]
                 if f[3] != "-" {
@@ -69,5 +72,26 @@ struct Snapshot {
             }
         }
         return Snapshot(vendors: vendors, profiles: profiles, active: active)
+    }
+}
+
+// One row of `agents sessions --porcelain`: a resumable transcript in some
+// profile's slot for some lab, newest first.
+struct SessionInfo {
+    let profile: String
+    let vendor: String
+    let id: String
+    let mtime: Date
+    let cwd: String?
+    let snippet: String
+
+    static func parse(_ text: String) -> [SessionInfo] {
+        text.split(separator: "\n").compactMap { line in
+            let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard f.count >= 6, let epoch = TimeInterval(f[3]) else { return nil }
+            return SessionInfo(profile: f[0], vendor: f[1], id: f[2],
+                               mtime: Date(timeIntervalSince1970: epoch),
+                               cwd: f[4].isEmpty ? nil : f[4], snippet: f[5])
+        }
     }
 }

@@ -116,7 +116,7 @@ test "$(run_agents active)" = mixed
 
 # --- porcelain contract (the tray parses this) -----------------------------
 porcelain=$(run_agents porcelain)
-print -r -- "$porcelain" | grep -q '^V	claude	1	env	clone	oauth	Claude Code$'
+print -r -- "$porcelain" | grep -q '^V	claude	1	env	clone	oauth	Claude Code	projects$'
 print -r -- "$porcelain" | grep -q '^P	Work	'
 print -r -- "$porcelain" | grep -q '^A	'
 # Every P row lists its vendors as comma-separated <vendor>:<state> pairs.
@@ -127,6 +127,39 @@ print -r -- "$porcelain" | awk -F'\t' '$1=="P" && $4!="-" {print $4}' \
 # vendor with no usage API says so per row instead of printing an empty table.
 usage=$(run_agents best --porcelain --vendor codex)
 print -r -- "$usage" | grep -qx 'Work	-	-	-	no-usage-api'
+
+# Recent sessions span labs, newest first, and skip injected context to reach
+# the first real prompt.
+mkdir -p "$home/.n2-agents/Work/claude/projects/p" "$home/.n2-agents/Work/codex/sessions/2026/01/01"
+cat > "$home/.n2-agents/Work/claude/projects/p/c1.jsonl" <<'JSONL'
+{"type":"user","cwd":"/src/alpha","isMeta":true,"message":{"role":"user","content":"Caveat: injected"}}
+{"type":"user","cwd":"/src/alpha","message":{"role":"user","content":[{"type":"text","text":"fix the parser"}]}}
+JSONL
+cat > "$home/.n2-agents/Work/codex/sessions/2026/01/01/rollout-2026-01-01T00-00-00-x1.jsonl" <<'JSONL'
+{"type":"session_meta","payload":{"cwd":"/src/beta"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>x</environment_context>"}]}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /src/beta"}]}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"ship the release"}]}}
+JSONL
+touch -t 202601010000 "$home/.n2-agents/Work/claude/projects/p/c1.jsonl"
+recent=$(run_agents sessions --porcelain --limit 2)
+test "$(print -r -- "$recent" | sed -n 1p | cut -f1-3,5,6)" = "Work	codex	x1	/src/beta	ship the release"
+test "$(print -r -- "$recent" | sed -n 2p | cut -f1-3,5,6)" = "Work	claude	c1	/src/alpha	fix the parser"
+test "$(run_agents sessions --porcelain Work --vendor claude | wc -l | tr -d ' ')" = 1
+
+# login signs the pinned slot out and back in through the CLI's own commands.
+out=$(run_agents login Work --vendor codex 2>&1)
+test "$(print -r -- "$out" | grep -c "CODEX_HOME=$home/.n2-agents/Work/codex")" = 2
+# A swap lab without its own logout clears the saved credentials instead — and
+# like `run`, only once the profile is allowed to become the active one.
+echo creds > "$home/.n2-agents/Work/gemini/oauth_creds.json"
+if run_agents login Work --vendor gemini >/dev/null 2>&1; then
+  echo "login switched a swap vendor without --switch" >&2
+  exit 1
+fi
+test -f "$home/.n2-agents/Work/gemini/oauth_creds.json"
+run_agents login Work --vendor gemini --switch >/dev/null 2>&1
+test ! -e "$home/.n2-agents/Work/gemini/oauth_creds.json"
 
 # --- adopt: shares claudes state, never copies it --------------------------
 adopt_home="$test_root/adopt-home"
