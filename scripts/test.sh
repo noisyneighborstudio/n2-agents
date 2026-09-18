@@ -32,6 +32,7 @@ zsh -n install.sh uninstall.sh make-claude-profile.sh repatch-claude-profiles.sh
 bash -n shell/agents.bash
 command -v fish >/dev/null && fish -n shell/agents.fish
 swiftc -typecheck tray/main.swift tray/UpdateChannel.swift tray/Vendors.swift
+swiftc -typecheck scripts/make-icon.swift
 channel_test=$(mktemp -d "$TMPDIR/channel.XXXXXX")/update-channel-tests
 swiftc tray/UpdateChannel.swift tests/UpdateChannelTests.swift -o "$channel_test"
 "$channel_test"
