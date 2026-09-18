@@ -26,19 +26,19 @@ else
   ./scripts/release-build.sh "$version" "$build"
 fi
 
-codesign --verify --deep --strict --verbose=2 tray/build/N2Agents.app
+codesign --verify --deep --strict --verbose=2 "tray/build/N2 Agents.app"
 
 # Every @rpath dependency must resolve inside the bundle. A missing rpath kills
 # the app in dyld before main(), which is how 0.10.1 shipped un-launchable.
-binary=tray/build/N2Agents.app/Contents/MacOS/N2AgentsTray
+binary="tray/build/N2 Agents.app/Contents/MacOS/N2 Agents"
 otool -l "$binary" | grep -q '@executable_path/../Frameworks' \
   || { echo "✗ $binary has no @executable_path/../Frameworks rpath" >&2; exit 1 }
 for dep in $(otool -L "$binary" | awk '/@rpath\//{print $1}'); do
-  [[ -f "tray/build/N2Agents.app/Contents/Frameworks/${dep#@rpath/}" ]] \
+  [[ -f "tray/build/N2 Agents.app/Contents/Frameworks/${dep#@rpath/}" ]] \
     || { echo "✗ unresolvable dependency: $dep" >&2; exit 1 }
 done
 if [[ -n ${NOTARY_KEY:-} ]]; then
-  xcrun stapler validate tray/build/N2Agents.app
+  xcrun stapler validate "tray/build/N2 Agents.app"
 fi
 
 setopt null_glob   # zsh errors on a non-matching glob, even for rm -f

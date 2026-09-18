@@ -219,12 +219,13 @@ allowed. `agents list` shows which is where; `agents use <Profile>` realigns the
 
 ```sh
 ./scripts/test.sh      # syntax, adapter table, profile lifecycle, shims, release plumbing
-./tray/build.sh        # builds tray/build/N2Agents.app
+./tray/build.sh        # builds "tray/build/N2 Agents.app"
 ```
 
-The bundle is `N2Agents.app` on disk with `CFBundleDisplayName` set to
-"N2 Agents" — Finder and the menu bar show the pretty name while no script has
-to deal with a space in the path.
+The app is `N2 Agents.app`, with the same bundle and executable name, so
+Finder, Activity Monitor and Login Items all agree. Installs made before the
+rename live at `N2Agents.app`; Sparkle updates keep that path, and `install.sh`
+moves them (and re-points the PATH links) to the new name.
 
 ## License
 

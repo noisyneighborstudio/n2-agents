@@ -228,6 +228,11 @@ test ! -e "$shim_bin/grok-expo"
 # Foreign links are never clobbered.
 test "$(readlink "$shim_bin/claude-client")" = "$test_root/foreign/agent-as"
 
+# A shim left pointing into the pre-rename N2Agents.app is ours: re-pointed.
+ln -sf "/Applications/N2Agents.app/Contents/Resources/agent-as" "$shim_bin/claude-expo"
+HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" ./agents shims >/dev/null
+test "$(readlink "$shim_bin/claude-expo")" = "$PWD/shell/agent-as"
+
 # Concurrent syncs must not leave the lock behind.
 HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" TMPDIR="$test_root/one" ./agents shims >/dev/null &
 first=$!

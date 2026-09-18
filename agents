@@ -662,6 +662,13 @@ cmd_shims() {
   trap cleanup_shim_lock 0
   trap 'exit 1' 1 2 15
 
+  # Ours = pointing at this install's agent-as, or at the one inside the
+  # pre-rename N2Agents.app, which the next sync re-points here.
+  our_shim() {
+    case $(readlink "$1") in "$src"|*/N2Agents.app/Contents/Resources/agent-as) return 0 ;; esac
+    return 1
+  }
+
   wanted=""
   if [ "$remove" = 0 ]; then
     [ -x "$src" ] || die "shim script missing: $src"
@@ -685,7 +692,7 @@ cmd_shims() {
     for v in $N2_VENDORS; do
       for f in "$prune_dir/$v"-*; do
         [ -L "$f" ] || continue
-        [ "$(readlink "$f")" = "$src" ] || continue
+        our_shim "$f" || continue
         if [ "$prune_dir" != "$dir" ] || ! printf '%s\n' "$wanted" | grep -qx "$(basename "$f")"; then
           rm -f "$f"
           echo "✓ removed $f"
@@ -703,7 +710,7 @@ cmd_shims() {
       continue
     fi
     if [ -e "$dir/$b" ] || [ -L "$dir/$b" ]; then
-      if [ ! -L "$dir/$b" ] || [ "$(readlink "$dir/$b")" != "$src" ]; then
+      if [ ! -L "$dir/$b" ] || ! our_shim "$dir/$b"; then
         echo "agents: $dir/$b exists and isn't ours — skipped" >&2
         continue
       fi

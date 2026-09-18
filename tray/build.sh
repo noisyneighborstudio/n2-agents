@@ -1,8 +1,8 @@
 #!/bin/zsh
-# Builds tray/build/N2Agents.app with the CLI + adapter table embedded in Resources.
-# The bundle is N2Agents.app on disk (no space) while CFBundleDisplayName reads
-# "N2 Agents" — Finder and the menu bar show the pretty name, and every script
-# that touches the path stays free of quoting hazards.
+# Builds "tray/build/N2 Agents.app" with the CLI + adapter table embedded in
+# Resources. The bundle, its name and its executable are all "N2 Agents", so
+# Finder, Activity Monitor and Login Items agree — every path is quoted.
+# Release zips keep the space-free N2Agents name: they end up in URLs.
 # Signing: uses a "Developer ID Application" identity if one is in the keychain
 # (override with N2_SIGN_IDENTITY), otherwise falls back to ad-hoc.
 set -euo pipefail
@@ -10,14 +10,14 @@ cd "${0:A:h}"
 
 command -v swift >/dev/null || { echo "✗ swift not found. Install Xcode Command Line Tools: xcode-select --install" >&2; exit 1 }
 
-app="build/N2Agents.app"
+app="build/N2 Agents.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Frameworks"
 
 echo "Compiling…"
 swift build --package-path .. -c release --product N2AgentsTray
 bin_dir=$(swift build --package-path .. -c release --show-bin-path)
-cp "$bin_dir/N2AgentsTray" "$app/Contents/MacOS/N2AgentsTray"
+cp "$bin_dir/N2AgentsTray" "$app/Contents/MacOS/N2 Agents"
 sparkle_framework=$(find ../.build -type d -name Sparkle.framework -print -quit)
 [[ -n $sparkle_framework ]] || { echo "✗ Sparkle.framework was not produced" >&2; exit 1; }
 ditto "$sparkle_framework" "$app/Contents/Frameworks/Sparkle.framework"

@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleExecutable</key>
-	<string>N2AgentsTray</string>
+	<string>N2 Agents</string>
 	<key>CFBundleIconFile</key>
 	<string>n2agents</string>
 	<key>CFBundleIdentifier</key>
 	<string>dev.sethwebster.n2agents</string>
 	<key>CFBundleName</key>
-	<string>N2Agents</string>
+	<string>N2 Agents</string>
 	<key>CFBundleDisplayName</key>
 	<string>N2 Agents</string>
 	<key>CFBundlePackageType</key>
