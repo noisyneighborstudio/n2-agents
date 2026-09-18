@@ -13,7 +13,8 @@ let package = Package(
             name: "N2AgentsTray",
             dependencies: ["Sparkle"],
             path: "tray",
-            sources: ["main.swift", "UpdateChannel.swift", "Vendors.swift"],
+            sources: ["main.swift", "UpdateChannel.swift", "Vendors.swift", "ProfileColor.swift",
+                      "PanelModel.swift", "PanelView.swift"],
             // Sparkle.framework ships in Contents/Frameworks; without this rpath
             // dyld cannot find it and the app dies before main().
             linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]

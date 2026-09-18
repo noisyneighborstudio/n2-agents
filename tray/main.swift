@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 #if canImport(Sparkle)
 import Sparkle
 typealias UpdaterDelegateProtocol = SPUUpdaterDelegate
@@ -6,7 +7,7 @@ typealias UpdaterDelegateProtocol = SPUUpdaterDelegate
 protocol UpdaterDelegateProtocol {}
 #endif
 
-// N2 Agents — menu bar launcher for cross-vendor agent profiles.
+// N2 Agents — menu bar panel for cross-vendor agent profiles.
 //
 // A profile is an IDENTITY holding one slot per lab (Claude, Codex, Grok, …),
 // so switching moves every vendor at once. The whole profile/vendor model is
@@ -14,16 +15,17 @@ protocol UpdaterDelegateProtocol {}
 // out for anything with side effects, so the two cannot drift.
 // Helper scripts are embedded in the app bundle (Contents/Resources).
 //
-// Resident duties beyond the menu:
+// Resident duties beyond the panel:
 //  - Auto-repatch: detects Claude.app updates (version drift vs clones) and
 //    silently rebuilds idle clones in the background.
 //  - Self-update: delegates signed automatic and manual updates to Sparkle.
 
-// A profile as the menu needs it: the CLI's porcelain row plus the two
+// A profile as the panel needs it: the CLI's porcelain row plus the two
 // Claude-desktop paths the clone/delete/reveal actions operate on.
 struct Profile {
     let name: String
     let hasApp: Bool
+    let running: Bool
     let dataDir: String
     let configDir: String
     /// vendor id -> "active" | "ok"; absent means no slot for that vendor.
@@ -36,6 +38,7 @@ struct Profile {
 // A Claude Code CLI session: projects/<slug>/<uuid>.jsonl inside a config dir.
 struct SessionInfo {
     let id: String
+    let profile: String
     let projectSlug: String
     let jsonlPath: String
     let cwd: String?
@@ -90,15 +93,19 @@ let terminalSpecs: [TerminalSpec] = [
     }),
 ]
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UpdaterDelegateProtocol {
+final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtocol, PanelActions {
     private var statusItem: NSStatusItem!
+    private let model = PanelModel()
+    private let popover = NSPopover()
     private let fm = FileManager.default
     private let home = NSHomeDirectory()
     private var configRoot: String { home + "/.n2-agents" }
     private let claudeBundleID = "com.anthropic.claudefordesktop"
     private let newIssueURL = "https://github.com/noisyneighborstudio/n2-agents/issues/new"
 
-    private var repatchInFlight = Set<String>()
+    private var repatchInFlight = Set<String>() {
+        didSet { model.repatching = repatchInFlight }
+    }
     private var appsDirSource: DispatchSourceFileSystemObject?
     private var repatchDebounce: DispatchWorkItem?
 #if canImport(Sparkle)
@@ -107,9 +114,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
     )
 #endif
 
-    private var autoRepatchEnabled: Bool {
-        get { UserDefaults.standard.object(forKey: "autoRepatch") as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: "autoRepatch") }
+    var autoRepatch: Bool {
+        UserDefaults.standard.object(forKey: "autoRepatch") as? Bool ?? true
     }
 
     // Scripts live in the bundle's Resources; fall back to the source tree when
@@ -149,9 +155,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         } else {
             statusItem.button?.title = "🤖"
         }
-        let menu = NSMenu()
-        menu.delegate = self
-        statusItem.menu = menu
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(togglePanel)
+
+        let hosting = NSHostingController(rootView: PanelView(model: model, actions: self))
+        hosting.sizingOptions = .preferredContentSize
+        popover.contentViewController = hosting
+        popover.behavior = .transient
+        popover.animates = false
 
         // Auto-repatch: event-driven — watch /Applications for bundle swaps
         // (Claude's updater renames the new version into place, which modifies
@@ -173,160 +184,106 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
 #endif
     }
 
-    // MARK: - Menu construction (rebuilt each time it opens)
+    // MARK: - Panel (re-read every time it opens)
 
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        menu.removeAllItems()
-        cachedSnapshot = nil
-        let profiles = discoverProfiles()
-        let desktopPath = claudeAppPath
-        let claudeInstalled = desktopPath != nil
-
-        if !claudeInstalled {
-            menu.addItem(NSMenuItem(title: "⚠️ Claude Desktop not found — CLI profiles still work",
-                                    action: nil, keyEquivalent: ""))
-            menu.addItem(actionItem("Locate Claude Desktop…", #selector(locateClaude(_:)), nil))
-            menu.addItem(actionItem("Download Claude Desktop…", #selector(downloadClaude(_:)), nil))
-            menu.addItem(.separator())
+    @objc private func togglePanel() {
+        if popover.isShown {
+            popover.performClose(nil)
+            return
         }
-
-        if profiles.isEmpty {
-            menu.addItem(NSMenuItem(title: "No profiles yet", action: nil, keyEquivalent: ""))
-        }
-
-        let active = activeProfileName()
-        let snap = snapshot()
-        let terms = installedTerminals()
-
-        // Default is an ordinary row now — the CLI reports it like any other
-        // profile — so it no longer needs a hand-written duplicate of this block.
-        for profile in profiles {
-            var marker = (profile.isDefault ? isDefaultRunning() : isRunning(profile)) ? "🟢" : "⚪️"
-            var suffix = ""
-            if repatchInFlight.contains(profile.name) {
-                marker = "⏳"
-                suffix = "  (repatching…)"
-            } else if isStale(profile) {
-                suffix = "  ⬆️ update pending"
-            }
-            let item = NSMenuItem(title: "\(marker) \(profile.name)\(suffix)", action: nil, keyEquivalent: "")
-            item.state = active == profile.name ? .on : .off
-
-            let sub = NSMenu()
-            if active != profile.name {
-                sub.addItem(actionItem("Set as Active (all vendors)", #selector(setActiveProfile(_:)), profile.name))
-                sub.addItem(.separator())
-            }
-            // One entry per vendor this profile actually holds a slot for. A
-            // vendor with no slot is simply absent rather than shown broken.
-            // Vendor-specific extras (Claude Desktop, session transfer) live
-            // inside that vendor's block, so the profile menu reads as N labs.
-            let slotted = snap.installedVendors.filter { profile.slots[$0.id] != nil }
-            if slotted.isEmpty {
-                sub.addItem(NSMenuItem(title: "No vendor slots yet", action: nil, keyEquivalent: ""))
-            }
-            for v in slotted {
-                let tag = profile.isActive(for: v.id) ? "  ✓" : ""
-                sub.addItem(actionItem("Open \(v.label)\(tag)  (\(preferredTerminal.name))",
-                                       #selector(openVendorTerminal(_:)), "\(profile.name)|\(v.id)"))
-                if terms.count > 1 {
-                    let inItem = NSMenuItem(title: "Open \(v.label) In", action: nil, keyEquivalent: "")
-                    let inMenu = NSMenu()
-                    for t in terms {
-                        inMenu.addItem(actionItem(t.name, #selector(openVendorTerminalIn(_:)),
-                                                  "\(profile.name)|\(v.id)|\(t.bundleId)"))
-                    }
-                    inItem.submenu = inMenu
-                    sub.addItem(inItem)
-                }
-                sub.addItem(actionItem("Copy Command:  \(v.id)-\(profile.name.lowercased())",
-                                       #selector(copyVendorCommand(_:)), "\(profile.name)|\(v.id)"))
-                if v.id == "claude" {
-                    if profile.hasApp && claudeInstalled {
-                        sub.addItem(actionItem("Open Claude Desktop",
-                                               profile.isDefault ? #selector(openDefaultDesktop(_:)) : #selector(openDesktop(_:)),
-                                               profile.name))
-                        sub.addItem(actionItem("Reveal Claude Desktop Data", #selector(revealData(_:)), profile.name))
-                    }
-                    sub.addItem(actionItem("Transfer Claude Code Session…", #selector(transferProfileSession(_:)), profile.name))
-                }
-                sub.addItem(.separator())
-            }
-
-            sub.addItem(actionItem("Add Vendor…", #selector(addVendor(_:)), profile.name))
-            if !profile.isDefault {
-                sub.addItem(.separator())
-                sub.addItem(actionItem("Delete Profile…", #selector(deleteProfile(_:)), profile.name))
-            }
-            item.submenu = sub
-            menu.addItem(item)
-        }
-
-        menu.addItem(.separator())
-        menu.addItem(actionItem("New Profile…", #selector(newProfile(_:)), nil))
-        if claudeInstalled {
-            menu.addItem(actionItem("Re-patch Claude Desktop Clones", #selector(repatchAll(_:)), nil))
-        }
-        let toggle = actionItem("Auto-repatch Claude Desktop Clones", #selector(toggleAutoRepatch(_:)), nil)
-        toggle.state = autoRepatchEnabled ? .on : .off
-        menu.addItem(toggle)
-        let channelItem = NSMenuItem(title: "Update Channel", action: nil, keyEquivalent: "")
-        let channelMenu = NSMenu()
-        for channel in UpdateChannel.allCases {
-            let item = actionItem(channel.rawValue.capitalized, #selector(selectUpdateChannel(_:)), channel.rawValue)
-            item.state = channel == UpdateChannel.selected() ? .on : .off
-            channelMenu.addItem(item)
-        }
-        channelItem.submenu = channelMenu
-        menu.addItem(channelItem)
-        menu.addItem(actionItem("Check for N2 Agents Updates…", #selector(checkForUpdates(_:)), nil))
-        let allTerms = installedTerminals()
-        if allTerms.count > 1 {
-            let termItem = NSMenuItem(title: "Open Sessions In", action: nil, keyEquivalent: "")
-            let termMenu = NSMenu()
-            for t in allTerms {
-                let i = actionItem(t.name, #selector(setPreferredTerminal(_:)), t.bundleId)
-                i.state = (t.bundleId == preferredTerminal.bundleId) ? .on : .off
-                termMenu.addItem(i)
-            }
-            termItem.submenu = termMenu
-            menu.addItem(termItem)
-        }
-        menu.addItem(.separator())
-        menu.addItem(actionItem("Report a Bug…", #selector(reportBug(_:)), nil))
-        let versionItem = NSMenuItem(title: "N2 Agents v\(currentVersion)", action: nil, keyEquivalent: "")
-        menu.addItem(versionItem)
-        menu.addItem(NSMenuItem(title: "Quit N2 Agents", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        guard let button = statusItem.button else { return }
+        refreshPanel()
+        NSApp.activate(ignoringOtherApps: true)
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
     }
 
-    private func actionItem(_ title: String, _ action: Selector, _ profile: String?) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
-        item.target = self
-        item.representedObject = profile
-        return item
+    // Anything that opens a window, dialog or terminal closes the panel first:
+    // a transient popover would otherwise vanish under it mid-click.
+    private func dismissPanel() {
+        popover.performClose(nil)
+    }
+
+    // A refresh reads the CLI and the disk off the main thread and publishes
+    // one PanelData. Refreshes can overlap (open, close, reopen); only the
+    // newest one is allowed to land, so a slow early read never overwrites a
+    // fresh one.
+    private var refreshGeneration = 0
+
+    private func refreshPanel() {
+        refreshGeneration += 1
+        let generation = refreshGeneration
+        DispatchQueue.global(qos: .userInitiated).async {
+            let data = self.loadPanelData()
+            DispatchQueue.main.async {
+                guard generation == self.refreshGeneration else { return }
+                self.model.data = data
+                if let s = self.model.selection,
+                   data.profiles.first(where: { $0.name == s.profile })?.slots[s.vendor] == nil {
+                    self.model.selection = nil
+                }
+                self.updateStatusTitle(staleExists: !data.staleClones.isEmpty)
+                self.refreshUsage(force: false)
+            }
+        }
+    }
+
+    private func loadPanelData() -> PanelData {
+        let snap = snapshot()
+        let profiles = discoverProfiles(snap)
+        let desktopVersion = claudeAppPath.flatMap(bundleVersion)
+        var stale: [String: String] = [:]
+        for p in profiles where isStale(p) {
+            stale[p.name] = bundleVersion("/Applications/Claude-\(p.name).app")
+        }
+        let preferred = preferredTerminal.name
+        let terminals = [preferred] + installedTerminals().map(\.name).filter { $0 != preferred }
+        return PanelData(snapshot: snap,
+                         profiles: profiles,
+                         desktopVersion: desktopVersion,
+                         staleClones: stale,
+                         sessions: discoverSessions(profiles: profiles.filter { $0.slots["claude"] != nil }.map(\.name),
+                                                    limit: 2),
+                         terminals: terminals)
+    }
+
+    // Quota is a network call per profile, so it runs beside the panel rather
+    // than in front of it, and is reused for a minute. One fetch at a time.
+    private var usageFetchedAt: Date?
+
+    private func refreshUsage(force: Bool) {
+        guard !model.usageLoading, let vendor = model.data?.quotaVendor else { return }
+        if !force, let t = usageFetchedAt, Date().timeIntervalSince(t) < 60 { return }
+        model.usageLoading = true
+        DispatchQueue.global(qos: .utility).async {
+            let r = self.runCLI(["best", "--porcelain", "--vendor", vendor.id])
+            DispatchQueue.main.async {
+                self.model.usageLoading = false
+                self.usageFetchedAt = Date()
+                self.model.usage = r.status == 0 ? Usage.parse(r.output) : [:]
+            }
+        }
+    }
+
+    func retryUsage() {
+        refreshUsage(force: true)
     }
 
     // MARK: - Profile discovery
 
-    // One porcelain call per menu build; the CLI is the only thing that knows
-    // what a profile is. Cached for the duration of a menu open so a submenu
-    // and its parent can't disagree.
-    private var cachedSnapshot: Snapshot?
-
-    private func snapshot(refresh: Bool = false) -> Snapshot {
-        if !refresh, let c = cachedSnapshot { return c }
+    // The CLI is the only thing that knows what a profile is: one porcelain
+    // call per refresh, and the panel renders whatever it reports.
+    private func snapshot() -> Snapshot {
         let r = runCLI(["porcelain"])
-        let snap = r.status == 0 ? Snapshot.parse(r.output) : Snapshot.empty
-        cachedSnapshot = snap
-        return snap
+        return r.status == 0 ? Snapshot.parse(r.output) : Snapshot.empty
     }
 
-    private func discoverProfiles() -> [Profile] {
-        snapshot().profiles.map { row in
+    private func discoverProfiles(_ snap: Snapshot? = nil) -> [Profile] {
+        (snap ?? snapshot()).profiles.map { row in
             Profile(name: row.name,
                     hasApp: row.name == "Default"
                         ? (claudeAppPath != nil)
                         : fm.fileExists(atPath: "/Applications/Claude-\(row.name).app"),
+                    running: row.desktopRunning,
                     dataDir: row.name == "Default"
                         ? home + "/Library/Application Support/Claude"
                         : home + "/Library/Application Support/Claude-" + row.name,
@@ -352,9 +309,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         }
     }
 
-    private func profile(from sender: NSMenuItem) -> Profile? {
-        guard let name = sender.representedObject as? String else { return nil }
-        return discoverProfiles().first { $0.name == name }
+    private func profile(named name: String) -> Profile? {
+        discoverProfiles().first { $0.name == name }
     }
 
     // MARK: - Auto-repatch (Claude.app updated -> rebuild idle clones)
@@ -397,7 +353,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         let profiles = discoverProfiles()
         let stale = profiles.filter { isStale($0) }
         updateStatusTitle(staleExists: !stale.isEmpty)
-        guard autoRepatchEnabled else { return }
+        guard autoRepatch else { return }
         for p in stale where !isRunning(p) && !repatchInFlight.contains(p.name) {
             backgroundRepatch(p.name)
         }
@@ -418,7 +374,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
                 self.autoRepatchTickStatusOnly()
                 if t.terminationStatus != 0 {
                     self.alert("Auto-repatch failed for “\(name)”",
-                               "Claude updated but the profile couldn't be rebuilt automatically:\n\n\(String(out.suffix(600)))\n\nTry 🤖 → Re-patch All, or file an issue.")
+                               "Claude updated but the profile couldn't be rebuilt automatically:\n\n\(String(out.suffix(600)))\n\nTry Re-patch All Clones Now from the N2 Agents settings menu, or file an issue.")
                 }
             }
         }
@@ -444,24 +400,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         }
     }
 
-    @objc private func toggleAutoRepatch(_ sender: NSMenuItem) {
-        autoRepatchEnabled.toggle()
-        if autoRepatchEnabled { autoRepatchTick() }
+    func setAutoRepatch(_ on: Bool) {
+        UserDefaults.standard.set(on, forKey: "autoRepatch")
+        if on { autoRepatchTick() }
+    }
+
+    func repatchAll() {
+        dismissPanel()
+        runInTerminal("\"\(scriptsDir)/repatch-claude-profiles.sh\"")
+    }
+
+    // A clone that is running can't be rebuilt in place: offer to quit it, and
+    // start the rebuild once it has actually exited.
+    func rebuildClone(_ name: String) {
+        let clonePath = "/Applications/Claude-\(name).app"
+        let running = NSWorkspace.shared.runningApplications.filter { $0.bundleURL?.path == clonePath }
+        guard !running.isEmpty else {
+            backgroundRepatch(name)
+            return
+        }
+        dismissPanel()
+        let confirm = NSAlert()
+        confirm.messageText = "Quit Claude-\(name) and rebuild it?"
+        confirm.informativeText = "The clone is on an older Claude version. Its windows close; your login and data stay."
+        confirm.addButton(withTitle: "Quit and Rebuild")
+        confirm.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard confirm.runModal() == .alertFirstButtonReturn else { return }
+        var token: NSObjectProtocol?
+        token = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            guard app?.bundleURL?.path == clonePath,
+                  !NSWorkspace.shared.runningApplications.contains(where: { $0.bundleURL?.path == clonePath }) else { return }
+            if let t = token { NSWorkspace.shared.notificationCenter.removeObserver(t) }
+            token = nil
+            self?.backgroundRepatch(name)
+        }
+        running.forEach { $0.terminate() }
+    }
+
+    func showCloneDetails() {
+        guard let data = model.data else { return }
+        let names = Set(data.staleClones.keys).union(repatchInFlight).sorted()
+        let lines = names.map { name -> String in
+            if repatchInFlight.contains(name) { return "\(name) — rebuilding" }
+            let on = data.staleClones[name].map { "on \($0)" } ?? "behind"
+            let running = data.profiles.first { $0.name == name }?.running == true
+            return "\(name) — \(on), " + (running ? "waiting until it quits" : autoRepatch ? "queued" : "auto-repatch is off")
+        }
+        dismissPanel()
+        alert("Claude \(data.desktopVersion ?? "") — clones behind", lines.joined(separator: "\n"))
     }
 
     // MARK: - Sparkle update channel
 
-    @objc private func selectUpdateChannel(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String, let channel = UpdateChannel(rawValue: raw) else { return }
+    func setUpdateChannel(_ channel: UpdateChannel) {
         UserDefaults.standard.set(channel.rawValue, forKey: UpdateChannel.preferenceKey)
+        model.updateStatus = nil
 #if canImport(Sparkle)
         updaterController.updater.resetUpdateCycle()
 #endif
     }
 
-    @objc private func checkForUpdates(_ sender: NSMenuItem) {
+    func checkForUpdates() {
+        dismissPanel()
 #if canImport(Sparkle)
-        updaterController.checkForUpdates(sender)
+        updaterController.checkForUpdates(nil)
 #else
         alert("Updates unavailable", "This development build was compiled without Sparkle.")
 #endif
@@ -479,13 +485,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
     func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
         alert("Update check failed", error.localizedDescription)
     }
+
+    func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
+        model.updateStatus = .upToDate
+    }
+
+    func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        model.updateStatus = .available
+    }
 #endif
 
     // MARK: - Actions
 
     // The path is stored in this app's preferences; the agents CLI reads the same
     // key, so scripts and menu agree on where Claude Desktop lives.
-    @objc private func locateClaude(_ sender: NSMenuItem) {
+    func locateClaude() {
+        dismissPanel()
         let panel = NSOpenPanel()
         panel.message = "Select Claude.app"
         panel.canChooseDirectories = true
@@ -504,11 +519,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         autoRepatchTick()
     }
 
-    @objc private func downloadClaude(_ sender: NSMenuItem) {
+    func downloadClaude() {
+        dismissPanel()
         NSWorkspace.shared.open(URL(string: "https://claude.ai/download")!)
     }
 
-    @objc private func reportBug(_ sender: NSMenuItem) {
+    func reportBug() {
+        dismissPanel()
         let body = """
         ## What happened?
         <!-- Tell us what went wrong. -->
@@ -537,18 +554,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         }
     }
 
-    @objc private func openDesktop(_ sender: NSMenuItem) {
-        guard let p = profile(from: sender) else { return }
-        if repatchInFlight.contains(p.name) {
-            alert("“\(p.name)” is repatching", "Claude updated and this profile is being rebuilt. It'll be back in a moment.")
+    func openDesktop(profile name: String) {
+        dismissPanel()
+        guard name != "Default" else {
+            guard let appPath = claudeAppPath else {
+                alert("Claude Desktop not found", "Install it from claude.ai/download, or point N2 Agents at it with “Locate Claude Desktop…”.")
+                return
+            }
+            NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: appPath),
+                                               configuration: NSWorkspace.OpenConfiguration())
             return
         }
-        let url = URL(fileURLWithPath: "/Applications/Claude-\(p.name).app")
+        if repatchInFlight.contains(name) {
+            alert("“\(name)” is repatching", "Claude updated and this profile is being rebuilt. It'll be back in a moment.")
+            return
+        }
+        let url = URL(fileURLWithPath: "/Applications/Claude-\(name).app")
         NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, error in
             if error != nil {
                 DispatchQueue.main.async {
-                    self.alert("Couldn't launch Claude-\(p.name)",
-                               "The app may be mid-repatch or damaged. Try “Re-patch All” from the N2 Agents menu.")
+                    self.alert("Couldn't launch Claude-\(name)",
+                               "The app may be mid-repatch or damaged. Try Re-patch All Clones Now from the N2 Agents settings menu.")
                 }
             }
         }
@@ -572,16 +598,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         return (task.terminationStatus, out.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
-    private func activeProfileName() -> String { snapshot().active }
-
-    @objc private func setActiveProfile(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String else { return }
-        setActive(name)
-    }
-
-    private func setActive(_ name: String) {
-        let r = runCLI(["use", name])
-        if r.status != 0 { alert("Couldn't switch active profile", r.output) }
+    // Switching a swap vendor rewrites its one global config dir, so it is
+    // confirmed first — the same rule the CLI enforces with --switch.
+    func setActive(profile name: String, vendor: String?) {
+        var args = ["use", name]
+        if let id = vendor {
+            args += ["--vendor", id]
+            if let v = model.data?.snapshot.vendor(id), v.isolation == "swap" {
+                dismissPanel()
+                let confirm = NSAlert()
+                confirm.messageText = "Switch \(v.label) to “\(name)”?"
+                confirm.informativeText = "\(v.label) has no per-process pinning, so this changes its login everywhere, including sessions started from other profiles."
+                confirm.addButton(withTitle: "Switch")
+                confirm.addButton(withTitle: "Cancel")
+                NSApp.activate(ignoringOtherApps: true)
+                guard confirm.runModal() == .alertFirstButtonReturn else { return }
+            }
+        }
+        let r = runCLI(args)
+        if r.status != 0 {
+            dismissPanel()
+            alert("Couldn't switch active profile", r.output)
+        }
+        refreshPanel()
     }
 
     // Always go through the CLI rather than composing an env-var prefix here:
@@ -594,63 +633,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         return cmd
     }
 
-    private func isDefaultRunning() -> Bool {
-        guard let appPath = claudeAppPath else { return false }
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-        task.arguments = ["-f", appPath + "/Contents/MacOS/Claude"]
-        task.standardOutput = FileHandle.nullDevice
-        task.standardError = FileHandle.nullDevice
-        do {
-            try task.run()
-            task.waitUntilExit()
-            return task.terminationStatus == 0
-        } catch {
-            return false
-        }
+    // terminal nil = the preferred one.
+    func openSession(profile: String, vendor id: String, terminal: String?) {
+        guard let v = model.data?.snapshot.vendor(id) else { return }
+        dismissPanel()
+        let spec = terminal.flatMap { name in terminalSpecs.first { $0.name == name } } ?? preferredTerminal
+        launchSession(sessionCommand(profile: profile, vendor: v), slug: "\(profile)-\(id)", in: spec)
     }
 
-    @objc private func openDefaultDesktop(_ sender: NSMenuItem) {
-        guard let appPath = claudeAppPath else {
-            alert("Claude Desktop not found", "Install it from claude.ai/download, or point N2 Agents at it with “Locate Claude Desktop…”.")
-            return
-        }
-        NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: appPath),
-                                           configuration: NSWorkspace.OpenConfiguration())
-    }
-
-    // representedObject is "<profile>|<vendor>" (plus "|<bundleId>" for the
-    // explicit terminal picker) — the menu's only encoding.
-    private func parseTarget(_ sender: NSMenuItem) -> (profile: String, vendor: Vendor, bundleId: String?)? {
-        guard let raw = sender.representedObject as? String else { return nil }
-        let parts = raw.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
-        guard parts.count >= 2, let v = snapshot().vendor(parts[1]) else { return nil }
-        return (parts[0], v, parts.count >= 3 ? parts[2] : nil)
-    }
-
-    @objc private func openVendorTerminal(_ sender: NSMenuItem) {
-        guard let t = parseTarget(sender) else { return }
-        launchSession(sessionCommand(profile: t.profile, vendor: t.vendor),
-                      slug: "\(t.profile)-\(t.vendor.id)", in: preferredTerminal)
-    }
-
-    @objc private func openVendorTerminalIn(_ sender: NSMenuItem) {
-        guard let t = parseTarget(sender), let id = t.bundleId,
-              let spec = terminalSpecs.first(where: { $0.bundleId == id }) else { return }
-        launchSession(sessionCommand(profile: t.profile, vendor: t.vendor),
-                      slug: "\(t.profile)-\(t.vendor.id)", in: spec)
-    }
-
-    @objc private func copyVendorCommand(_ sender: NSMenuItem) {
-        guard let t = parseTarget(sender) else { return }
+    func copyCommand(profile: String, vendor: String) {
         let pb = NSPasteboard.general
         pb.clearContents()
-        pb.setString("\(t.vendor.id)-\(t.profile.lowercased())", forType: .string)
+        pb.setString("\(vendor)-\(profile.lowercased())", forType: .string)
     }
 
     // Add a lab to an existing profile: one slot dir, plus its PATH shim.
-    @objc private func addVendor(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String else { return }
+    func addVendor(profile name: String) {
+        dismissPanel()
         let snap = snapshot()
         let profile = snap.profiles.first { $0.name == name }
         let candidates = snap.installedVendors.filter { profile?.slots[$0.id] == nil }
@@ -671,6 +670,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         let picked = candidates[max(0, popup.indexOfSelectedItem)]
         let r = runCLI(["new", name, "--vendors", picked.id, "--cli-only"])
         if r.status != 0 { alert("Couldn't add \(picked.label)", r.output) }
+        refreshPanel()
     }
 
     private func installedTerminals() -> [TerminalSpec] {
@@ -683,9 +683,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         return installed.first { $0.bundleId == saved } ?? installed.first ?? terminalSpecs[0]
     }
 
-    @objc private func setPreferredTerminal(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String else { return }
-        UserDefaults.standard.set(id, forKey: "preferredTerminal")
+    func setPreferredTerminal(_ name: String) {
+        guard let spec = terminalSpecs.first(where: { $0.name == name }) else { return }
+        UserDefaults.standard.set(spec.bundleId, forKey: "preferredTerminal")
+        refreshPanel()
     }
 
     private func launchSession(_ cmd: String, slug: String, in term: TerminalSpec) {
@@ -745,13 +746,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         }
     }
 
-    @objc private func revealData(_ sender: NSMenuItem) {
-        guard let p = profile(from: sender) else { return }
+    func revealData(profile name: String) {
+        dismissPanel()
+        guard let p = profile(named: name) else { return }
         try? fm.createDirectory(atPath: p.dataDir, withIntermediateDirectories: true)
         NSWorkspace.shared.open(URL(fileURLWithPath: p.dataDir))
     }
 
-    @objc private func newProfile(_ sender: NSMenuItem) {
+    func newProfile() {
+        dismissPanel()
         let cliOnly = claudeAppPath == nil
         let alert = NSAlert()
         let labels = snapshot().installedVendors.map(\.label).joined(separator: ", ")
@@ -784,17 +787,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         if cliOnly {
             let r = runCLI(["new", name, "--cli-only"])
             if r.status != 0 { self.alert("Couldn't create profile", r.output) }
+            refreshPanel()
             return
         }
         runInTerminal("\"\(scriptsDir)/agents\" new \(name)")
     }
 
-    @objc private func repatchAll(_ sender: NSMenuItem) {
-        runInTerminal("\"\(scriptsDir)/repatch-claude-profiles.sh\"")
-    }
-
-    @objc private func deleteProfile(_ sender: NSMenuItem) {
-        guard let p = profile(from: sender) else { return }
+    func deleteProfile(_ name: String) {
+        dismissPanel()
+        guard let p = profile(named: name) else { return }
         if isRunning(p) {
             alert("“\(p.name)” is running", "Quit this profile’s Claude Desktop first, then delete it.")
             return
@@ -819,6 +820,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         if result.status != 0 {
             alert("Delete failed", result.output)
         }
+        refreshPanel()
+    }
+
+    func quit() {
+        NSApp.terminate(nil)
     }
 
     // MARK: - Session transfer (move a CLI session between profile config dirs)
@@ -832,28 +838,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         return name == "Default" ? home + "/.claude" : slot
     }
 
-    @objc private func transferProfileSession(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String else { return }
+    func transferSession(profile name: String) {
+        dismissPanel()
         transferUI(fromName: name)
     }
 
-    private func discoverSessions(configDir: String) -> [SessionInfo] {
-        let projectsDir = configDir + "/projects"
-        var sessions: [SessionInfo] = []
-        guard let slugs = try? fm.contentsOfDirectory(atPath: projectsDir) else { return [] }
-        for slug in slugs where !slug.hasPrefix(".") {
-            let dir = projectsDir + "/" + slug
-            guard let files = try? fm.contentsOfDirectory(atPath: dir) else { continue }
-            for file in files where file.hasSuffix(".jsonl") {
-                let path = dir + "/" + file
-                let mtime = ((try? fm.attributesOfItem(atPath: path))?[.modificationDate] as? Date) ?? .distantPast
-                let (cwd, snippet) = sessionPreview(path)
-                sessions.append(SessionInfo(id: String(file.dropLast(".jsonl".count)),
-                                            projectSlug: slug, jsonlPath: path,
-                                            cwd: cwd, snippet: snippet, mtime: mtime))
+    // Resume through the CLI so the pinning rules stay in one place.
+    private func resumeCommand(_ s: SessionInfo, in profile: String) -> String {
+        let invoke = "\"\(cliPath)\" run \(profile) --vendor claude --start-from-session=\(s.id)"
+        return s.cwd.map { "cd \"\($0)\" && \(invoke)" } ?? invoke
+    }
+
+    func resumeSession(_ s: SessionInfo) {
+        dismissPanel()
+        launchSession(resumeCommand(s, in: s.profile), slug: s.profile, in: preferredTerminal)
+    }
+
+    // Newest first across the given profiles' Claude slots. Transcript heads are
+    // only read for the sessions that make the cut — a busy profile has
+    // thousands of them.
+    private func discoverSessions(profiles: [String], limit: Int? = nil) -> [SessionInfo] {
+        var files: [(profile: String, slug: String, path: String, mtime: Date)] = []
+        for profile in profiles {
+            let projectsDir = claudeConfigDir(forProfileNamed: profile) + "/projects"
+            guard let slugs = try? fm.contentsOfDirectory(atPath: projectsDir) else { continue }
+            for slug in slugs where !slug.hasPrefix(".") {
+                let dir = projectsDir + "/" + slug
+                guard let names = try? fm.contentsOfDirectory(atPath: dir) else { continue }
+                for file in names where file.hasSuffix(".jsonl") {
+                    let path = dir + "/" + file
+                    let mtime = ((try? fm.attributesOfItem(atPath: path))?[.modificationDate] as? Date) ?? .distantPast
+                    files.append((profile, slug, path, mtime))
+                }
             }
         }
-        return sessions.sorted { $0.mtime > $1.mtime }
+        files.sort { $0.mtime > $1.mtime }
+        return files.prefix(limit ?? files.count).map { f in
+            let (cwd, snippet) = sessionPreview(f.path)
+            return SessionInfo(id: String((f.path as NSString).lastPathComponent.dropLast(".jsonl".count)),
+                               profile: f.profile, projectSlug: f.slug, jsonlPath: f.path,
+                               cwd: cwd, snippet: snippet, mtime: f.mtime)
+        }
     }
 
     // Read the head of the transcript for the working dir and first user prompt.
@@ -893,7 +918,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
 
     private func transferUI(fromName: String) {
         let srcLabel = fromName
-        let sessions = discoverSessions(configDir: claudeConfigDir(forProfileNamed: fromName))
+        let sessions = discoverSessions(profiles: [fromName])
         guard !sessions.isEmpty else {
             alert("No sessions in “\(srcLabel)”", "This profile has no Claude Code sessions yet.")
             return
@@ -903,7 +928,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
             .filter { $0.name != fromName && $0.slots["claude"] != nil }
             .map { ($0.name, $0.name) }
         guard !targets.isEmpty else {
-            alert("No destination profile", "Create another profile with a Claude slot first (🤖 → New Profile…).")
+            alert("No destination profile", "Create another profile with a Claude slot first (N2 Agents settings → New Profile…).")
             return
         }
 
@@ -956,9 +981,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
             return
         }
 
-        // Resume through the CLI so the pinning rules stay in one place.
-        let invoke = "\"\(cliPath)\" run \(dest.name) --vendor claude --start-from-session=\(session.id)"
-        let resumeCmd = session.cwd.map { "cd \"\($0)\" && \(invoke)" } ?? invoke
+        let resumeCmd = resumeCommand(session, in: dest.name)
 
         let done = NSAlert()
         done.messageText = "Session transferred to “\(dest.label)”"

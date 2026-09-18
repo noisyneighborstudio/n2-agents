@@ -7,7 +7,7 @@
 #   agents active [--vendor <v>]          print the active profile
 #   agents use <Profile|Default> [--vendor <v>]
 #   agents run <Profile|--next|--best> [--vendor <v>] [--start-from-session=<id>] [args]
-#   agents best [--vendor <v>]            per-profile usage (5h/7d windows)
+#   agents best [--vendor <v>] [--porcelain]  per-profile usage (5h/7d windows)
 #   agents new <Name> [--vendors a,b] [--cli-only]
 #   agents delete <Name> [--everything] [--yes]
 #   agents repatch [Name]                 rebuild Claude clone(s) after an update
@@ -435,16 +435,24 @@ EOF
   echo "$pb_best"
 }
 
+# --porcelain prints usage_table's rows untouched — the tray's quota meters
+# parse it, so like `agents porcelain` it is a contract, not a display:
+#   <profile> <5h%> <7d%> <5h-resets UTC> <note: ok|no-token|stale-token|fetch-error|no-usage-api>
 cmd_best() {
-  vsel=""
+  vsel="" porcelain=0
   while [ $# -gt 0 ]; do
     case $1 in
       --vendor) vsel=${2:-}; shift 2 ;;
       --vendor=*) vsel=${1#--vendor=}; shift ;;
+      --porcelain) porcelain=1; shift ;;
       *) shift ;;
     esac
   done
   v=$(one_vendor "$vsel")
+  if [ "$porcelain" = 1 ]; then
+    usage_table "$v"
+    return 0
+  fi
   if [ "$(vendor_usage "$v")" != oauth ]; then
     echo "$(vendor_label "$v") exposes no usage API — there is nothing to rank." >&2
     echo "Vendors with usage data: $(for x in $N2_VENDORS; do [ "$(vendor_usage "$x")" = oauth ] && printf '%s ' "$x"; done)" >&2

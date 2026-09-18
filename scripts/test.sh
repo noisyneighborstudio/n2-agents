@@ -31,7 +31,9 @@ zsh -n install.sh uninstall.sh make-claude-profile.sh repatch-claude-profiles.sh
   scripts/publish-appcast.sh shell/agents.zsh
 bash -n shell/agents.bash
 command -v fish >/dev/null && fish -n shell/agents.fish
-swiftc -typecheck tray/main.swift tray/UpdateChannel.swift tray/Vendors.swift
+swiftc -typecheck tray/main.swift tray/UpdateChannel.swift tray/Vendors.swift tray/ProfileColor.swift \
+  tray/PanelModel.swift tray/PanelView.swift
+swiftc -typecheck tray/icon-badge/main.swift tray/ProfileColor.swift
 swiftc -typecheck scripts/make-icon.swift
 channel_test=$(mktemp -d "$TMPDIR/channel.XXXXXX")/update-channel-tests
 swiftc tray/UpdateChannel.swift tests/UpdateChannelTests.swift -o "$channel_test"
@@ -120,6 +122,11 @@ print -r -- "$porcelain" | grep -q '^A	'
 # Every P row lists its vendors as comma-separated <vendor>:<state> pairs.
 print -r -- "$porcelain" | awk -F'\t' '$1=="P" && $4!="-" {print $4}' \
   | grep -qE '^[a-z]+:(active|ok)(,[a-z]+:(active|ok))*$'
+
+# The quota meters parse `best --porcelain`: five tab-separated fields, and a
+# vendor with no usage API says so per row instead of printing an empty table.
+usage=$(run_agents best --porcelain --vendor codex)
+print -r -- "$usage" | grep -qx 'Work	-	-	-	no-usage-api'
 
 # --- adopt: shares claudes state, never copies it --------------------------
 adopt_home="$test_root/adopt-home"
