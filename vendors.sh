@@ -161,6 +161,38 @@ vendor_account() {  # vendor, slot dir
   true
 }
 
+# Whether a slot holds a login: 0 yes, 1 no, 2 can't tell from outside (the
+# CLI keeps it somewhere shared or opaque — Cursor's keychain, opencode's
+# XDG data dir). Cheap: profile setup polls it every couple of seconds.
+vendor_authed() {  # vendor, slot dir, profile
+  case $1 in
+    claude)
+      # Claude Code keys its keychain entry to the config dir it was pinned to.
+      va_svc="Claude Code-credentials-$(printf '%s' "$2" | shasum -a 256 | cut -c1-8)"
+      security find-generic-password -s "$va_svc" >/dev/null 2>&1 && return 0
+      if [ "$3" = Default ]; then
+        security find-generic-password -s "Claude Code-credentials" >/dev/null 2>&1 && return 0
+      fi
+      [ -s "$2/.credentials.json" ] ;;
+    codex|grok) [ -s "$2/auth.json" ] ;;
+    gemini)     [ -s "$2/oauth_creds.json" ] ;;
+    *)          return 2 ;;
+  esac
+}
+
+# Two-letter tile the panel draws for a lab — N2's own mark, not the lab's.
+vendor_monogram() {
+  case $1 in
+    claude)   echo CC ;;
+    codex)    echo CX ;;
+    grok)     echo GK ;;
+    gemini)   echo GM ;;
+    cursor)   echo CU ;;
+    opencode) echo OC ;;
+    *)        printf '%s' "$1" | cut -c1-2 | tr '[:lower:]' '[:upper:]' ;;
+  esac
+}
+
 # Prints who the CLI is signed in as, run after `agents login` so the terminal
 # confirms the account instead of leaving it to guesswork.
 vendor_whoami() {

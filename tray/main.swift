@@ -82,7 +82,7 @@ let terminalSpecs: [TerminalSpec] = [
     }),
 ]
 
-final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtocol, PanelActions {
+final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtocol, PanelActions, SetupHost {
     private var statusItem: NSStatusItem!
     private let model = PanelModel()
     private let popover = NSPopover()
@@ -158,6 +158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         // open shows the last read at once while a fresh one runs behind it.
         // Nothing ever waits on the CLI to draw; only a first-ever launch has
         // nothing to show, and says so.
+        model.pendingSetups = defaults.dictionary(forKey: CacheKey.pendingSetups) as? [String: [String]] ?? [:]
         if let porcelain = defaults.string(forKey: CacheKey.porcelain) {
             model.data = buildPanelData(porcelain: porcelain, sessions: defaults.string(forKey: CacheKey.sessions) ?? "")
         }
@@ -226,6 +227,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
             DispatchQueue.main.async {
                 guard generation == self.refreshGeneration, let data else { return }
                 self.model.data = data
+                // A setup finished outside the window (its terminal, or by
+                // hand) stops being pending once no lab is known signed out.
+                for (profile, labs) in self.model.pendingSetups where self.setup?.model.profile != profile
+                    && !labs.contains(where: { data.snapshot.signedIn[profile]?[$0] == false }) {
+                    self.setupPending(profile: profile, labs: nil)
+                }
                 if let s = self.model.selection,
                    data.profiles.first(where: { $0.name == s.profile })?.slots[s.vendor] == nil {
                     self.model.selection = nil
@@ -239,6 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     private enum CacheKey {
         static let porcelain = "panelCache.porcelain"
         static let sessions = "panelCache.sessions"
+        static let pendingSetups = "pendingSetups"
     }
     private let defaults = UserDefaults.standard
 
@@ -319,10 +327,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     // n2agents://refresh — sent by the commands the panel starts in a terminal
     // (sign-in) when they finish, so the panel shows the result at once
     // instead of on the next open.
+    // n2agents://login-done?profile=P&vendor=v — a setup sign-in's terminal
+    // finished, successful or not; the setup window decides which.
     func application(_ application: NSApplication, open urls: [URL]) {
-        guard urls.contains(where: { $0.scheme == "n2agents" && $0.host == "refresh" }) else { return }
-        usageFetchedAt = nil
-        refreshPanel()
+        for url in urls where url.scheme == "n2agents" {
+            if url.host == "login-done",
+               let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+               let profile = items.first(where: { $0.name == "profile" })?.value,
+               let vendor = items.first(where: { $0.name == "vendor" })?.value,
+               setup?.model.profile == profile {
+                setup?.loginFinished(vendor: vendor)
+            }
+            usageFetchedAt = nil
+            refreshPanel()
+        }
     }
 
     func retryUsage() {
@@ -740,27 +758,109 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     // Add a lab to an existing profile: one slot dir, plus its PATH shim.
     func addVendor(profile name: String) {
         dismissPanel()
-        let snap = snapshot()
-        let profile = snap.profiles.first { $0.name == name }
-        let candidates = snap.installedVendors.filter { profile?.slots[$0.id] == nil }
-        guard !candidates.isEmpty else {
-            alert("Nothing to add", "“\(name)” already has a slot for every agent CLI installed on this Mac.")
+        openSetup(profile: name, isNew: false, resume: nil)
+    }
+
+    func finishSetup(profile: String) {
+        dismissPanel()
+        openSetup(profile: profile, isNew: false, resume: model.pendingSetups[profile])
+    }
+
+    // MARK: - Profile setup window
+
+    private var setup: ProfileSetup?
+
+    private func openSetup(profile: String, isNew: Bool, resume: [String]?) {
+        if let setup, setup.model.profile == profile {
+            setup.bringToFront()
             return
         }
-        let dialog = NSAlert()
-        dialog.messageText = "Add a vendor to “\(name)”"
-        dialog.informativeText = "Creates an isolated config dir for that CLI. Sign in to it once afterwards."
-        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 220, height: 26), pullsDown: false)
-        popup.addItems(withTitles: candidates.map { $0.label })
-        dialog.accessoryView = popup
-        dialog.addButton(withTitle: "Add")
-        dialog.addButton(withTitle: "Cancel")
-        NSApp.activate(ignoringOtherApps: true)
-        guard dialog.runModal() == .alertFirstButtonReturn else { return }
-        let picked = candidates[max(0, popup.indexOfSelectedItem)]
-        let r = runCLI(["new", name, "--vendors", picked.id, "--cli-only"])
-        if r.status != 0 { alert("Couldn't add \(picked.label)", r.output) }
-        refreshPanel()
+        setup?.finishLater()
+        let snap = model.data?.snapshot ?? snapshot()
+        let window = ProfileSetup(profile: profile, isNew: isNew, snapshot: snap, resume: resume, host: self)
+        window.onClose = { [weak self, weak window] in
+            if self?.setup === window { self?.setup = nil }
+            self?.refreshPanel()
+        }
+        setup = window
+        window.show()
+    }
+
+    // Slots are directories, so creating them is instant. The one slow piece —
+    // cloning Claude.app for the profile's own Desktop — runs in the
+    // background, and the card picks it up when it lands.
+    func setupCreate(profile: String, vendors: [String], cloneDesktop: Bool) -> String? {
+        let r = runCLI(["new", profile, "--vendors", vendors.joined(separator: ","), "--cli-only"])
+        guard r.status == 0 else { return r.output }
+        if cloneDesktop && !fm.fileExists(atPath: "/Applications/Claude-\(profile).app") {
+            DispatchQueue.main.async { self.backgroundClone(profile) }
+        }
+        return nil
+    }
+
+    func setupAuthed(profile: String) -> [String: Bool]? {
+        let r = runCLI(["authed", profile])
+        guard r.status == 0 else { return nil }
+        var out: [String: Bool] = [:]
+        for line in r.output.split(separator: "\n") {
+            let f = line.split(separator: "\t").map(String.init)
+            guard f.count == 2, f[1] != "unknown" else { continue }
+            out[f[0]] = f[1] == "yes"
+        }
+        return out
+    }
+
+    private func loginCommand(profile: String, vendor: String) -> String {
+        var cmd = "\"\(cliPath)\" login \(profile) --vendor \(vendor)"
+        if model.data?.snapshot.vendor(vendor)?.isolation == "swap" { cmd += " --switch" }
+        return cmd
+    }
+
+    func setupStartLogin(profile: String, vendor: String) {
+        let done = "open -g 'n2agents://login-done?profile=\(profile)&vendor=\(vendor)'"
+        launchSession(loginCommand(profile: profile, vendor: vendor) + "; " + done,
+                      slug: "\(profile)-\(vendor)-setup", in: preferredTerminal)
+    }
+
+    func setupCopyLoginCommand(profile: String, vendor: String) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(loginCommand(profile: profile, vendor: vendor), forType: .string)
+    }
+
+    func setupPending(profile: String, labs: [String]?) {
+        model.pendingSetups[profile] = labs
+        defaults.set(model.pendingSetups, forKey: CacheKey.pendingSetups)
+    }
+
+    func setupOpen(profile: String, vendor: String) {
+        openSession(profile: profile, vendor: vendor, terminal: nil)
+    }
+
+    func setupMakeActive(profile: String) {
+        setActive(profile: profile, vendor: nil)
+    }
+
+    var setupDesktopInstalled: Bool { claudeAppPath != nil }
+    var setupTerminalName: String { preferredTerminal.name }
+
+    private func backgroundClone(_ name: String) {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        task.arguments = [scriptsDir + "/make-claude-profile.sh", name]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = pipe
+        task.terminationHandler = { t in
+            let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            DispatchQueue.main.async {
+                self.refreshPanel()
+                if t.terminationStatus != 0 {
+                    self.alert("Couldn't create Claude Desktop for “\(name)”", String(out.suffix(600)))
+                }
+            }
+        }
+        do { try task.run() } catch { alert("Couldn't create Claude Desktop for “\(name)”", error.localizedDescription) }
     }
 
     private func installedTerminals() -> [TerminalSpec] {
@@ -843,19 +943,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         NSWorkspace.shared.open(URL(fileURLWithPath: p.dataDir))
     }
 
+    // Name first; the setup window then picks its labs and signs in to each.
     func newProfile() {
         dismissPanel()
-        let cliOnly = claudeAppPath == nil
         let alert = NSAlert()
-        let labels = snapshot().installedVendors.map(\.label).joined(separator: ", ")
         alert.messageText = "New profile"
-        alert.informativeText = "Name, letters/numbers only (e.g. Work). Creates an isolated config dir with its own login for each installed agent (\(labels))."
-            + (cliOnly
-               ? " Claude Desktop isn't installed, so there's no desktop app to clone — install it later and create the profile again to add one."
-               : " Also clones Claude.app into an isolated instance.")
+        alert.informativeText = "Name, letters/numbers only (e.g. Work). Next you’ll pick the labs it holds and sign in to each."
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
         alert.accessoryView = field
-        alert.addButton(withTitle: "Create")
+        alert.addButton(withTitle: "Continue")
         alert.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
         alert.window.initialFirstResponder = field
@@ -870,17 +966,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
             self.alert("Reserved name", "“\(name)” conflicts with a built-in N2 Agents command. Pick another name.")
             return
         }
-        if fm.fileExists(atPath: "/Applications/Claude-\(name).app") {
-            self.alert("Profile exists", "Claude-\(name).app is already in /Applications. Pick another name, or delete the existing profile first.")
+        if fm.fileExists(atPath: "/Applications/Claude-\(name).app")
+            || model.data?.profiles.contains(where: { $0.name.lowercased() == name.lowercased() }) == true {
+            self.alert("Profile exists", "“\(name)” is already a profile. Pick another name, or delete the existing one first.")
             return
         }
-        if cliOnly {
-            let r = runCLI(["new", name, "--cli-only"])
-            if r.status != 0 { self.alert("Couldn't create profile", r.output) }
-            refreshPanel()
-            return
-        }
-        runInTerminal("\"\(scriptsDir)/agents\" new \(name)")
+        openSetup(profile: name, isNew: true, resume: nil)
     }
 
     func deleteProfile(_ name: String) {

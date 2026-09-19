@@ -14,9 +14,20 @@ private enum Metrics {
 
 private func profileColor(_ name: String) -> Color { Color(nsColor: ProfileColor.of(name)) }
 
+// Used: under 50 plenty, 50–79 working on it, 80+ nearly gone. Colour only
+// reinforces — the length of the fill is the reading.
 private func meterColor(_ percent: Int) -> Color {
-    percent < 50 ? Color(nsColor: .systemGreen) : percent <= 80 ? Color(nsColor: .systemOrange) : Color(nsColor: .systemRed)
+    percent < 50 ? Color(nsColor: .systemGreen) : percent < 80 ? Color(nsColor: .systemOrange) : Color(nsColor: .systemRed)
 }
+
+private let maxedRed = Color(nsColor: .systemRed)
+
+private let clockTime: DateFormatter = {
+    let f = DateFormatter()
+    f.timeStyle = .short
+    f.dateStyle = .none
+    return f
+}()
 
 // MARK: - Root
 
@@ -256,40 +267,64 @@ private struct ProfilesSection: View {
             ForEach(Array(data.profiles.enumerated()), id: \.element.name) { index, p in
                 ProfileCard(profile: p, index: index, data: data, model: model, actions: actions)
             }
-            if model.best == nil, model.usage.isEmpty, let v = data.quotaVendor,
-               data.profiles.filter({ $0.slots[v.id] != nil }).count >= 2 {
-                // Capacity not in yet: the action is there, dimmed, naming no pick.
-                HStack(spacing: 8) {
-                    Image(systemName: "bolt")
-                    Text("Open \(v.label) in best profile").font(.system(size: 12.5))
-                    Spacer()
-                }
-                .padding(.horizontal, 10)
-                .frame(height: 30)
-                .background(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.12)))
-                .opacity(0.5)
-            } else if let best = model.best, let v = data.quotaVendor {
-                Button { actions.openSession(profile: best.name, vendor: v.id, terminal: nil) } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "bolt").foregroundStyle(Color.accentColor)
-                        Text("Open \(v.label) in best profile").font(.system(size: 12.5))
-                        Spacer()
-                        Text("\(best.name) · \(best.fiveHour)%").font(.system(size: 11)).foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 10)
-                    .frame(height: 30)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(RowButtonStyle(radius: 8, border: true))
-            } else if model.rankingBlocked {
-                Text("Ranking is unavailable while any profile is unreadable — “best” is hidden rather than guessed.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            if let v = data.quotaVendor, data.profiles.filter({ $0.slots[v.id] != nil }).count >= 2 {
+                BestButton(vendor: v, best: model.best, profiles: data.profiles, actions: actions)
             }
         }
         .padding(.horizontal, Metrics.side)
         .padding(.vertical, 12)
+    }
+}
+
+// Never disappears, never lies: dimmed with no pick while capacity loads,
+// the pick once it's in, and flat — naming the soonest reset — when every
+// profile is maxed. Clicking that one offers to open anyway.
+private struct BestButton: View {
+    let vendor: Vendor
+    let best: BestPick?
+    let profiles: [Profile]
+    let actions: PanelActions
+
+    var body: some View {
+        switch best {
+        case .profile(let name, let used)?:
+            Button { actions.openSession(profile: name, vendor: vendor.id, terminal: nil) } label: {
+                row(icon: "bolt", iconColor: .accentColor, title: "Open \(vendor.label) in best profile") {
+                    Text("\(name) · \(used)%").foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(RowButtonStyle(radius: 8, border: true))
+        case .allMaxed(let firstBack)?:
+            Button {
+                popUp(profiles.filter { $0.slots[vendor.id] != nil }.map { p in
+                    ClosureItem("Open \(vendor.label) in “\(p.name)” anyway") {
+                        actions.openSession(profile: p.name, vendor: vendor.id, terminal: nil)
+                    }
+                })
+            } label: {
+                row(icon: "clock", iconColor: maxedRed, title: "Every profile is maxed") {
+                    if let firstBack { Text("first back \(clockTime.string(from: firstBack))").foregroundStyle(maxedRed) }
+                }
+            }
+            .buttonStyle(RowButtonStyle(radius: 8, border: true))
+        case nil:
+            row(icon: "bolt", iconColor: .primary, title: "Open \(vendor.label) in best profile") { EmptyView() }
+                .background(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.12)))
+                .opacity(0.5)
+        }
+    }
+
+    private func row<Trailing: View>(icon: String, iconColor: Color, title: LocalizedStringKey,
+                                     @ViewBuilder trailing: () -> Trailing) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon).foregroundStyle(iconColor)
+            Text(title).font(.system(size: 12.5))
+            Spacer()
+            trailing().font(.system(size: 11))
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 30)
+        .contentShape(Rectangle())
     }
 }
 
@@ -302,6 +337,9 @@ private struct ProfileCard: View {
     @State private var expanded = false
 
     private var isActive: Bool { data.snapshot.active == profile.name }
+    /// Capacity outranks everything else on the card: a maxed profile says so
+    /// and until when, and the whole card tints so it's found at a glance.
+    private var maxed: Bool { quotaUsage?.maxed ?? false }
     private var repatching: Bool { model.repatching.contains(profile.name) }
     private var stale: Bool { data.staleClones[profile.name] != nil }
     private var selected: Vendor? {
@@ -357,9 +395,9 @@ private struct ProfileCard: View {
         .padding(.vertical, 8)
         .padding(.horizontal, 9)
         .background(RoundedRectangle(cornerRadius: Metrics.cardRadius)
-            .fill(isActive ? Color.accentColor.opacity(0.16) : Color.primary.opacity(0.05)))
+            .fill(maxed ? maxedRed.opacity(0.13) : isActive ? Color.accentColor.opacity(0.16) : Color.primary.opacity(0.05)))
         .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius)
-            .strokeBorder(isActive ? Color.accentColor.opacity(0.55) : Color.primary.opacity(0.08)))
+            .strokeBorder(maxed ? maxedRed.opacity(0.5) : isActive ? Color.accentColor.opacity(0.55) : Color.primary.opacity(0.08)))
         .contextMenu {
             if !isActive { Button("Make Active for All Labs") { actions.setActive(profile: profile.name, vendor: nil) } }
             if addable { Button("Add Lab…") { actions.addVendor(profile: profile.name) } }
@@ -382,12 +420,14 @@ private struct ProfileCard: View {
         v.id == data.quotaVendor?.id && (quotaUsage?.note == .noToken || quotaUsage?.note == .staleToken)
     }
 
-    // A chip with no gauge has no quota API and never waits; one whose lab
-    // does, sweeps until its reading lands.
+    // Four pictures that never look alike: a reading (track + fill), no
+    // reading yet or a failed one (empty track), loading (sweep), and no
+    // quota API at all (no track).
     private func gauge(for v: Vendor) -> ChipGauge? {
         guard v.id == data.quotaVendor?.id else { return nil }
-        if let r = quotaUsage?.remaining { return .value(r) }
-        return quotaUsage == nil && !model.usageSlow ? .loading : nil
+        if let used = quotaUsage?.used { return .used(used) }
+        if quotaUsage == nil && !model.usageSlow { return .loading }
+        return .noReading
     }
 
     private var nameRow: some View {
@@ -396,7 +436,15 @@ private struct ProfileCard: View {
             Text(profile.name).font(.system(size: 13, weight: .medium))
             Spacer()
             Group {
-                if repatching {
+                if let setup = pendingSetup {
+                    Text("\(setup.done) of \(setup.labs.count) signed in").foregroundStyle(Color(nsColor: .systemOrange))
+                } else if maxed {
+                    HStack(spacing: 4) {
+                        Image(systemName: "clock")
+                        Text(quotaUsage?.maxedUntil.map { "Maxed until \(clockTime.string(from: $0))" } ?? "Maxed")
+                    }
+                    .foregroundStyle(maxedRed)
+                } else if repatching {
                     Text("Rebuilding…").foregroundStyle(.secondary)
                 } else if stale {
                     Text("Update pending").foregroundStyle(Color(nsColor: .systemOrange))
@@ -416,8 +464,20 @@ private struct ProfileCard: View {
     // Clone state outranks capacity: while a clone is behind, that is the
     // thing to act on. Otherwise the card carries the most constrained lab's
     // capacity — Claude's, as the only lab with a usage API today.
+    // A setup left unfinished: labs chosen, and some known to be signed out.
+    // (A lab that keeps its login out of sight counts as done, as in setup.)
+    private var pendingSetup: (labs: [String], done: Int, missing: [String])? {
+        guard let labs = model.pendingSetups[profile.name] else { return nil }
+        let missing = labs.filter { data.snapshot.signedIn[profile.name]?[$0] == false }
+        return missing.isEmpty ? nil : (labs, labs.count - missing.count, missing)
+    }
+
     @ViewBuilder private var detailRow: some View {
-        if repatching {
+        if let setup = pendingSetup {
+            let names = setup.missing.compactMap { data.snapshot.vendor($0)?.label }
+            InlineStatus(text: "\(names.joined(separator: ", ")) never finished signing in",
+                         button: "Finish setup") { actions.finishSetup(profile: profile.name) }
+        } else if repatching {
             ProgressView().progressViewStyle(.linear).controlSize(.small).tint(Color(nsColor: .systemOrange))
         } else if stale {
             InlineStatus(text: profile.running ? "Waiting — clone is in use"
@@ -521,7 +581,7 @@ private struct MeterRow: View {
                 ZStack(alignment: .leading) {
                     if let p = percent {
                         Capsule().fill(Color.primary.opacity(0.16))
-                        Capsule().fill(meterColor(p))
+                        Capsule().fill(p >= Usage.maxedAt ? maxedRed : meterColor(p))
                             .frame(width: g.size.width * CGFloat(min(max(p, 0), 100)) / 100)
                             .scaleEffect(x: filled ? 1 : 0, anchor: .leading)
                     } else {
@@ -640,8 +700,11 @@ private struct InlineStatus: View {
 }
 
 enum ChipGauge: Equatable {
-    case value(Int)   // quota left, 0–100
+    case used(Int)    // 0–100 of the tighter window
+    case noReading    // has a quota API; token stale or fetch failed
     case loading
+
+    var maxed: Bool { if case .used(let u) = self { return u >= Usage.maxedAt }; return false }
 }
 
 private struct VendorChip: View {
@@ -670,36 +733,45 @@ private struct VendorChip: View {
         if let account { parts.append(account) }
         if signedOut {
             parts.append("signed out")
-        } else if case .value(let r)? = gauge {
-            parts.append("\(r)% quota left")
+        } else if case .used(let u)? = gauge {
+            parts.append(u >= Usage.maxedAt ? "maxed" : "\(u)% used")
         }
         return parts.joined(separator: " · ")
     }
 
+    // Maxed is a state, not a hue: clock glyph, dimmed label, full red bar.
+    private var maxed: Bool { gauge?.maxed ?? false }
+
     private var chip: some View {
         HStack(spacing: 3) {
+            if maxed {
+                Image(systemName: "clock").font(.system(size: 8)).foregroundStyle(maxedRed)
+            }
             if signedOut {
                 Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 8))
                     .foregroundStyle(active ? Color.white : Color(nsColor: .systemOrange))
             }
             if vendor.isolation == "swap" { Image(systemName: "arrow.left.arrow.right").font(.system(size: 8)) }
-            Text(vendor.label)
+            Text(vendor.label).opacity(maxed ? 0.55 : 1)
         }
         .font(.system(size: 10.5))
         .padding(.horizontal, 6)
         .frame(height: 17)
-        .foregroundStyle(active ? Color.white : Color.primary)
-        .background(RoundedRectangle(cornerRadius: 4).fill(active ? Color.accentColor : Color.clear))
+        .foregroundStyle(active && !maxed ? Color.white : Color.primary)
+        .background(RoundedRectangle(cornerRadius: 4)
+            .fill(maxed ? maxedRed.opacity(0.15) : active ? Color.accentColor : Color.clear))
         .overlay(alignment: .bottom) {
             switch gauge {
-            case .value(let r)?: RemainingLine(percent: r)
+            case .used(let u)?: UsageLine(percent: u)
+            case .noReading?: Rectangle().fill(Color.primary.opacity(0.16)).frame(height: 2)
             case .loading?: Sweep().frame(height: 2)
             case nil: EmptyView()
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .overlay(RoundedRectangle(cornerRadius: 4)
-            .strokeBorder(active ? Color.white.opacity(vendor.isolation == "swap" ? 0.6 : 0) : Color.primary.opacity(0.25),
+            .strokeBorder(maxed ? maxedRed.opacity(0.7)
+                          : active ? Color.white.opacity(vendor.isolation == "swap" ? 0.6 : 0) : Color.primary.opacity(0.25),
                           style: StrokeStyle(lineWidth: 1, dash: vendor.isolation == "swap" ? [2.5, 2] : [])))
         .overlay(RoundedRectangle(cornerRadius: 5.5)
             .strokeBorder(Color.accentColor, lineWidth: 1.5)
@@ -727,26 +799,20 @@ private struct SmallChip: View {
     }
 }
 
-// Quota left along a chip's bottom edge: green while there is room, then
-// amber, orange and red as it runs out.
-private struct RemainingLine: View {
+// Used, along a chip's bottom edge. The track is always drawn and the fill
+// is the number — length carries it, colour only reinforces. Maxed fills
+// the whole track red.
+private struct UsageLine: View {
     let percent: Int
-
-    private var color: Color {
-        switch percent {
-        case 51...: return Color(nsColor: .systemGreen)
-        case 26...50: return Color(nsColor: .systemYellow)
-        case 11...25: return Color(nsColor: .systemOrange)
-        default: return Color(nsColor: .systemRed)
-        }
-    }
 
     var body: some View {
         GeometryReader { g in
             ZStack(alignment: .leading) {
-                // Tinted track: even an empty bar reads as "out".
-                Rectangle().fill(color.opacity(0.25))
-                Rectangle().fill(color).frame(width: g.size.width * CGFloat(min(max(percent, 0), 100)) / 100)
+                Rectangle().fill(Color.primary.opacity(0.16))
+                Rectangle()
+                    .fill(percent >= Usage.maxedAt ? maxedRed : meterColor(percent))
+                    .frame(width: percent >= Usage.maxedAt ? g.size.width
+                                                          : g.size.width * CGFloat(min(max(percent, 0), 100)) / 100)
             }
         }
         .frame(height: 2)

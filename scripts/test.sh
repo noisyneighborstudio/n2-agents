@@ -32,7 +32,7 @@ zsh -n install.sh uninstall.sh make-claude-profile.sh repatch-claude-profiles.sh
 bash -n shell/agents.bash
 command -v fish >/dev/null && fish -n shell/agents.fish
 swiftc -typecheck tray/main.swift tray/UpdateChannel.swift tray/Vendors.swift tray/ProfileColor.swift \
-  tray/PanelModel.swift tray/PanelView.swift
+  tray/PanelModel.swift tray/PanelView.swift tray/ProfileSetup.swift
 swiftc -typecheck tray/icon-badge/main.swift tray/ProfileColor.swift
 swiftc -typecheck scripts/make-icon.swift
 channel_test=$(mktemp -d "$TMPDIR/channel.XXXXXX")/update-channel-tests
@@ -116,12 +116,12 @@ test "$(run_agents active)" = mixed
 
 # --- porcelain contract (the tray parses this) -----------------------------
 porcelain=$(run_agents porcelain)
-print -r -- "$porcelain" | grep -q '^V	claude	1	env	clone	oauth	Claude Code	projects$'
+print -r -- "$porcelain" | grep -q '^V	claude	1	env	clone	oauth	Claude Code	projects	CC$'
 print -r -- "$porcelain" | grep -q '^P	Work	'
 print -r -- "$porcelain" | grep -q '^A	'
 # One S row per slot: its directory (the tray watches it during a sign-in)
 # and the account read from the vendor's own files.
-print -r -- "$porcelain" | grep -qx "S	Work	codex	$home/.n2-agents/Work/codex	"
+print -r -- "$porcelain" | grep -qx "S	Work	codex	$home/.n2-agents/Work/codex		no"
 # Every P row lists its vendors as comma-separated <vendor>:<state> pairs.
 print -r -- "$porcelain" | awk -F'\t' '$1=="P" && $4!="-" {print $4}' \
   | grep -qE '^[a-z]+:(active|ok)(,[a-z]+:(active|ok))*$'
@@ -130,7 +130,15 @@ print -r -- "$porcelain" | awk -F'\t' '$1=="P" && $4!="-" {print $4}' \
 # vendor with no usage API says so per row instead of printing an empty table.
 printf '{"oauthAccount": {"emailAddress": "work@example.com"}}' > "$home/.n2-agents/Work/claude/.claude.json"
 porcelain=$(run_agents porcelain)
-print -r -- "$porcelain" | grep -qx "S	Work	claude	$home/.n2-agents/Work/claude	work@example.com"
+print -r -- "$porcelain" | grep -qx "S	Work	claude	$home/.n2-agents/Work/claude	work@example.com	no"
+# Signed in = the slot holds the lab's own credential file (codex: auth.json);
+# cursor keeps its login outside the slot, so it can only say unknown.
+echo '{}' > "$home/.n2-agents/Work/codex/auth.json"
+authed=$(run_agents authed Work)
+print -r -- "$authed" | grep -qx 'codex	yes'
+print -r -- "$authed" | grep -qx 'grok	no'
+print -r -- "$authed" | grep -qx 'cursor	unknown'
+rm "$home/.n2-agents/Work/codex/auth.json"
 usage=$(run_agents best --porcelain --vendor codex)
 print -r -- "$usage" | grep -qx 'Work	-	-	-	no-usage-api'
 
@@ -155,8 +163,13 @@ test "$(run_agents sessions --porcelain Work --vendor claude | wc -l | tr -d ' '
 
 # login signs the pinned slot out and back in through the CLI's own commands.
 out=$(run_agents login Work --vendor codex 2>&1)
-# logout, login, then status — each pinned to the profile's slot.
+# A fresh slot has nothing to sign out of: login, then status.
+test "$(print -r -- "$out" | grep -c "CODEX_HOME=$home/.n2-agents/Work/codex")" = 2
+# A signed-in one signs out first: logout, login, status — each pinned.
+echo '{}' > "$home/.n2-agents/Work/codex/auth.json"
+out=$(run_agents login Work --vendor codex 2>&1)
 test "$(print -r -- "$out" | grep -c "CODEX_HOME=$home/.n2-agents/Work/codex")" = 3
+rm "$home/.n2-agents/Work/codex/auth.json"
 # A swap lab without its own logout clears the saved credentials instead — and
 # like `run`, only once the profile is allowed to become the active one.
 echo creds > "$home/.n2-agents/Work/gemini/oauth_creds.json"

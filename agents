@@ -13,6 +13,7 @@
 #   agents repatch [Name]                 rebuild Claude clone(s) after an update
 #   agents adopt [--yes]                  import existing `claudes` profiles (shared, not copied)
 #   agents login <Profile> [--vendor <v>] [--switch]  sign that slot out and back in
+#   agents authed <Profile>               per slot: signed in yes|no|unknown
 #   agents sessions [Profile] [--vendor <v>] [--porcelain [--limit N]]
 #   agents transfer <id> --to <Profile>|--next|--best [--from <Profile>] [--vendor <v>]
 #   agents desktop [Name|--next|--best] [--vendor <v>]
@@ -408,7 +409,7 @@ for pair in sys.argv[1:]:
         five = r.get('five_hour') or {}
         seven = r.get('seven_day') or {}
         print(f"{name}\t{five.get('utilization', '-')}\t{seven.get('utilization', '-')}"
-              f"\t{(five.get('resets_at') or '-')[:16]}\tok")
+              f"\t{(five.get('resets_at') or '-')[:16]}\tok\t{(seven.get('resets_at') or '-')[:16]}")
     except urllib.error.HTTPError as e:
         print(f"{name}\t-\t-\t-\t{'rate-limited' if e.code == 429 else 'fetch-error'}")
     except Exception:
@@ -416,16 +417,20 @@ for pair in sys.argv[1:]:
 PYEOF
 }
 
-# Lowest 5-hour utilization wins; ties fall to 7-day, then list order.
+# Lowest 5-hour utilization wins; ties fall to 7-day, then list order. A
+# maxed profile (95%+ in either window — the last few points are unusable)
+# is out of the running exactly like one with a bad token.
 # Updates the rotation pointer so --next continues from the pick.
 # $1 vendor, $2 (optional): profile to exclude (a resumed session's source).
 pick_best() {
   pb_best="" pb_five=101 pb_seven=101
-  while IFS="$(printf '\t')" read -r n five seven _ note; do
+  while IFS="$(printf '\t')" read -r n five seven _ note _; do
     [ "$note" = ok ] || continue
     [ "$n" = "${2:-}" ] && continue
     f=${five%.*} s=${seven%.*}
     case $f in ''|*[!0-9]*) continue ;; esac
+    case $s in ''|*[!0-9]*) s=0 ;; esac
+    [ "$f" -ge 95 ] || [ "$s" -ge 95 ] && continue
     if [ "$f" -lt "$pb_five" ] || { [ "$f" -eq "$pb_five" ] && [ "$s" -lt "$pb_seven" ]; }; then
       pb_best=$n pb_five=$f pb_seven=$s
     fi
@@ -440,7 +445,7 @@ EOF
 
 # --porcelain prints usage_table's rows untouched — the tray's quota meters
 # parse it, so like `agents porcelain` it is a contract, not a display:
-#   <profile> <5h%> <7d%> <5h-resets UTC> <note: ok|no-token|stale-token|rate-limited|fetch-error|no-usage-api>
+#   <profile> <5h%> <7d%> <5h-resets UTC> <note: ok|no-token|stale-token|rate-limited|fetch-error|no-usage-api> [<7d-resets UTC>]
 cmd_best() {
   vsel="" porcelain=0
   while [ $# -gt 0 ]; do
@@ -463,7 +468,7 @@ cmd_best() {
   fi
   echo "vendor: $v"
   printf '%-14s %6s %6s %-18s %s\n' "PROFILE" "5H%" "7D%" "5H RESETS (UTC)" "NOTE"
-  usage_table "$v" | while IFS="$(printf '\t')" read -r n five seven resets note; do
+  usage_table "$v" | while IFS="$(printf '\t')" read -r n five seven resets note _; do
     [ "$note" = ok ] && note=""
     printf '%-14s %6s %6s %-18s %s\n' "$n" "$five" "$seven" "$resets" "$note"
   done
@@ -589,13 +594,17 @@ cmd_login() {
   [ -d "$cfg" ] || die "profile '$name' has no $v slot — create it: agents new $name --vendors $v"
   pin_swap_vendor "$name" "$v" "$switch" login
 
-  echo "Signing $(vendor_label "$v") out of '$name'…"
   out_args=$(vendor_logout "$v")
-  if [ -n "$out_args" ]; then
+  if vendor_authed "$v" "$cfg" "$name"; then authed=0; else authed=$?; fi
+  if [ "$authed" = 1 ]; then
+    :  # nothing to sign out of — a slot being set up for the first time
+  elif [ -n "$out_args" ]; then
+    echo "Signing $(vendor_label "$v") out of '$name'…"
     # shellcheck disable=SC2086
     ( exec_vendor "$v" "$cfg" "$cli" $out_args ) || \
       echo "agents: '$cli $out_args' reported an error — signing in anyway" >&2
   else
+    echo "Signing $(vendor_label "$v") out of '$name'…"
     for f in $(vendor_cred_files "$v"); do rm -f "$cfg/$f"; done
   fi
   echo "Now sign in with the account '$name' should use."
@@ -1186,20 +1195,36 @@ cmd_app_path() {
 
 cmd_profiles() { all_profiles; }
 
+authed_word() {  # vendor, slot dir, profile
+  if vendor_authed "$1" "$2" "$3"; then echo yes; elif [ $? = 1 ]; then echo no; else echo unknown; fi
+}
+
+# Which of a profile's slots hold a login. Profile setup polls this while its
+# window is open, so it touches nothing but the adapter's cheap check.
+cmd_authed() {
+  [ -n "${1:-}" ] || die "usage: agents authed <Profile>"
+  want=$1; name=$(resolve_profile "$want") || die "no profile named '$want'"
+  for v in $(vendors_installed); do
+    d=$(config_dir "$name" "$v")
+    [ -d "$d" ] || continue
+    printf '%s\t%s\n' "$v" "$(authed_word "$v" "$d" "$name")"
+  done
+}
+
 # Stable TSV for the tray app, so the menu never re-implements any of the logic
 # above. Padding and emoji belong to the human-facing commands; this one is a
 # contract, and it is the only thing the Swift side parses.
 #
-#   V <vendor> <installed 0|1> <isolation> <desktop> <usage> <label> <sessions>
+#   V <vendor> <installed 0|1> <isolation> <desktop> <usage> <label> <sessions> <monogram>
 #   P <profile> <desktop-running 0|1> <vendor,vendor,…  or "-">
-#   S <profile> <vendor> <slot-dir> <account or "">   one per slot
+#   S <profile> <vendor> <slot-dir> <account or ""> <signed in: yes|no|unknown>   one per slot
 #   A <active-summary>
 cmd_porcelain() {
   for v in $N2_VENDORS; do
     if vendor_installed "$v"; then i=1; else i=0; fi
-    printf 'V\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf 'V\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$v" "$i" "$(vendor_isolation "$v")" "$(vendor_desktop "$v")" \
-      "$(vendor_usage "$v")" "$(vendor_label "$v")" "$(vendor_sessions "$v")"
+      "$(vendor_usage "$v")" "$(vendor_label "$v")" "$(vendor_sessions "$v")" "$(vendor_monogram "$v")"
   done
   for n in $(all_profiles); do
     if profile_running "$n"; then r=1; else r=0; fi
@@ -1209,7 +1234,7 @@ cmd_porcelain() {
       [ -d "$d" ] || continue
       if [ "$(active_profile "$v")" = "$n" ]; then s="$v:active"; else s="$v:ok"; fi
       if [ -z "$slots" ]; then slots=$s; else slots="$slots,$s"; fi
-      printf 'S\t%s\t%s\t%s\t%s\n' "$n" "$v" "$d" "$(vendor_account "$v" "$d")"
+      printf 'S\t%s\t%s\t%s\t%s\t%s\n' "$n" "$v" "$d" "$(vendor_account "$v" "$d")" "$(authed_word "$v" "$d" "$n")"
     done
     printf 'P\t%s\t%s\t%s\n' "$n" "$r" "${slots:--}"
   done
@@ -1217,7 +1242,7 @@ cmd_porcelain() {
 }
 
 cmd_help() {
-  sed -n '3,22p' "$self" | sed 's/^# \{0,3\}//'
+  sed -n '3,23p' "$self" | sed 's/^# \{0,3\}//'
 }
 
 cmd=${1:-help}
@@ -1235,6 +1260,7 @@ case $cmd in
   adopt)    cmd_adopt "$@" ;;
   sessions) cmd_sessions "$@" ;;
   login)    cmd_login "$@" ;;
+  authed)   cmd_authed "$@" ;;
   transfer) cmd_transfer "$@" ;;
   desktop)  cmd_desktop "$@" ;;
   shims)    cmd_shims "$@" ;;

@@ -19,12 +19,25 @@ struct Usage {
     let sevenDay: Int?
     let resets: Date?       // when the 5h window resets
     let note: Note
+    let sevenResets: Date?  // when the 7d window resets
     var fetchedAt = Date()
 
-    /// Quota left in whichever window is tighter — the one that stops you first.
-    var remaining: Int? {
+    /// Used in whichever window is tighter — the one that stops you first.
+    var used: Int? {
         guard note == .ok, let f = fiveHour else { return nil }
-        return 100 - max(f, sevenDay ?? 0)
+        return max(f, sevenDay ?? 0)
+    }
+
+    /// 95%+ in either window. The endpoint reports utilisation and the last
+    /// few points are unusable in practice, so this is out, not "nearly".
+    static let maxedAt = 95
+    var maxed: Bool { (used ?? 0) >= Self.maxedAt }
+
+    /// When a maxed lab comes back: the latest reset among the maxed windows.
+    var maxedUntil: Date? {
+        guard maxed else { return nil }
+        let windows = [((fiveHour ?? 0) >= Self.maxedAt, resets), ((sevenDay ?? 0) >= Self.maxedAt, sevenResets)]
+        return windows.filter { $0.0 }.compactMap { $0.1 }.max()
     }
 
     private static let resetFormat: DateFormatter = {
@@ -44,7 +57,8 @@ struct Usage {
             rows[f[0]] = Usage(fiveHour: Double(f[1]).map { Int($0.rounded()) },
                                sevenDay: Double(f[2]).map { Int($0.rounded()) },
                                resets: resetFormat.date(from: f[3]),
-                               note: note)
+                               note: note,
+                               sevenResets: f.count > 5 ? resetFormat.date(from: f[5]) : nil)
         }
         return rows
     }
@@ -78,6 +92,12 @@ struct Selection: Equatable {
     let vendor: String
 }
 
+enum BestPick {
+    case profile(String, used: Int)
+    /// Every readable profile is maxed; the soonest one back, if known.
+    case allMaxed(firstBack: Date?)
+}
+
 enum UpdateStatus: Equatable {
     case upToDate
     case available
@@ -97,29 +117,23 @@ final class PanelModel: ObservableObject {
     @Published var repatching: Set<String> = []
     @Published var selection: Selection?
     @Published var updateStatus: UpdateStatus?
+    /// Profiles whose setup was left unfinished: profile -> the labs it set up.
+    @Published var pendingSetups: [String: [String]] = [:]
 
     /// Lowest 5h wins, ties to 7d — the CLI's pick_best, run over rows already
-    /// fetched so the button names its pick before anything is launched. Nil
-    /// while any profile is unreadable: a guess would look like an answer.
-    var best: (name: String, fiveHour: Int)? {
+    /// fetched so the button names its pick before anything is launched.
+    /// Unreadable and maxed profiles are out of the running, not blockers.
+    /// Nil until at least one reading is in.
+    var best: BestPick? {
         guard let data, let v = data.quotaVendor else { return nil }
-        let slotted = data.profiles.filter { $0.slots[v.id] != nil }
-        guard slotted.count >= 2 else { return nil }
-        var rows: [(String, Int, Int)] = []
-        for p in slotted {
-            guard let u = usage[p.name], u.note == .ok, let f = u.fiveHour else { return nil }
-            rows.append((p.name, f, u.sevenDay ?? 101))
+        let readable = data.profiles.filter { $0.slots[v.id] != nil }
+            .compactMap { p in usage[p.name].flatMap { $0.note == .ok ? (p.name, $0) : nil } }
+        guard !readable.isEmpty else { return nil }
+        let open = readable.filter { !$0.1.maxed }
+        guard let pick = open.min(by: { ($0.1.fiveHour ?? 0, $0.1.sevenDay ?? 0) < ($1.1.fiveHour ?? 0, $1.1.sevenDay ?? 0) }) else {
+            return .allMaxed(firstBack: readable.compactMap { $0.1.maxedUntil }.min())
         }
-        let pick = rows.min { ($0.1, $0.2) < ($1.1, $1.2) }!
-        return (pick.0, pick.1)
-    }
-
-    /// True when some slotted profile's quota can't be read, which is why
-    /// `best` is hidden.
-    var rankingBlocked: Bool {
-        guard let data, let v = data.quotaVendor else { return false }
-        let slotted = data.profiles.filter { $0.slots[v.id] != nil }
-        return slotted.count >= 2 && slotted.contains { usage[$0.name].map { $0.note != .ok } ?? false }
+        return .profile(pick.0, used: pick.1.fiveHour ?? 0)
     }
 }
 
@@ -132,6 +146,7 @@ protocol PanelActions: AnyObject {
     func openDesktop(profile: String)
     func transferSession(profile: String, vendor: String)
     func signIn(profile: String, vendor: String, confirm: Bool)
+    func finishSetup(profile: String)
     func resumeSession(_ session: SessionInfo)
     func addVendor(profile: String)
     func revealData(profile: String)
