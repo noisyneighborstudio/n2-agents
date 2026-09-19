@@ -1039,13 +1039,14 @@ warn_unadopted() {
 # Working dir and first real prompt of a transcript. Both labs record cwd in
 # their opening records. The prompt is the first text on a user-role line that
 # isn't injected context — Claude's meta lines and <system-reminder>s, Codex's
-# <environment_context> and AGENTS.md — and Codex can put 100 KB of setup before it, so this
+# <environment_context>, AGENTS.md and file mentions — and Codex can put 100 KB of setup before it, so this
 # scans whole lines rather than a fixed head.
 session_meta() {  # path -> cwd \t snippet
   cwd=$(grep -m1 -o '"cwd":"[^"]*"' "$1" 2>/dev/null | sed 's/^"cwd":"//; s/"$//' || true)
   snippet=$(grep -m 40 '"role":"user"' "$1" 2>/dev/null | grep -v '"isMeta":true' \
     | grep -o '"\(text\|content\)":"[^"]*' | sed 's/^"[a-z]*":"//' \
-    | grep -v -e '^<' -e '^# AGENTS.md instructions' -e '^\[Request interrupted' | head -1 || true)
+    | grep -v -e '^<' -e '^# AGENTS.md instructions' -e '^# Files mentioned by the user' \
+             -e '^\[Request interrupted' | head -1 || true)
   # Escapes out, and a markdown link reads as its text ([$skill](/path) -> $skill).
   snippet=$(printf '%s' "$snippet" | sed 's/\\[nt]/ /g; s/\\"/"/g; s/\[\([^]]*\)\]([^)]*)/\1/g' | cut -c1-70)
   printf '%s\t%s\n' "$cwd" "${snippet:-(no prompt)}"

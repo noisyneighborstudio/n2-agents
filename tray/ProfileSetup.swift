@@ -84,11 +84,9 @@ final class ProfileSetup: NSObject, NSWindowDelegate {
     }
 
     func show() {
-        let hosting = NSHostingController(rootView: SetupView(model: model, actions: self))
-        hosting.sizingOptions = .preferredContentSize
         // Floating glass that stays when the app deactivates, so it sits above
         // the terminal while you type a password there.
-        let glass = GlassWindow(content: hosting, behavior: .floating)
+        let glass = GlassWindow(rootView: SetupView(model: model, actions: self), behavior: .floating)
         glass.delegate = self
         window = glass
         glass.present()
@@ -261,7 +259,7 @@ struct SetupView: View {
             }
         }
         .transition(.opacity)
-        .frame(width: 360)
+        .frame(width: 400)
     }
 }
 
@@ -292,7 +290,7 @@ private struct PickStep: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            VStack(spacing: 2) {
+            VStack(spacing: 4) {
                 ForEach(model.vendors, id: \.id) { v in row(v) }
             }
             Text("Each gets its own config dir under ~/.n2-agents/\(model.profile)/ — separate logins, side by side with your others.")
@@ -314,7 +312,7 @@ private struct PickStep: View {
                 .disabled(model.newPicks.isEmpty || model.busy)
             }
         }
-        .padding(18)
+        .padding(20)
     }
 
     private func row(_ v: Vendor) -> some View {
@@ -343,7 +341,7 @@ private struct PickStep: View {
             .font(.system(size: 10.5))
             .foregroundStyle(.secondary)
         }
-        .frame(height: 28)
+        .frame(height: 32)
     }
 }
 
@@ -358,9 +356,9 @@ private struct SignInStep: View {
                 Spacer()
                 Text("\(model.done) of \(model.counted) signed in").font(.system(size: 11)).foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 18)
-            .padding(.top, 18)
-            .padding(.bottom, 10)
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
+            .padding(.bottom, 12)
             GeometryReader { g in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.primary.opacity(0.14))
@@ -369,23 +367,23 @@ private struct SignInStep: View {
                 }
             }
             .frame(height: 3)
-            .padding(.horizontal, 18)
+            .padding(.horizontal, 20)
             .animation(.easeOut(duration: 0.3), value: model.done)
 
-            VStack(spacing: 2) {
+            VStack(spacing: 6) {
                 ForEach(model.labs, id: \.self) { lab in LabRow(lab: lab, model: model, actions: actions) }
             }
             .padding(.horizontal, 14)
-            .padding(.top, 10)
+            .padding(.top, 14)
 
             if model.current != nil {
                 Text("Leave this open. It watches each config dir and ticks the row the moment the token lands — you don’t come back and tell it.")
                     .font(.system(size: 10.5)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(10)
-                    .background(RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.06)))
-                    .padding(.horizontal, 18)
-                    .padding(.top, 10)
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.06)))
+                    .padding(.horizontal, 20)
+                    .padding(.top, 14)
             }
 
             HStack {
@@ -401,7 +399,7 @@ private struct SignInStep: View {
                     Button("Skip \(v.label)") { actions.skip(current) }
                 }
             }
-            .padding(18)
+            .padding(20)
         }
         .animation(.easeOut(duration: 0.18), value: model.states)
     }
@@ -416,11 +414,11 @@ private struct LabRow: View {
     private var label: String { model.vendor(lab)?.label ?? lab }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 9) {
+        HStack(alignment: .top, spacing: 10) {
             StateIcon(state: state).padding(.top, 2)
             Monogram(text: model.vendor(lab)?.monogram ?? "").padding(.top, 0.5)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(verbatim: label).font(.system(size: 12.5))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(verbatim: label).font(.system(size: 13, weight: .medium))
                 Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if state == .failed {
@@ -437,11 +435,11 @@ private struct LabRow: View {
                 Button("Reopen") { actions.reopen(lab) }.controlSize(.small)
             }
         }
-        .padding(.horizontal, 4)
-        .padding(.vertical, 6)
-        .frame(minHeight: 40)
-        .background(RoundedRectangle(cornerRadius: 7).fill(tint.opacity(0.14)))
-        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(tint.opacity(0.35)))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 9)
+        .frame(minHeight: 48)
+        .background(RoundedRectangle(cornerRadius: 9).fill(tint.opacity(0.14)))
+        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(tint.opacity(0.35)))
         .opacity(state == .skipped ? 0.5 : 1)
     }
 
@@ -460,7 +458,7 @@ private struct LabRow: View {
         case .unconfirmed:
             return "Finished in the terminal — \(label) keeps its login where N2 can’t check it"
         case .signingIn:
-            return "\(actions.terminalName) is open — finish the sign-in there"
+            return "Signing in — finish in \(actions.terminalName)"
         case .failed:
             return "The terminal closed without writing a token to \(actions.slotPath(lab))."
         case .skipped:
@@ -576,6 +574,6 @@ private struct ReadyStep: View {
                 .font(.system(size: 11.5))
                 .padding(.top, 2)
         }
-        .padding(18)
+        .padding(20)
     }
 }

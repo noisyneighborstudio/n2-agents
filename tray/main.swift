@@ -86,8 +86,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     private var statusItem: NSStatusItem!
     private let model = PanelModel()
     // Built on first open: it anchors to the status item's button.
-    private lazy var panel = GlassWindow(content: hosting, behavior: .transient(anchor: statusItem.button!))
-    private lazy var hosting = NSHostingController(rootView: PanelView(model: model, actions: self))
+    private lazy var panel = GlassWindow(rootView: PanelView(model: model, actions: self),
+                                         behavior: .transient(anchor: statusItem.button!))
     private let fm = FileManager.default
     private let home = NSHomeDirectory()
     private var configRoot: String { home + "/.n2-agents" }
@@ -149,7 +149,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePanel)
 
-        hosting.sizingOptions = .preferredContentSize
 
         // The panel is ready before anyone clicks: it starts from the last
         // snapshot saved to disk, re-reads now and every few minutes, and an

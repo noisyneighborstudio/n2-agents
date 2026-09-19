@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 // A borderless window on Liquid Glass. NSPopover and titled windows always
 // paint their own frosted material under the content, so both of N2's
@@ -15,9 +16,8 @@ final class GlassWindow: NSPanel {
         case floating
     }
 
-    private let content: NSViewController
+    private let content: NSView
     private let behavior: Behavior
-    private var sizeObservation: NSKeyValueObservation?
     private var clickMonitor: Any?
     /// Holds the content at its full size, pinned top-centre and clipped, so
     /// the window can unfurl around it without the layout moving.
@@ -31,8 +31,16 @@ final class GlassWindow: NSPanel {
     /// Shown, and not on its way out.
     var isShowing: Bool { isVisible && !dismissing }
 
-    init(content: NSViewController, behavior: Behavior, cornerRadius: CGFloat = 16) {
-        self.content = content
+    /// The SwiftUI content's ideal size, as SwiftUI itself last measured it.
+    private let measured = MeasuredSize()
+
+    init<Root: View>(rootView: Root, behavior: Behavior, cornerRadius: CGFloat = 16) {
+        let measured = self.measured
+        let hosting = NSHostingView(rootView: Measured(root: rootView) { measured.update($0) })
+        // Intrinsic size gives the first measurement, before the view has a
+        // frame to lay out in; SwiftUI's own reports take over from there.
+        hosting.sizingOptions = [.intrinsicContentSize]
+        content = hosting
         self.behavior = behavior
         super.init(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: true)
         isOpaque = false
@@ -53,13 +61,20 @@ final class GlassWindow: NSPanel {
         }
         stage.wantsLayer = true
         stage.layer?.masksToBounds = true
-        content.view.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin]
-        stage.addSubview(content.view)
+        content.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin]
+        stage.addSubview(content)
         contentView = Self.glass(around: stage, cornerRadius: cornerRadius)
-        // SwiftUI reports its size through preferredContentSize; follow it
-        // with the top edge held still, so content grows downward.
-        sizeObservation = content.observe(\.preferredContentSize) { [weak self] _, _ in
-            DispatchQueue.main.async { self?.fit(recenter: false) }
+        // Follow the SwiftUI content's size, top edge held still so it grows
+        // downward. Coalesced onto the next turn of the run loop: the size is
+        // reported mid-layout, and resizing the window there would re-enter it.
+        var pending = false
+        measured.changed = { [weak self] in
+            guard !pending else { return }
+            pending = true
+            DispatchQueue.main.async {
+                pending = false
+                self?.fit(recenter: false)
+            }
         }
     }
 
@@ -89,7 +104,7 @@ final class GlassWindow: NSPanel {
     /// it top-centred while the frame animates.
     private func placeContent() {
         contentView?.layoutSubtreeIfNeeded()
-        content.view.frame = stage.bounds
+        content.frame = stage.bounds
     }
 
     // Opening unfurls from the top edge — from the menu bar icon, for the
@@ -183,8 +198,7 @@ final class GlassWindow: NSPanel {
 
     private func fit(recenter: Bool) {
         guard !unfurling else { return }   // present()'s completion refits
-        let preferred = content.preferredContentSize
-        let size = preferred == .zero ? content.view.fittingSize : preferred
+        let size = measured.size == .zero ? content.intrinsicContentSize : measured.size
         guard size.width > 0, size.height > 0 else { return }
         defer { placeContent() }
         switch behavior {
@@ -207,5 +221,34 @@ final class GlassWindow: NSPanel {
                          display: true, animate: false)
             }
         }
+    }
+}
+
+/// The content's size as SwiftUI measures it. Neither AppKit channel works
+/// for this: a hosting controller's preferredContentSize is computed only when
+/// asked, and a hosting view doesn't invalidate its intrinsic size when state
+/// changes inside it — so a window following either never grew.
+private final class MeasuredSize {
+    private(set) var size: CGSize = .zero
+    var changed: (() -> Void)?
+
+    func update(_ new: CGSize) {
+        guard new != size else { return }
+        size = new
+        changed?()
+    }
+}
+
+/// Lays the root out at its ideal height, pinned to the top, and reports that
+/// size on every SwiftUI update.
+private struct Measured<Root: View>: View {
+    let root: Root
+    let report: (CGSize) -> Void
+
+    var body: some View {
+        root
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGSize.self, of: { $0.size }, action: report)
+            .frame(maxHeight: .infinity, alignment: .top)
     }
 }
