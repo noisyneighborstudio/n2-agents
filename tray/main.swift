@@ -506,8 +506,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         [UpdateChannel.selected().rawValue]
     }
 
+    // Shown in the panel footer, never as a dialog: Sparkle already reports
+    // failures of checks the user asked for, and a background check has no
+    // business interrupting anyone. "No update" arrives here too — not a failure.
     func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
-        alert("Update check failed", error.localizedDescription)
+        let e = error as NSError
+        guard !(e.domain == SUSparkleErrorDomain && e.code == Int(SUError.noUpdateError.rawValue)) else { return }
+        model.updateStatus = .failed(e.localizedDescription)
     }
 
     func updaterDidNotFindUpdate(_ updater: SPUUpdater) {

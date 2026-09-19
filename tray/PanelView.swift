@@ -135,16 +135,22 @@ private struct PanelFooter: View {
         switch model.updateStatus {
         case .upToDate: return "\(version) · \(channel) · up to date"
         case .available: return "\(version) · \(channel) · update available"
+        case .failed: return "\(version) · \(channel) · update check failed"
         case nil: return "\(version) · \(channel)"
         }
+    }
+
+    private var updateHelp: String {
+        if case .failed(let reason)? = model.updateStatus { return "Update check failed: \(reason) Click to retry." }
+        return "Check for updates"
     }
 
     var body: some View {
         HStack(spacing: 12) {
             Button(versionLine) { actions.checkForUpdates() }
                 .buttonStyle(.plain)
+                .help(updateHelp)
                 .foregroundStyle(model.updateStatus == .available ? Color.accentColor : .secondary)
-                .help("Check for updates")
             Spacer()
             Button("Report a Bug") { actions.reportBug() }.buttonStyle(.plain).foregroundStyle(Color.accentColor)
             Button("Quit") { actions.quit() }.buttonStyle(.plain).foregroundStyle(Color.accentColor)

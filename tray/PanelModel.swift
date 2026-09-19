@@ -68,9 +68,10 @@ struct Selection: Equatable {
     let vendor: String
 }
 
-enum UpdateStatus {
+enum UpdateStatus: Equatable {
     case upToDate
     case available
+    case failed(String)
 }
 
 final class PanelModel: ObservableObject {
