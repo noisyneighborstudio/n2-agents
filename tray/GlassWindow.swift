@@ -19,6 +19,17 @@ final class GlassWindow: NSPanel {
     private let behavior: Behavior
     private var sizeObservation: NSKeyValueObservation?
     private var clickMonitor: Any?
+    /// Holds the content at its full size, pinned top-centre and clipped, so
+    /// the window can unfurl around it without the layout moving.
+    private let stage = NSView()
+    private var unfurling = false
+    private var dismissing = false
+    /// Bumped by every present/dismiss, so a stale animation's completion
+    /// can't hide a panel that was reopened mid-furl.
+    private var generation = 0
+
+    /// Shown, and not on its way out.
+    var isShowing: Bool { isVisible && !dismissing }
 
     init(content: NSViewController, behavior: Behavior, cornerRadius: CGFloat = 16) {
         self.content = content
@@ -37,7 +48,11 @@ final class GlassWindow: NSPanel {
             level = .floating
             isMovableByWindowBackground = true
         }
-        contentView = Self.glass(around: content.view, cornerRadius: cornerRadius)
+        stage.wantsLayer = true
+        stage.layer?.masksToBounds = true
+        content.view.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin]
+        stage.addSubview(content.view)
+        contentView = Self.glass(around: stage, cornerRadius: cornerRadius)
         // SwiftUI reports its size through preferredContentSize; follow it
         // with the top edge held still, so content grows downward.
         sizeObservation = content.observe(\.preferredContentSize) { [weak self] _, _ in
@@ -67,10 +82,50 @@ final class GlassWindow: NSPanel {
 
     override var canBecomeKey: Bool { true }
 
+    /// Content fills the stage at rest; from here its autoresizing margins keep
+    /// it top-centred while the frame animates.
+    private func placeContent() {
+        contentView?.layoutSubtreeIfNeeded()
+        content.view.frame = stage.bounds
+    }
+
+    // Opening unfurls from the top edge — from the menu bar icon, for the
+    // panel: the glass starts narrow and header-high and opens down and out to
+    // full size, 320 ms on the design's cubic-bezier(0.2, 0.8, 0.2, 1). Only
+    // the frame moves; the content is already laid out and is revealed, not
+    // squeezed. Reduce Motion gets a plain appearance.
     func present() {
-        fit(recenter: true)
+        generation += 1          // strands any furl still running
+        dismissing = false
+        unfurling = false
+        alphaValue = 1
+        fit(recenter: !isVisible)
+        let target = frame
         NSApp.activate(ignoringOtherApps: true)
-        makeKeyAndOrderFront(nil)
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || target.isEmpty {
+            makeKeyAndOrderFront(nil)
+        } else {
+            setFrame(furled(target), display: false)
+            alphaValue = 0
+            // The window server draws a moving frame's shadow as a square; the
+            // shadow comes back, fitted to the glass, once the frame lands.
+            hasShadow = false
+            makeKeyAndOrderFront(nil)
+            unfurling = true
+            let generation = generation
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.32
+                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
+                animator().setFrame(target, display: true)
+                animator().alphaValue = 1
+            } completionHandler: { [weak self] in
+                guard let self, self.generation == generation else { return }
+                self.unfurling = false
+                self.hasShadow = true
+                self.invalidateShadow()
+                self.fit(recenter: false)   // catch up with any resize held back mid-unfurl
+            }
+        }
         // A pointer surface: no control starts out keyboard-focused (and ringed).
         makeFirstResponder(nil)
         if case .transient = behavior, clickMonitor == nil {
@@ -80,14 +135,47 @@ final class GlassWindow: NSPanel {
         }
     }
 
-    /// Transient: hide, ready to show again. Floating: close for good.
+    /// Where an unfurl starts and a furl ends: centred on the same top edge,
+    /// 55% as wide and header-high.
+    private func furled(_ full: NSRect) -> NSRect {
+        let width = (full.width * 0.55).rounded(), height = min(44, full.height)
+        return NSRect(x: full.midX - width / 2, y: full.maxY - height, width: width, height: height)
+    }
+
+    /// Transient: furls back up and hides, ready to show again (160 ms).
+    /// Floating: close for good.
     func dismiss() {
-        guard isVisible else { return }
+        guard isShowing else { return }
         if let monitor = clickMonitor {
             NSEvent.removeMonitor(monitor)
             clickMonitor = nil
         }
-        if case .transient = behavior { orderOut(nil) } else { close() }
+        guard case .transient = behavior else {
+            close()
+            return
+        }
+        generation += 1
+        let generation = generation
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            orderOut(nil)
+            return
+        }
+        dismissing = true
+        unfurling = true
+        hasShadow = false
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.16
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            animator().setFrame(furled(frame), display: true)
+            animator().alphaValue = 0
+        } completionHandler: { [weak self] in
+            guard let self, self.generation == generation else { return }
+            self.orderOut(nil)
+            self.dismissing = false
+            self.unfurling = false
+            self.alphaValue = 1
+            self.hasShadow = true
+        }
     }
 
     override func cancelOperation(_ sender: Any?) { dismiss() }
@@ -98,9 +186,11 @@ final class GlassWindow: NSPanel {
     }
 
     private func fit(recenter: Bool) {
+        guard !unfurling else { return }   // present()'s completion refits
         let preferred = content.preferredContentSize
         let size = preferred == .zero ? content.view.fittingSize : preferred
         guard size.width > 0, size.height > 0 else { return }
+        defer { placeContent() }
         switch behavior {
         case .transient(let button):
             guard let buttonWindow = button.window else { return }

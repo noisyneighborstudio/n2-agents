@@ -186,7 +186,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     // MARK: - Panel (re-read every time it opens)
 
     @objc private func togglePanel() {
-        if panel.isVisible {
+        if panel.isShowing {
             panel.dismiss()
             return
         }
