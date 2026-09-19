@@ -14,11 +14,19 @@ private enum Metrics {
 
 private func profileColor(_ name: String) -> Color { Color(nsColor: ProfileColor.of(name)) }
 
+private func meterColor(_ percent: Int) -> Color {
+    percent < 50 ? Color(nsColor: .systemGreen) : percent <= 80 ? Color(nsColor: .systemOrange) : Color(nsColor: .systemRed)
+}
+
 // MARK: - Root
 
+// Loading follows one rule: draw at once from what is already known, and let
+// only capacity — the one slow, networked reading — arrive later. A blank
+// panel is a bug, not a loading state.
 struct PanelView: View {
     @ObservedObject var model: PanelModel
     let actions: PanelActions
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 0) {
@@ -43,12 +51,17 @@ struct PanelView: View {
                     }
                 }
             } else {
-                ProgressView().controlSize(.small).padding(24)
+                ColdStart()
             }
             Divider()
             PanelFooter(model: model, actions: actions)
         }
         .frame(width: Metrics.width)
+        // Every open: the content rises 4 pt and fades in — one move for the
+        // whole panel, not a cascade of elements.
+        .opacity(model.presented ? 1 : 0)
+        .offset(y: model.presented || reduceMotion ? 0 : 4)
+        .animation(.easeOut(duration: reduceMotion ? 0.1 : 0.16), value: model.presented)
     }
 }
 
@@ -65,7 +78,9 @@ private struct PanelHeader: View {
                 .frame(width: 18, height: 18)
             Text("N2 Agents").font(.system(size: 13, weight: .semibold))
             Spacer()
-            if let data = model.data, data.profiles.count > 1 {
+            if model.data == nil {
+                Pulse(width: 58, height: 8)
+            } else if let data = model.data, data.profiles.count > 1 {
                 Button { popUpActiveMenu(data) } label: {
                     HStack(spacing: 5) {
                         Text("Active").foregroundStyle(.secondary)
@@ -238,10 +253,22 @@ private struct ProfilesSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionLabel(title: "Profiles", detail: "\(data.profiles.count)")
-            ForEach(data.profiles, id: \.name) { p in
-                ProfileCard(profile: p, data: data, model: model, actions: actions)
+            ForEach(Array(data.profiles.enumerated()), id: \.element.name) { index, p in
+                ProfileCard(profile: p, index: index, data: data, model: model, actions: actions)
             }
-            if let best = model.best, let v = data.quotaVendor {
+            if model.best == nil, model.usage.isEmpty, let v = data.quotaVendor,
+               data.profiles.filter({ $0.slots[v.id] != nil }).count >= 2 {
+                // Capacity not in yet: the action is there, dimmed, naming no pick.
+                HStack(spacing: 8) {
+                    Image(systemName: "bolt")
+                    Text("Open \(v.label) in best profile").font(.system(size: 12.5))
+                    Spacer()
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .background(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.12)))
+                .opacity(0.5)
+            } else if let best = model.best, let v = data.quotaVendor {
                 Button { actions.openSession(profile: best.name, vendor: v.id, terminal: nil) } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "bolt").foregroundStyle(Color.accentColor)
@@ -268,9 +295,11 @@ private struct ProfilesSection: View {
 
 private struct ProfileCard: View {
     let profile: Profile
+    let index: Int
     let data: PanelData
     @ObservedObject var model: PanelModel
     let actions: PanelActions
+    @State private var expanded = false
 
     private var isActive: Bool { data.snapshot.active == profile.name }
     private var repatching: Bool { model.repatching.contains(profile.name) }
@@ -279,18 +308,26 @@ private struct ProfileCard: View {
         guard let s = model.selection, s.profile == profile.name, profile.slots[s.vendor] != nil else { return nil }
         return data.snapshot.vendor(s.vendor)
     }
+    private var slotted: [Vendor] { data.snapshot.installedVendors.filter { profile.slots[$0.id] != nil } }
     private var addable: Bool { data.snapshot.installedVendors.contains { profile.slots[$0.id] == nil } }
+
+    // One row of chips keeps every card the same height; the rest sit behind
+    // a +N chip. The selected lab is always on show.
+    private static let chipLimit = 4
+    private var showAll: Bool {
+        expanded || slotted.count <= Self.chipLimit
+            || (selected.map { v in !slotted.prefix(Self.chipLimit).contains { $0.id == v.id } } ?? false)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             nameRow
             detailRow
             FlowLayout(spacing: 4) {
-                ForEach(data.snapshot.installedVendors.filter { profile.slots[$0.id] != nil }, id: \.id) { v in
-                    let usage = v.id == data.quotaVendor?.id ? model.usage[profile.name] : nil
+                ForEach(showAll ? slotted : Array(slotted.prefix(Self.chipLimit)), id: \.id) { v in
                     VendorChip(vendor: v, active: profile.isActive(for: v.id), selected: selected?.id == v.id,
-                               remaining: usage?.remaining,
-                               signedOut: usage?.note == .noToken || usage?.note == .staleToken,
+                               gauge: gauge(for: v),
+                               signedOut: signedOut(v),
                                account: data.snapshot.account(profile.name, v.id)) {
                         model.selection = selected?.id == v.id ? nil : Selection(profile: profile.name, vendor: v.id)
                     }
@@ -298,7 +335,13 @@ private struct ProfileCard: View {
                         Button("Sign In Again…") { actions.signIn(profile: profile.name, vendor: v.id, confirm: true) }
                     }
                 }
-                if addable {
+                if !showAll {
+                    SmallChip(title: "+\(slotted.count - Self.chipLimit)") { expanded = true }
+                        .help("Show all \(slotted.count) labs")
+                } else if expanded {
+                    SmallChip(title: "−") { expanded = false }.help("Show fewer")
+                }
+                if addable && showAll {
                     Button { actions.addVendor(profile: profile.name) } label: {
                         Image(systemName: "plus").font(.system(size: 9, weight: .semibold)).frame(width: 17, height: 17)
                     }
@@ -321,7 +364,7 @@ private struct ProfileCard: View {
             if !isActive { Button("Make Active for All Labs") { actions.setActive(profile: profile.name, vendor: nil) } }
             if addable { Button("Add Lab…") { actions.addVendor(profile: profile.name) } }
             Menu("Sign In Again") {
-                ForEach(data.snapshot.installedVendors.filter { profile.slots[$0.id] != nil }, id: \.id) { v in
+                ForEach(slotted, id: \.id) { v in
                     Button("\(v.label)…") { actions.signIn(profile: profile.name, vendor: v.id, confirm: true) }
                 }
             }
@@ -333,31 +376,252 @@ private struct ProfileCard: View {
         }
     }
 
-    // A card is lab-neutral: the profile, then one chip per lab. Anything
-    // about a single lab lives on its chip and in its drawer.
+    private var quotaUsage: Usage? { model.usage[profile.name] }
+
+    private func signedOut(_ v: Vendor) -> Bool {
+        v.id == data.quotaVendor?.id && (quotaUsage?.note == .noToken || quotaUsage?.note == .staleToken)
+    }
+
+    // A chip with no gauge has no quota API and never waits; one whose lab
+    // does, sweeps until its reading lands.
+    private func gauge(for v: Vendor) -> ChipGauge? {
+        guard v.id == data.quotaVendor?.id else { return nil }
+        if let r = quotaUsage?.remaining { return .value(r) }
+        return quotaUsage == nil && !model.usageSlow ? .loading : nil
+    }
+
     private var nameRow: some View {
         HStack(spacing: 7) {
             RoundedRectangle(cornerRadius: 2).fill(profileColor(profile.name)).frame(width: 3, height: 18)
             Text(profile.name).font(.system(size: 13, weight: .medium))
             Spacer()
+            Group {
+                if repatching {
+                    Text("Rebuilding…").foregroundStyle(.secondary)
+                } else if stale {
+                    Text("Update pending").foregroundStyle(Color(nsColor: .systemOrange))
+                } else if profile.hasApp {
+                    HStack(spacing: 5) {
+                        if profile.running { Circle().fill(Color(nsColor: .systemGreen)).frame(width: 6, height: 6) }
+                        Text(profile.running ? "Desktop running" : "Desktop idle")
+                    }
+                    .foregroundStyle(.secondary)
+                }
+            }
+            .font(.system(size: 10.5))
         }
         .frame(height: 18)
     }
 
-    // The one profile-level state: its Claude Desktop clone is a separate app
-    // that falls behind when Claude updates, and needs acting on.
+    // Clone state outranks capacity: while a clone is behind, that is the
+    // thing to act on. Otherwise the card carries the most constrained lab's
+    // capacity — Claude's, as the only lab with a usage API today.
     @ViewBuilder private var detailRow: some View {
         if repatching {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Claude Desktop rebuilding…").font(.system(size: 11)).foregroundStyle(.secondary)
-                ProgressView().progressViewStyle(.linear).controlSize(.small).tint(Color(nsColor: .systemOrange))
-            }
+            ProgressView().progressViewStyle(.linear).controlSize(.small).tint(Color(nsColor: .systemOrange))
         } else if stale {
-            InlineStatus(text: profile.running ? "Claude Desktop behind · in use"
-                                               : actions.autoRepatch ? "Claude Desktop behind · queued"
-                                                                     : "Claude Desktop behind",
+            InlineStatus(text: profile.running ? "Waiting — clone is in use"
+                                               : actions.autoRepatch ? "Queued for rebuild" : "Auto-repatch is off",
                          button: "Rebuild Now") { actions.rebuildClone(profile.name) }
+        } else if let v = data.quotaVendor, profile.slots[v.id] != nil {
+            QuotaRegion(vendor: v, usage: quotaUsage, slow: model.usageSlow, index: index) {
+                actions.signIn(profile: profile.name, vendor: v.id, confirm: false)
+            } retry: {
+                actions.retryUsage()
+            }
         }
+    }
+}
+
+// The card's capacity readout. Fixed height in every state — sweeping,
+// filled, or a note with its action — so nothing below it moves when the
+// reading lands.
+private struct QuotaRegion: View {
+    let vendor: Vendor
+    let usage: Usage?
+    let slow: Bool
+    let index: Int
+    let logIn: () -> Void
+    let retry: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private static let resetTime: DateFormatter = {
+        let f = DateFormatter()
+        f.timeStyle = .short
+        f.dateStyle = .none
+        return f
+    }()
+
+    private var stateKey: String { usage?.note.rawValue ?? (slow ? "slow" : "loading") }
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            content.transition(.opacity)
+        }
+        .frame(height: 29)
+        .animation(.easeOut(duration: reduceMotion ? 0.1 : 0.18), value: stateKey)
+    }
+
+    @ViewBuilder private var content: some View {
+        switch usage?.note {
+        case .ok?:
+            // Fills rise from zero, cards 80 ms apart.
+            let delay = reduceMotion ? 0 : Double(index) * 0.08
+            VStack(spacing: 7) {
+                MeterRow(label: "5h", percent: usage?.fiveHour,
+                         meta: usage?.resets.map { "resets \(Self.resetTime.string(from: $0))" } ?? "", delay: delay)
+                MeterRow(label: "7d", percent: usage?.sevenDay, meta: sevenDayMeta, delay: delay)
+            }
+        case .noToken?:
+            InlineStatus(text: "\(vendor.label) quota unavailable — not signed in", button: "Log In", action: logIn)
+        case .staleToken?:
+            InlineStatus(text: "\(vendor.label) quota unavailable — token expired", button: "Log In", action: logIn)
+        case .rateLimited?:
+            InlineStatus(text: "\(vendor.label) quota check rate-limited", button: "Retry", action: retry)
+        case .fetchError?:
+            InlineStatus(text: "\(vendor.label) quota check failed", button: "Retry", action: retry)
+        case .noUsageAPI?:
+            EmptyView()
+        case nil:
+            if slow {
+                Text("Checking quota…").font(.system(size: 10.5)).foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 7) {
+                    MeterRow(label: "5h", percent: nil, meta: "", delay: 0)
+                    MeterRow(label: "7d", percent: nil, meta: "", delay: 0)
+                }
+            }
+        }
+    }
+
+    // Which lab the bars belong to — or, when the last read failed and these
+    // are the previous numbers, how old they are.
+    private var sevenDayMeta: String {
+        if let at = usage?.fetchedAt, Date().timeIntervalSince(at) > 360 {
+            return "as of \(Int(Date().timeIntervalSince(at) / 60))m ago"
+        }
+        return vendor.label
+    }
+}
+
+// label · bar · percent · meta. A nil percent is a reading still on its way:
+// the bar sweeps and the number stays blank, in the same frame it will fill.
+private struct MeterRow: View {
+    let label: String
+    let percent: Int?
+    let meta: String
+    let delay: Double
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var filled = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(label).foregroundStyle(.secondary).frame(width: 15, alignment: .leading)
+            GeometryReader { g in
+                ZStack(alignment: .leading) {
+                    if let p = percent {
+                        Capsule().fill(Color.primary.opacity(0.16))
+                        Capsule().fill(meterColor(p))
+                            .frame(width: g.size.width * CGFloat(min(max(p, 0), 100)) / 100)
+                            .scaleEffect(x: filled ? 1 : 0, anchor: .leading)
+                    } else {
+                        Sweep().clipShape(Capsule())
+                    }
+                }
+            }
+            .frame(height: 4)
+            Text(percent.map { "\($0)%" } ?? "").monospacedDigit().frame(width: 30, alignment: .trailing)
+            Text(meta).foregroundStyle(.secondary).lineLimit(1).frame(width: 84, alignment: .trailing)
+        }
+        .font(.system(size: 10.5))
+        .frame(height: 11)
+        .animation(.easeOut(duration: 0.3), value: percent)
+        .onAppear {
+            guard percent != nil else { return }
+            if reduceMotion {
+                filled = true
+            } else {
+                withAnimation(.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.42).delay(delay)) { filled = true }
+            }
+        }
+    }
+}
+
+// Indeterminate progress: a 40%-wide highlight crossing its track every
+// 1.4 s. Under Reduce Motion the track just sits at a static 30% tint.
+private struct Sweep: View {
+    var period: Double = 1.4
+    var strength: Double = 0.5
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        if reduceMotion {
+            Rectangle().fill(Color.primary.opacity(0.3))
+        } else {
+            TimelineView(.animation) { context in
+                GeometryReader { g in
+                    let phase = context.date.timeIntervalSinceReferenceDate
+                        .truncatingRemainder(dividingBy: period) / period
+                    let width = g.size.width * 0.4
+                    LinearGradient(colors: [.white.opacity(0), .white.opacity(strength), .white.opacity(0)],
+                                   startPoint: .leading, endPoint: .trailing)
+                        .frame(width: width)
+                        .offset(x: width * (-1.2 + 4.4 * phase))
+                }
+            }
+            .background(Color.primary.opacity(0.16))
+            .clipped()
+        }
+    }
+}
+
+// Placeholder block for the very first launch, before anything was read.
+private struct Pulse: View {
+    let width: CGFloat?
+    let height: CGFloat
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var bright = false
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 3)
+            .fill(Color.primary.opacity(0.14))
+            .frame(width: width, height: height)
+            .opacity(reduceMotion ? 0.7 : bright ? 0.9 : 0.45)
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) { bright = true }
+            }
+    }
+}
+
+// Cold start only: the first launch before any snapshot was saved. Two
+// placeholder cards — never a profile count guessed from nothing.
+private struct ColdStart: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel(title: "Profiles", detail: "")
+            ForEach(0..<2, id: \.self) { _ in
+                VStack(alignment: .leading, spacing: 9) {
+                    HStack(spacing: 7) {
+                        Pulse(width: 3, height: 14)
+                        Pulse(width: 58, height: 8)
+                    }
+                    Sweep(period: 1.6, strength: 0.07).frame(height: 3).clipShape(Capsule())
+                    Sweep(period: 1.6, strength: 0.07).frame(height: 3).clipShape(Capsule())
+                    HStack(spacing: 4) {
+                        Pulse(width: 64, height: 17)
+                        Pulse(width: 40, height: 17)
+                    }
+                }
+                .padding(.vertical, 8)
+                .padding(.horizontal, 9)
+                .background(RoundedRectangle(cornerRadius: Metrics.cardRadius).fill(Color.primary.opacity(0.05)))
+                .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius).strokeBorder(Color.primary.opacity(0.08)))
+            }
+            Text("Reading profiles…").font(.system(size: 11)).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, Metrics.side)
+        .padding(.vertical, 12)
     }
 }
 
@@ -375,19 +639,24 @@ private struct InlineStatus: View {
     }
 }
 
+enum ChipGauge: Equatable {
+    case value(Int)   // quota left, 0–100
+    case loading
+}
+
 private struct VendorChip: View {
     let vendor: Vendor
     let active: Bool
     let selected: Bool
-    /// Quota left, 0–100. Nil for labs with no usage API — no line is drawn
-    /// rather than a guessed one.
-    let remaining: Int?
+    /// Nil for labs with no usage API — no gauge is drawn rather than a guessed one.
+    let gauge: ChipGauge?
     let signedOut: Bool
     let account: String?
     let action: () -> Void
 
-    // Filled = active for this lab, outlined = holds a slot, dashed = a swap
-    // vendor, where switching is a global side effect.
+    // Filled accent = active for this lab, outlined = holds a slot, dashed =
+    // a swap lab, where switching is a global side effect. The open drawer's
+    // chip carries an accent ring.
     var body: some View {
         Button(action: action) {
             chip.contentShape(Rectangle())
@@ -401,34 +670,60 @@ private struct VendorChip: View {
         if let account { parts.append(account) }
         if signedOut {
             parts.append("signed out")
-        } else if let r = remaining {
+        } else if case .value(let r)? = gauge {
             parts.append("\(r)% quota left")
         }
         return parts.joined(separator: " · ")
     }
 
     private var chip: some View {
-            HStack(spacing: 3) {
-                if signedOut {
-                    Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 8))
-                        .foregroundStyle(selected ? Color.white : Color(nsColor: .systemOrange))
-                }
-                if vendor.isolation == "swap" { Image(systemName: "arrow.left.arrow.right").font(.system(size: 8)) }
-                Text(vendor.label)
+        HStack(spacing: 3) {
+            if signedOut {
+                Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 8))
+                    .foregroundStyle(active ? Color.white : Color(nsColor: .systemOrange))
             }
-            .font(.system(size: 10.5))
-            .padding(.horizontal, 6)
-            .frame(height: 17)
-            .foregroundStyle(selected ? Color.white : Color.primary)
-            .background(RoundedRectangle(cornerRadius: 4)
-                .fill(selected ? Color.accentColor : active ? Color.primary.opacity(0.14) : Color.clear))
-            .overlay(alignment: .bottom) {
-                if let r = remaining { RemainingLine(percent: r) }
+            if vendor.isolation == "swap" { Image(systemName: "arrow.left.arrow.right").font(.system(size: 8)) }
+            Text(vendor.label)
+        }
+        .font(.system(size: 10.5))
+        .padding(.horizontal, 6)
+        .frame(height: 17)
+        .foregroundStyle(active ? Color.white : Color.primary)
+        .background(RoundedRectangle(cornerRadius: 4).fill(active ? Color.accentColor : Color.clear))
+        .overlay(alignment: .bottom) {
+            switch gauge {
+            case .value(let r)?: RemainingLine(percent: r)
+            case .loading?: Sweep().frame(height: 2)
+            case nil: EmptyView()
             }
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4)
-                .strokeBorder(selected ? Color.clear : Color.primary.opacity(active ? 0 : 0.25),
-                              style: StrokeStyle(lineWidth: 1, dash: vendor.isolation == "swap" ? [2.5, 2] : [])))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .overlay(RoundedRectangle(cornerRadius: 4)
+            .strokeBorder(active ? Color.white.opacity(vendor.isolation == "swap" ? 0.6 : 0) : Color.primary.opacity(0.25),
+                          style: StrokeStyle(lineWidth: 1, dash: vendor.isolation == "swap" ? [2.5, 2] : [])))
+        .overlay(RoundedRectangle(cornerRadius: 5.5)
+            .strokeBorder(Color.accentColor, lineWidth: 1.5)
+            .padding(-2)
+            .opacity(selected ? 1 : 0))
+    }
+}
+
+// +N / − beside the chips.
+private struct SmallChip: View {
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(verbatim: title)
+                .font(.system(size: 10.5))
+                .padding(.horizontal, 6)
+                .frame(height: 17)
+                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.primary.opacity(0.25)))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
     }
 }
 
@@ -471,22 +766,9 @@ private struct VendorDrawer: View {
     private var command: String { "\(vendor.id)-\(profile.name.lowercased())" }
 
     private var summary: String {
-        var parts = [vendor.label, vendor.isolation == "swap" ? "one profile at a time" : "pinned per process"]
-        switch usage?.note {
-        case .ok?:
-            if let five = usage?.fiveHour, let seven = usage?.sevenDay { parts.append("5h \(five)% · 7d \(seven)% used") }
-            // Kept from an earlier read because the latest one failed.
-            if let at = usage?.fetchedAt, Date().timeIntervalSince(at) > 360 {
-                parts.append("as of \(Int(Date().timeIntervalSince(at) / 60))m ago")
-            }
-        case .noToken?: parts.append("not signed in")
-        case .staleToken?: parts.append("token expired")
-        case .rateLimited?: parts.append("quota check rate-limited, retrying later")
-        case .fetchError?: parts.append("quota check failed")
-        case .noUsageAPI?: break
-        case nil: if data.quotaVendor?.id == vendor.id && model.usageLoading { parts.append("checking quota…") }
-        }
-        return parts.joined(separator: " · ")
+        // Capacity is on the card; the drawer says how the lab runs.
+        [vendor.label, vendor.isolation == "swap" ? "one profile at a time" : "pinned per process"]
+            .joined(separator: " · ")
     }
 
     var body: some View {
@@ -499,9 +781,6 @@ private struct VendorDrawer: View {
                 }
                 if usage?.note == .noToken || usage?.note == .staleToken {
                     Button("Log In…") { actions.signIn(profile: profile.name, vendor: vendor.id, confirm: false) }
-                        .buttonStyle(PillButtonStyle(height: 22))
-                } else if usage?.note == .fetchError {
-                    Button("Retry") { actions.retryUsage() }
                         .buttonStyle(PillButtonStyle(height: 22))
                 }
                 // Make this profile the lab's default. A swap lab has one

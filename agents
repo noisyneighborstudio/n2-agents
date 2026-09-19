@@ -925,8 +925,9 @@ session_meta() {  # path -> cwd \t snippet
   cwd=$(grep -m1 -o '"cwd":"[^"]*"' "$1" 2>/dev/null | sed 's/^"cwd":"//; s/"$//' || true)
   snippet=$(grep -m 40 '"role":"user"' "$1" 2>/dev/null | grep -v '"isMeta":true' \
     | grep -o '"\(text\|content\)":"[^"]*' | sed 's/^"[a-z]*":"//' \
-    | grep -v -e '^<' -e '^# AGENTS.md instructions' -e '^\[Request interrupted' | head -1 | cut -c1-70 || true)
-  snippet=$(printf '%s' "$snippet" | sed 's/\\[nt]/ /g; s/\\"/"/g')
+    | grep -v -e '^<' -e '^# AGENTS.md instructions' -e '^\[Request interrupted' | head -1 || true)
+  # Escapes out, and a markdown link reads as its text ([$skill](/path) -> $skill).
+  snippet=$(printf '%s' "$snippet" | sed 's/\\[nt]/ /g; s/\\"/"/g; s/\[\([^]]*\)\]([^)]*)/\1/g' | cut -c1-70)
   printf '%s\t%s\n' "$cwd" "${snippet:-(no prompt)}"
 }
 

@@ -17,6 +17,7 @@ struct Usage {
 
     let fiveHour: Int?
     let sevenDay: Int?
+    let resets: Date?       // when the 5h window resets
     let note: Note
     var fetchedAt = Date()
 
@@ -26,6 +27,14 @@ struct Usage {
         return 100 - max(f, sevenDay ?? 0)
     }
 
+    private static let resetFormat: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.dateFormat = "yyyy-MM-dd'T'HH:mm"
+        return f
+    }()
+
     /// profile -> usage. Unknown notes are dropped: a newer CLI may add some.
     static func parse(_ text: String) -> [String: Usage] {
         var rows: [String: Usage] = [:]
@@ -34,6 +43,7 @@ struct Usage {
             guard f.count >= 5, let note = Note(rawValue: f[4]) else { continue }
             rows[f[0]] = Usage(fiveHour: Double(f[1]).map { Int($0.rounded()) },
                                sevenDay: Double(f[2]).map { Int($0.rounded()) },
+                               resets: resetFormat.date(from: f[3]),
                                note: note)
         }
         return rows
@@ -79,6 +89,11 @@ final class PanelModel: ObservableObject {
     /// Quota for data.quotaVendor, profile -> row. Empty until the first fetch lands.
     @Published var usage: [String: Usage] = [:]
     @Published var usageLoading = false
+    /// A fetch has run 3 s with nothing to show: sweeps give way to a label,
+    /// because motion that outlives its welcome reads as a hang.
+    @Published var usageSlow = false
+    /// Flips false → true on every open; the content rises into place off it.
+    @Published var presented = true
     @Published var repatching: Set<String> = []
     @Published var selection: Selection?
     @Published var updateStatus: UpdateStatus?

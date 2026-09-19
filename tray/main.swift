@@ -153,9 +153,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         popover.behavior = .transient
         popover.animates = false
 
-        // The panel is ready before anyone clicks: data loads now and every few
-        // minutes, and opening shows the last read at once while a fresh one
-        // runs behind it. Nothing ever waits on the CLI to draw.
+        // The panel is ready before anyone clicks: it starts from the last
+        // snapshot saved to disk, re-reads now and every few minutes, and an
+        // open shows the last read at once while a fresh one runs behind it.
+        // Nothing ever waits on the CLI to draw; only a first-ever launch has
+        // nothing to show, and says so.
+        if let porcelain = defaults.string(forKey: CacheKey.porcelain) {
+            model.data = buildPanelData(porcelain: porcelain, sessions: defaults.string(forKey: CacheKey.sessions) ?? "")
+        }
         refreshPanel()
         Timer.scheduledTimer(withTimeInterval: 180, repeats: true) { [weak self] _ in self?.refreshPanel() }
 
@@ -190,10 +195,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         // Size from the already-loaded content so the first frame is the
         // finished panel, not an empty one that grows into place.
         popover.contentSize = hosting.view.fittingSize
+        var still = Transaction()
+        still.disablesAnimations = true
+        withTransaction(still) { model.presented = false }
         NSApp.activate(ignoringOtherApps: true)
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         // A pointer panel: no control starts out keyboard-focused (and ringed).
         hosting.view.window?.makeFirstResponder(nil)
+        DispatchQueue.main.async { self.model.presented = true }
         refreshPanel()
     }
 
@@ -215,7 +224,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         DispatchQueue.global(qos: .userInitiated).async {
             let data = self.loadPanelData()
             DispatchQueue.main.async {
-                guard generation == self.refreshGeneration else { return }
+                guard generation == self.refreshGeneration, let data else { return }
                 self.model.data = data
                 if let s = self.model.selection,
                    data.profiles.first(where: { $0.name == s.profile })?.slots[s.vendor] == nil {
@@ -227,8 +236,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         }
     }
 
-    private func loadPanelData() -> PanelData {
-        let snap = snapshot()
+    private enum CacheKey {
+        static let porcelain = "panelCache.porcelain"
+        static let sessions = "panelCache.sessions"
+    }
+    private let defaults = UserDefaults.standard
+
+    // Reads the CLI (slow, off the main thread) and saves what it said, so the
+    // next launch can draw from it before the CLI has answered.
+    // A failed read returns nil and the panel keeps what it has, rather than
+    // replacing real profiles with an empty, first-run-looking one.
+    private func loadPanelData() -> PanelData? {
+        let porcelain = runCLI(["porcelain"])
+        guard porcelain.status == 0 else { return nil }
+        let sessions = runCLI(["sessions", "--porcelain", "--limit", "2"])
+        let sessionText = sessions.status == 0 ? sessions.output : ""
+        defaults.set(porcelain.output, forKey: CacheKey.porcelain)
+        defaults.set(sessionText, forKey: CacheKey.sessions)
+        return buildPanelData(porcelain: porcelain.output, sessions: sessionText)
+    }
+
+    // Everything else is local and fast enough to run on the main thread.
+    private func buildPanelData(porcelain: String, sessions: String) -> PanelData {
+        let snap = Snapshot.parse(porcelain)
         let profiles = discoverProfiles(snap)
         let desktopVersion = claudeAppPath.flatMap(bundleVersion)
         var stale: [String: String] = [:]
@@ -241,7 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
                          profiles: profiles,
                          desktopVersion: desktopVersion,
                          staleClones: stale,
-                         sessions: sessions(["--limit", "2"]),
+                         sessions: SessionInfo.parse(sessions),
                          terminals: terminals)
     }
 
@@ -253,6 +283,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     private var usageFetchedAt: Date?
     private var usageRefetch = false
     private var usageTTL: TimeInterval = 300
+    private var usageSlowTimer: DispatchWorkItem?
 
     private func refreshUsage(force: Bool) {
         guard let vendor = model.data?.quotaVendor else { return }
@@ -263,10 +294,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
             return
         }
         model.usageLoading = true
+        usageSlowTimer?.cancel()
+        let slow = DispatchWorkItem { [weak self] in self?.model.usageSlow = true }
+        usageSlowTimer = slow
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: slow)
         DispatchQueue.global(qos: .utility).async {
             let r = self.runCLI(["best", "--porcelain", "--vendor", vendor.id])
             DispatchQueue.main.async {
                 self.model.usageLoading = false
+                self.usageSlowTimer?.cancel()
+                self.model.usageSlow = false
                 self.usageFetchedAt = Date()
                 let fresh = r.status == 0 ? Usage.parse(r.output) : [:]
                 self.usageTTL = fresh.values.contains { $0.note == .rateLimited } ? 900 : 300
