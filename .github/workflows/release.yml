@@ -24,7 +24,9 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          # The lockfile is written by npm 11 (Node 24); an older npm's `npm ci`
+          # resolves it differently and rejects it as out of sync.
+          node-version: 24
       - name: Select isolated channel
         run: |
           set -euo pipefail
