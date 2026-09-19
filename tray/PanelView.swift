@@ -138,13 +138,15 @@ private struct PanelHeader: View {
         items.append(submenu("Update Channel", UpdateChannel.allCases.map { c in
             ClosureItem(c.rawValue.capitalized, checked: c == channel) { actions.setUpdateChannel(c) }
         }))
-        if model.data?.desktopInstalled == true {
-            items.append(ClosureItem("Auto-repatch Claude Desktop Clones", checked: actions.autoRepatch) {
-                actions.setAutoRepatch(!actions.autoRepatch)
-            })
-            items.append(ClosureItem("Re-patch All Clones Now") { actions.repatchAll() })
+        if let clone = model.data?.cloneVendor {
+            if model.data?.desktopInstalled == true {
+                items.append(ClosureItem("Auto-repatch \(clone.desktopName) Clones", checked: actions.autoRepatch) {
+                    actions.setAutoRepatch(!actions.autoRepatch)
+                })
+                items.append(ClosureItem("Re-patch All Clones Now") { actions.repatchAll() })
+            }
+            items.append(ClosureItem("Locate \(clone.desktopName)…") { actions.locateClaude() })
         }
-        items.append(ClosureItem("Locate Claude Desktop…") { actions.locateClaude() })
         items.append(.separator())
         items.append(ClosureItem("Check for Updates…") { actions.checkForUpdates() })
         popUp(items)
@@ -195,18 +197,18 @@ private struct Banners: View {
     let actions: PanelActions
 
     var body: some View {
-        if !data.desktopInstalled, data.snapshot.vendor("claude")?.installed == true {
-            Banner(icon: "exclamationmark.triangle", text: "Claude Desktop not found — CLI profiles still work") {
+        if !data.desktopInstalled, let clone = data.cloneVendor {
+            Banner(icon: "exclamationmark.triangle", text: "\(clone.desktopName) not found — CLI profiles still work") {
                 Button("Locate…") { actions.locateClaude() }
                 Button("Download…") { actions.downloadClaude() }
             }
         }
         let clones = Set(data.staleClones.keys).union(model.repatching)
-        if let version = data.desktopVersion, !clones.isEmpty {
+        if let version = data.desktopVersion, let clone = data.cloneVendor, !clones.isEmpty {
             Banner(icon: "arrow.up.to.line",
                    text: model.repatching.isEmpty
-                       ? "Claude \(version) — \(clones.count) clone(s) behind"
-                       : "Claude \(version) — rebuilding \(model.repatching.count) of \(clones.count) clones") {
+                       ? "\(clone.desktopName) \(version) — \(clones.count) clone(s) behind"
+                       : "\(clone.desktopName) \(version) — rebuilding \(model.repatching.count) of \(clones.count) clones") {
                 Button("Details") { actions.showCloneDetails() }
             }
         }
@@ -414,7 +416,9 @@ private struct ProfileCard: View {
                     Button("\(v.label)…") { actions.signIn(profile: profile.name, vendor: v.id, confirm: true) }
                 }
             }
-            if profile.hasApp { Button("Reveal Claude Desktop Data") { actions.revealData(profile: profile.name) } }
+            if profile.hasApp, let clone = data.cloneVendor {
+                Button("Reveal \(clone.desktopName) Data") { actions.revealData(profile: profile.name) }
+            }
             if !profile.isDefault {
                 Divider()
                 Button("Delete Profile…") { actions.deleteProfile(profile.name) }
@@ -468,10 +472,10 @@ private struct ProfileCard: View {
                     Text("Rebuilding…").foregroundStyle(.secondary)
                 } else if stale {
                     Text("Update pending").foregroundStyle(Color(nsColor: .systemOrange))
-                } else if profile.hasApp {
+                } else if profile.hasApp, let clone = data.cloneVendor {
                     HStack(spacing: 5) {
                         if profile.running { Circle().fill(Color(nsColor: .systemGreen)).frame(width: 6, height: 6) }
-                        Text(profile.running ? "Desktop running" : "Desktop idle")
+                        Text(profile.running ? "\(clone.desktopName) running" : "\(clone.desktopName) idle")
                     }
                     .foregroundStyle(.secondary)
                 }
@@ -894,7 +898,7 @@ private struct VendorDrawer: View {
                 }
             }
             if vendor.clonesDesktopApp && data.desktopInstalled && profile.hasApp {
-                DrawerRow(title: "Claude Desktop") {
+                DrawerRow(title: LocalizedStringKey(vendor.desktopName)) {
                     actions.openDesktop(profile: profile.name)
                 } trailing: {
                     HStack(spacing: 5) {
@@ -1032,7 +1036,7 @@ private struct FirstRun: View {
         VStack(spacing: 10) {
             Image(systemName: "asterisk").font(.system(size: 28, weight: .light)).foregroundStyle(.secondary)
             Text("No profiles yet").font(.system(size: 13, weight: .semibold))
-            Text("A profile is one identity holding a slot per lab — Claude, Codex, Grok and the rest move together when you switch.")
+            Text("A profile is one identity holding a slot per lab — they all move together when you switch.")
                 .font(.system(size: 11.5))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

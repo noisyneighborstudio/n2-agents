@@ -85,6 +85,9 @@ struct PanelData {
     var desktopInstalled: Bool { desktopVersion != nil }
     /// The lab whose quota the panel can show (Claude alone, today).
     var quotaVendor: Vendor? { snapshot.installedVendors.first { $0.hasUsageAPI } }
+    /// The lab whose desktop app is cloned per profile (Claude alone, today) —
+    /// every desktop clone feature keys off this, never a lab's name.
+    var cloneVendor: Vendor? { snapshot.installedVendors.first { $0.clonesDesktopApp } }
 }
 
 struct Selection: Equatable {

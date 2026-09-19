@@ -118,6 +118,15 @@ vendor_desktop() {
   esac
 }
 
+# The lab's desktop app, as people call it — for labs with one.
+vendor_desktop_name() {
+  case $1 in
+    claude) echo "Claude Desktop" ;;
+    codex)  echo "Codex" ;;
+    *)      echo "" ;;
+  esac
+}
+
 vendor_usage() {
   case $1 in
     claude) echo oauth ;;

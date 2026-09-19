@@ -1215,16 +1215,17 @@ cmd_authed() {
 # above. Padding and emoji belong to the human-facing commands; this one is a
 # contract, and it is the only thing the Swift side parses.
 #
-#   V <vendor> <installed 0|1> <isolation> <desktop> <usage> <label> <sessions> <monogram>
+#   V <vendor> <installed 0|1> <isolation> <desktop> <usage> <label> <sessions> <monogram> <desktop app name>
 #   P <profile> <desktop-running 0|1> <vendor,vendor,…  or "-">
 #   S <profile> <vendor> <slot-dir> <account or ""> <signed in: yes|no|unknown>   one per slot
 #   A <active-summary>
 cmd_porcelain() {
   for v in $N2_VENDORS; do
     if vendor_installed "$v"; then i=1; else i=0; fi
-    printf 'V\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf 'V\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$v" "$i" "$(vendor_isolation "$v")" "$(vendor_desktop "$v")" \
-      "$(vendor_usage "$v")" "$(vendor_label "$v")" "$(vendor_sessions "$v")" "$(vendor_monogram "$v")"
+      "$(vendor_usage "$v")" "$(vendor_label "$v")" "$(vendor_sessions "$v")" "$(vendor_monogram "$v")" \
+      "$(vendor_desktop_name "$v")"
   done
   for n in $(all_profiles); do
     if profile_running "$n"; then r=1; else r=0; fi

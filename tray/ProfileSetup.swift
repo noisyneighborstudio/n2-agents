@@ -111,7 +111,7 @@ final class ProfileSetup: NSObject, NSWindowDelegate {
     func create() {
         guard let host, !model.busy else { return }
         let picks = model.newPicks
-        let clone = picks.contains("claude") && host.setupDesktopInstalled
+        let clone = picks.contains { model.vendor($0)?.clonesDesktopApp == true } && host.setupDesktopInstalled
         model.busy = true
         model.error = nil
         DispatchQueue.global(qos: .userInitiated).async {
