@@ -22,6 +22,10 @@ echo "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-} CODEX_HOME=${CODEX_HOME:-} GROK_H
 FAKE
   chmod +x "$fake_bin/$v"
 done
+# The keychain is the real user's even under a fake HOME: a stand-in
+# `security` that finds nothing keeps tests off real logins (and the network).
+printf '#!/bin/sh\nexit 44\n' > "$fake_bin/security"
+chmod +x "$fake_bin/security"
 fake_path="$fake_bin:/usr/bin:/bin"
 
 # --- syntax ----------------------------------------------------------------
@@ -180,6 +184,35 @@ fi
 test -f "$home/.n2-agents/Work/gemini/oauth_creds.json"
 run_agents login Work --vendor gemini --switch >/dev/null 2>&1
 test ! -e "$home/.n2-agents/Work/gemini/oauth_creds.json"
+
+# --- next best: no lab is anyone's default -------------------------------
+# Cursor and opencode keep their logins out of sight, so a slot of theirs can
+# only be taken at its word; drop theirs so every slot here is checkable.
+rm -rf "$home"/.n2-agents/{Default,Work}/{cursor,opencode}
+# Nothing signed in: nothing to guess.
+if run_agents run >/dev/null 2>&1; then echo "run picked a slot with nothing signed in" >&2; exit 1; fi
+# Commands that act on one lab ask rather than defaulting to the first.
+if run_agents login Work >/dev/null 2>&1; then echo "login guessed a lab" >&2; exit 1; fi
+rm -f "$home/.n2-agents/.last-slot"
+echo '{}' > "$home/.n2-agents/Work/codex/auth.json"
+echo '{}' > "$home/.n2-agents/Work/grok/auth.json"
+# The only signed-in slots are Work's Codex and Grok, so that's where it goes…
+out=$(run_agents run 2>&1)
+[[ $out == *"CODEX_HOME=$home/.n2-agents/Work/codex"* ]]
+test "$(cat "$home/.n2-agents/.last-slot")" = "Work:codex"
+# …then on round the rotation, skipping what isn't signed in…
+out=$(run_agents run 2>&1)
+[[ $out == *"GROK_HOME=$home/.n2-agents/Work/grok"* ]]
+out=$(run_agents run 2>&1)
+[[ $out == *"CODEX_HOME=$home/.n2-agents/Work/codex"* ]]
+# …and a profile alone, or a lab alone, fills in the other half the same way.
+out=$(run_agents run Work 2>&1)
+[[ $out == *"GROK_HOME=$home/.n2-agents/Work/grok"* ]]
+out=$(run_agents run --vendor codex 2>&1)
+[[ $out == *"CODEX_HOME=$home/.n2-agents/Work/codex"* ]]
+porcelain=$(run_agents porcelain)
+print -r -- "$porcelain" | grep -qx "L	Work	codex"
+rm "$home/.n2-agents/Work/codex/auth.json" "$home/.n2-agents/Work/grok/auth.json"
 
 # --- adopt: shares claudes state, never copies it --------------------------
 adopt_home="$test_root/adopt-home"

@@ -95,10 +95,11 @@ struct Selection: Equatable {
     let vendor: String
 }
 
-enum BestPick {
-    case profile(String, used: Int)
-    /// Every readable profile is maxed; the soonest one back, if known.
+enum NextBest {
+    case slot(profile: String, vendor: String, used: Int?)
+    /// Every signed-in slot is out of quota; the soonest one back, if known.
     case allMaxed(firstBack: Date?)
+    case nothingSignedIn
 }
 
 enum UpdateStatus: Equatable {
@@ -123,20 +124,40 @@ final class PanelModel: ObservableObject {
     /// Profiles whose setup was left unfinished: profile -> the labs it set up.
     @Published var pendingSetups: [String: [String]] = [:]
 
-    /// Lowest 5h wins, ties to 7d — the CLI's pick_best, run over rows already
-    /// fetched so the button names its pick before anything is launched.
-    /// Unreadable and maxed profiles are out of the running, not blockers.
-    /// Nil until at least one reading is in.
-    var best: BestPick? {
-        guard let data, let v = data.quotaVendor else { return nil }
-        let readable = data.profiles.filter { $0.slots[v.id] != nil }
-            .compactMap { p in usage[p.name].flatMap { $0.note == .ok ? (p.name, $0) : nil } }
-        guard !readable.isEmpty else { return nil }
-        let open = readable.filter { !$0.1.maxed }
-        guard let pick = open.min(by: { ($0.1.fiveHour ?? 0, $0.1.sevenDay ?? 0) < ($1.1.fiveHour ?? 0, $1.1.sevenDay ?? 0) }) else {
-            return .allMaxed(firstBack: readable.compactMap { $0.1.maxedUntil }.min())
+    /// The CLI's next_best, run over what's already read, so the button names
+    /// its pick before anything starts: every slot in one rotation (profiles
+    /// in order, labs in table order), starting after the last slot run, and
+    /// the first that is signed in (or can't be checked) and — for a lab that
+    /// reports quota — read cleanly and not maxed. No lab is favoured. Nil
+    /// while the pick hangs on a quota reading that hasn't landed yet.
+    var nextBest: NextBest? {
+        guard let data else { return nil }
+        let snap = data.snapshot
+        let slots = data.profiles.flatMap { p in
+            snap.installedVendors.filter { p.slots[$0.id] != nil }.map { (profile: p.name, vendor: $0) }
         }
-        return .profile(pick.0, used: pick.1.fiveHour ?? 0)
+        let after = snap.lastSlot.flatMap { last in
+            slots.firstIndex { $0.profile == last.profile && $0.vendor.id == last.vendor }
+        } ?? -1
+        var firstBack: [Date] = []
+        var sawMaxed = false
+        for i in slots.indices {
+            let (profile, vendor) = slots[(after + 1 + i) % slots.count]
+            guard snap.signedIn[profile]?[vendor.id] != false else { continue }
+            guard vendor.hasUsageAPI else { return .slot(profile: profile, vendor: vendor.id, used: nil) }
+            guard vendor.id == data.quotaVendor?.id, let u = usage[profile] else {
+                if usage.isEmpty && usageLoading { return nil }
+                continue
+            }
+            guard u.note == .ok else { continue }
+            if u.maxed {
+                sawMaxed = true
+                if let back = u.maxedUntil { firstBack.append(back) }
+                continue
+            }
+            return .slot(profile: profile, vendor: vendor.id, used: u.used)
+        }
+        return sawMaxed ? .allMaxed(firstBack: firstBack.min()) : .nothingSignedIn
     }
 }
 

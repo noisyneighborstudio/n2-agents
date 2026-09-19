@@ -6,7 +6,7 @@
 #   agents vendors                        labs found on this machine, and how each isolates
 #   agents active [--vendor <v>]          print the active profile
 #   agents use <Profile|Default> [--vendor <v>]
-#   agents run <Profile|--next|--best> [--vendor <v>] [--start-from-session=<id>] [args]
+#   agents run [Profile|--next|--best] [--vendor <v>] [--start-from-session=<id>] [args]   (unsaid = next best)
 #   agents best [--vendor <v>] [--porcelain]  per-profile usage (5h/7d windows)
 #   agents new <Name> [--vendors a,b] [--cli-only]
 #   agents delete <Name> [--everything] [--yes]
@@ -79,9 +79,10 @@ one_vendor() {
     echo "$v"
     return 0
   fi
-  v=$(vendors_installed | head -1)
-  [ -n "$v" ] || die "no supported agent CLI found on PATH (looked for: $N2_VENDORS)"
-  echo "$v"
+  # Never the first lab in the table: that quietly made one lab everyone's
+  # default. Commands that can do better than asking (run, sessions, best,
+  # transfer, desktop) decide for themselves before they get here.
+  die "which lab? pass --vendor <$(vendors_installed | tr '\n' '|' | sed 's/|$//')>"
 }
 
 # --- Claude Desktop --------------------------------------------------------
@@ -456,6 +457,15 @@ cmd_best() {
       *) shift ;;
     esac
   done
+  if [ -z "$vsel" ]; then
+    # Every lab that reports usage, not whichever sorts first.
+    bv=$(for x in $(vendors_installed); do [ "$(vendor_usage "$x")" = oauth ] && echo "$x"; done; true)
+    [ -n "$bv" ] || die "none of the installed labs reports usage"
+    for x in $bv; do
+      if [ "$porcelain" = 1 ]; then cmd_best --vendor "$x" --porcelain; else cmd_best --vendor "$x"; fi
+    done
+    return 0
+  fi
   v=$(one_vendor "$vsel")
   if [ "$porcelain" = 1 ]; then
     usage_table "$v"
@@ -474,10 +484,92 @@ cmd_best() {
   done
 }
 
+# --- next best -------------------------------------------------------------
+
+# What runs when you don't say which profile or lab — no lab is anyone's
+# default. Every slot (one profile's login for one lab) sits in one rotation:
+# profiles in list order, labs in table order. `run` records the last slot it
+# started; "next best" is the first usable slot after it, wrapping round, so
+# work spreads across accounts and labs. Usable: signed in (or a lab that
+# keeps its login out of sight), and — for a lab that reports quota — read
+# cleanly and under 95% in both windows.
+slot_file="$root/.last-slot"
+
+remember_slot() {  # profile, vendor
+  mkdir -p "$root"
+  printf '%s:%s' "$1" "$2" > "$slot_file"
+}
+
+# usage_table rows, each prefixed with its vendor, for the labs that report usage.
+usage_rows() {  # vendors
+  for ur_v in $1; do
+    [ "$(vendor_usage "$ur_v")" = oauth ] || continue
+    usage_table "$ur_v" | sed "s/^/$ur_v	/"
+  done
+}
+
+slot_signed_in() {  # profile, vendor — yes or can't tell
+  si_d=$(config_dir "$1" "$2")
+  [ -d "$si_d" ] || return 1
+  if vendor_authed "$2" "$si_d" "$1"; then return 0; elif [ $? = 1 ]; then return 1; fi
+  return 0
+}
+
+slot_has_room() {  # profile, vendor, usage rows
+  [ "$(vendor_usage "$2")" = oauth ] || return 0
+  su_row=$(printf '%s\n' "$3" | awk -F'\t' -v v="$2" -v n="$1" '$1 == v && $2 == n' | head -1)
+  [ -n "$su_row" ] || return 1
+  IFS="$(printf '\t')" read -r _ _ su_f su_s _ su_note _ <<EOF
+$su_row
+EOF
+  [ "$su_note" = ok ] || return 1
+  su_f=${su_f%.*} su_s=${su_s%.*}
+  case $su_f in ''|*[!0-9]*) su_f=0 ;; esac
+  case $su_s in ''|*[!0-9]*) su_s=0 ;; esac
+  [ "$su_f" -lt 95 ] && [ "$su_s" -lt 95 ]
+}
+
+next_best() {  # profiles, vendors -> "profile vendor"; fails when nothing is usable
+  nb_slots=$(for n in $1; do for v in $2; do
+    vendor_installed "$v" && [ -d "$(config_dir "$n" "$v")" ] && echo "$n:$v"
+  done; done; true)
+  [ -n "$nb_slots" ] || return 1
+  nb_last=""
+  [ -f "$slot_file" ] && nb_last=$(cat "$slot_file" 2>/dev/null)
+  # The slots after the last one started, then round to it.
+  nb_order=$(printf '%s\n' "$nb_slots" | awk -v last="$nb_last" \
+    '{ a[NR] = $0; if ($0 == last) at = NR } END { for (i = 1; i <= NR; i++) print a[(at + i - 1) % NR + 1] }')
+  # Quota is a network read, so it's fetched once, and only when a signed-in
+  # slot of a lab that reports it comes up.
+  nb_rows="" nb_fetched=0
+  for s in $nb_order; do
+    nb_n=${s%%:*} nb_v=${s#*:}
+    slot_signed_in "$nb_n" "$nb_v" || continue
+    if [ "$(vendor_usage "$nb_v")" = oauth ] && [ "$nb_fetched" = 0 ]; then
+      nb_rows=$(usage_rows "$2")
+      nb_fetched=1
+    fi
+    if slot_has_room "$nb_n" "$nb_v" "$nb_rows"; then
+      echo "$nb_n $nb_v"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# The lab a session belongs to, found by looking in every lab that keeps them.
+session_vendor() {  # id, [profile]
+  for sv_v in $(vendors_installed); do
+    [ "$(vendor_sessions "$sv_v")" != none ] || continue
+    find_session "$1" "$sv_v" ${2:+"$2"} >/dev/null && { echo "$sv_v"; return 0; }
+  done
+  return 1
+}
+
 # --- run -------------------------------------------------------------------
 
 cmd_run() {
-  usage="usage: agents run <Profile|--next|--best> [--vendor <v>] [--start-from-session=<id>] [args...]"
+  usage="usage: agents run [Profile|--next|--best] [--vendor <v>] [--start-from-session=<id>] [args...]"
   name="" sess="" rotate=0 best=0 vsel="" switch=0
   while [ $# -gt 0 ]; do
     case $1 in
@@ -492,7 +584,23 @@ cmd_run() {
     esac
   done
   picks=$(( (rotate + best) + $( [ -n "$name" ] && echo 1 || echo 0 ) ))
-  [ "$picks" = 1 ] || die "$usage (pick exactly one of a profile name, --next, --best)"
+  [ "$picks" -le 1 ] || die "$usage (pick at most one of a profile name, --next, --best)"
+  if [ -n "$name" ]; then
+    want=$name; name=$(resolve_profile "$want") || die "no profile named '$want' (see: agents list)"
+  fi
+  # A resumed session already says which lab it belongs to.
+  if [ -z "$vsel" ] && [ -n "$sess" ]; then
+    vsel=$(session_vendor "$sess") || die "session $sess not found in any profile"
+  fi
+  # Whatever wasn't said — the profile, the lab, or both — comes from next best.
+  if [ -z "$vsel" ] || [ "$picks" = 0 ]; then
+    if [ -n "$name" ]; then nb_p=$name; else nb_p=$(all_profiles); fi
+    if [ -n "$vsel" ]; then nb_v=$(one_vendor "$vsel"); else nb_v=$(vendors_installed); fi
+    pick=$(next_best "$nb_p" "$nb_v") || \
+      die "nothing usable — no slot is signed in with room left (see: agents list, agents best)"
+    name=${pick% *} vsel=${pick#* } rotate=0 best=0
+    echo "agents: next best is $(vendor_label "$vsel") in '$name'" >&2
+  fi
 
   v=$(one_vendor "$vsel")
   cli=$(vendor_cli "$v")
@@ -519,6 +627,7 @@ cmd_run() {
   [ -d "$cfg" ] || die "profile '$name' has no $v slot — create it: agents new $name --vendors $v"
 
   pin_swap_vendor "$name" "$v" "$switch" run
+  remember_slot "$name" "$v"
 
   if [ -n "$sess" ]; then
     [ "$src" = "$name" ] || cmd_transfer "$sess" --from "$src" --to "$name" --vendor "$v" >&2
@@ -585,11 +694,13 @@ cmd_login() {
     esac
   done
   [ -n "$name" ] || die "$usage"
+  want=$name; name=$(resolve_profile "$want") || die "no profile named '$want' (see: agents list)"
+  # Signing out is never a guess: say which lab.
+  [ -n "$vsel" ] || die "which lab? agents login $name --vendor <$(profile_vendors "$name" | tr '\n' '|' | sed 's/|$//')>"
   v=$(one_vendor "$vsel")
   cli=$(vendor_cli "$v")
   command -v "$cli" >/dev/null 2>&1 || \
     die "$(vendor_label "$v") CLI not found — install it: $(vendor_install_hint "$v")"
-  want=$name; name=$(resolve_profile "$want") || die "no profile named '$want' (see: agents list)"
   cfg=$(config_dir "$name" "$v")
   [ -d "$cfg" ] || die "profile '$name' has no $v slot — create it: agents new $name --vendors $v"
   pin_swap_vendor "$name" "$v" "$switch" login
@@ -1023,6 +1134,20 @@ cmd_sessions() {
     sessions_porcelain "$profiles" "$vendors" "$limit"
     return 0
   fi
+  if [ -z "$vsel" ]; then
+    # Every lab that keeps sessions, each under its own heading.
+    listed=0
+    for x in $(vendors_installed); do
+      [ "$(vendor_sessions "$x")" != none ] || continue
+      out=$( (cmd_sessions ${name:+"$name"} --vendor "$x") 2>/dev/null) || continue
+      [ "$listed" = 1 ] && echo ""
+      echo "$(vendor_label "$x"):"
+      printf '%s\n' "$out"
+      listed=1
+    done
+    [ "$listed" = 1 ] || die "no sessions in '${name:-Default}'"
+    return 0
+  fi
   v=$(one_vendor "$vsel")
   [ "$(vendor_sessions "$v")" != none ] || \
     die "$(vendor_label "$v") stores sessions in a format agents doesn't read yet"
@@ -1064,6 +1189,9 @@ cmd_transfer() {
   done
   { [ -n "$id" ] && [ -n "$to" ]; } || \
     die "usage: agents transfer <id> --to <Profile>|--next|--best [--from <Profile>] [--vendor <v>]"
+  if [ -z "$vsel" ]; then
+    vsel=$(session_vendor "$id" ${from:+"$from"}) || die "session $id not found in any profile"
+  fi
   v=$(one_vendor "$vsel")
   [ "$(vendor_sessions "$v")" != none ] || \
     die "$(vendor_label "$v") stores sessions in a format agents doesn't move yet"
@@ -1137,6 +1265,12 @@ cmd_desktop() {
       *) name=$1; shift ;;
     esac
   done
+  if [ -z "$vsel" ]; then
+    # Only a lab whose desktop is cloned per profile has a profile's desktop.
+    dv=$(for x in $(vendors_installed); do [ "$(vendor_desktop "$x")" = clone ] && echo "$x"; done; true)
+    [ "$(printf '%s\n' "$dv" | grep -c .)" = 1 ] || die "which lab? pass --vendor <v>"
+    vsel=$dv
+  fi
   v=$(one_vendor "$vsel")
   case $(vendor_desktop "$v") in
     none) die "$(vendor_label "$v") has no desktop app" ;;
@@ -1151,7 +1285,9 @@ cmd_desktop() {
     --next) name=$(rotation_next); echo "agents: rotating to profile '$name'" >&2 ;;
     --best) name=$(pick_best "$v") || die "no profile with a readable token — run 'agents best' to see why"
             echo "agents: best available profile is '$name'" >&2 ;;
-    "")     name=Default ;;
+    "")     pick=$(next_best "$(all_profiles)" "$v") || die "no profile with room left (see: agents best)"
+            name=${pick% *}
+            echo "agents: next best is '$name'" >&2 ;;
     *)      want=$name; name=$(resolve_profile "$want") || die "no profile named '$want'" ;;
   esac
   if [ "$name" = Default ]; then
@@ -1218,6 +1354,7 @@ cmd_authed() {
 #   V <vendor> <installed 0|1> <isolation> <desktop> <usage> <label> <sessions> <monogram> <desktop app name>
 #   P <profile> <desktop-running 0|1> <vendor,vendor,…  or "-">
 #   S <profile> <vendor> <slot-dir> <account or ""> <signed in: yes|no|unknown>   one per slot
+#   L <profile> <vendor>        the last slot `run` started ("next best" starts after it)
 #   A <active-summary>
 cmd_porcelain() {
   for v in $N2_VENDORS; do
@@ -1239,6 +1376,10 @@ cmd_porcelain() {
     done
     printf 'P\t%s\t%s\t%s\n' "$n" "$r" "${slots:--}"
   done
+  if [ -f "$slot_file" ]; then
+    ls_slot=$(cat "$slot_file" 2>/dev/null)
+    printf 'L\t%s\t%s\n' "${ls_slot%%:*}" "${ls_slot#*:}"
+  fi
   printf 'A\t%s\n' "$(active_summary)"
 }
 

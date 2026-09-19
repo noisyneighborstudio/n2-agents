@@ -269,48 +269,56 @@ private struct ProfilesSection: View {
             ForEach(Array(data.profiles.enumerated()), id: \.element.name) { index, p in
                 ProfileCard(profile: p, index: index, data: data, model: model, actions: actions)
             }
-            if let v = data.quotaVendor, data.profiles.filter({ $0.slots[v.id] != nil }).count >= 2 {
-                BestButton(vendor: v, best: model.best, profiles: data.profiles, actions: actions)
-            }
+            NextBestButton(pick: model.nextBest, data: data, actions: actions)
         }
         .padding(.horizontal, Metrics.side)
         .padding(.vertical, 12)
     }
 }
 
-// Never disappears, never lies: dimmed with no pick while capacity loads,
-// the pick once it's in, and flat — naming the soonest reset — when this lab
-// is maxed in every profile. Clicking that one offers to open anyway.
-private struct BestButton: View {
-    let vendor: Vendor
-    let best: BestPick?
-    let profiles: [Profile]
+// Never disappears, never lies. Next best is any lab, in any profile — the
+// same rotation `agents run` uses when you don't say. Dimmed with no pick
+// while the pick hangs on a quota reading; the pick, named, once it's known;
+// flat, naming the soonest reset, when every signed-in slot is out — and
+// clicking that one offers to open anyway.
+private struct NextBestButton: View {
+    let pick: NextBest?
+    let data: PanelData
     let actions: PanelActions
 
     var body: some View {
-        switch best {
-        case .profile(let name, let used)?:
-            Button { actions.openSession(profile: name, vendor: vendor.id, terminal: nil) } label: {
-                row(icon: "bolt", iconColor: .accentColor, title: "Open \(vendor.label) in best profile") {
-                    Text("\(name) · \(used)%").foregroundStyle(.secondary)
+        switch pick {
+        case .slot(let profile, let vendorID, let used)?:
+            Button { actions.openSession(profile: profile, vendor: vendorID, terminal: nil) } label: {
+                row(icon: "bolt", iconColor: .accentColor, title: "Open next best") {
+                    Text(verbatim: [data.snapshot.vendor(vendorID)?.label ?? vendorID, profile, used.map { "\($0)%" }]
+                            .compactMap { $0 }.joined(separator: " · "))
+                        .foregroundStyle(.secondary)
                 }
             }
             .buttonStyle(RowButtonStyle(radius: 8, border: true))
+            .help("The next signed-in slot with room, in rotation — no lab is favoured")
         case .allMaxed(let firstBack)?:
             Button {
-                popUp(profiles.filter { $0.slots[vendor.id] != nil }.map { p in
-                    ClosureItem("Open \(vendor.label) in “\(p.name)” anyway") {
-                        actions.openSession(profile: p.name, vendor: vendor.id, terminal: nil)
+                popUp(data.profiles.flatMap { p in
+                    data.snapshot.installedVendors.filter { p.slots[$0.id] != nil }.map { v in
+                        ClosureItem("Open \(v.label) in “\(p.name)” anyway") {
+                            actions.openSession(profile: p.name, vendor: v.id, terminal: nil)
+                        }
                     }
                 })
             } label: {
-                row(icon: "clock", iconColor: maxedRed, title: "\(vendor.label) is maxed in every profile") {
+                row(icon: "clock", iconColor: maxedRed, title: "Everything is maxed") {
                     if let firstBack { Text("first back \(clockTime.string(from: firstBack))").foregroundStyle(maxedRed) }
                 }
             }
             .buttonStyle(RowButtonStyle(radius: 8, border: true))
+        case .nothingSignedIn?:
+            row(icon: "bolt.slash", iconColor: .secondary, title: "Nothing is signed in") { EmptyView() }
+                .background(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.12)))
+                .foregroundStyle(.secondary)
         case nil:
-            row(icon: "bolt", iconColor: .primary, title: "Open \(vendor.label) in best profile") { EmptyView() }
+            row(icon: "bolt", iconColor: .primary, title: "Open next best") { EmptyView() }
                 .background(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.12)))
                 .opacity(0.5)
         }

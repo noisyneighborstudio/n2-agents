@@ -43,6 +43,8 @@ struct Snapshot {
     var accounts: [String: [String: String]] = [:]
     /// true / false = the slot does / doesn't hold a login; absent = can't tell.
     var signedIn: [String: [String: Bool]] = [:]
+    /// The last slot `agents run` started; next best starts after it.
+    var lastSlot: (profile: String, vendor: String)?
 
     func account(_ profile: String, _ vendor: String) -> String? { accounts[profile]?[vendor] }
     func slotDir(_ profile: String, _ vendor: String) -> String? { slotDirs[profile]?[vendor] }
@@ -61,6 +63,7 @@ struct Snapshot {
         var slotDirs: [String: [String: String]] = [:]
         var accounts: [String: [String: String]] = [:]
         var signedIn: [String: [String: Bool]] = [:]
+        var lastSlot: (profile: String, vendor: String)?
 
         for line in text.split(separator: "\n") {
             let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
@@ -84,6 +87,8 @@ struct Snapshot {
                 slotDirs[f[1], default: [:]][f[2]] = f[3]
                 if !f[4].isEmpty { accounts[f[1], default: [:]][f[2]] = f[4] }
                 if f.count > 5, f[5] != "unknown" { signedIn[f[1], default: [:]][f[2]] = f[5] == "yes" }
+            case "L" where f.count >= 3:
+                lastSlot = (f[1], f[2])
             case "A" where f.count >= 2:
                 active = f[1]
             default:
@@ -91,7 +96,7 @@ struct Snapshot {
             }
         }
         return Snapshot(vendors: vendors, profiles: profiles, active: active,
-                        slotDirs: slotDirs, accounts: accounts, signedIn: signedIn)
+                        slotDirs: slotDirs, accounts: accounts, signedIn: signedIn, lastSlot: lastSlot)
     }
 }
 
