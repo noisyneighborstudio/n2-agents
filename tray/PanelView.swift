@@ -277,8 +277,8 @@ private struct ProfilesSection: View {
 }
 
 // Never disappears, never lies: dimmed with no pick while capacity loads,
-// the pick once it's in, and flat — naming the soonest reset — when every
-// profile is maxed. Clicking that one offers to open anyway.
+// the pick once it's in, and flat — naming the soonest reset — when this lab
+// is maxed in every profile. Clicking that one offers to open anyway.
 private struct BestButton: View {
     let vendor: Vendor
     let best: BestPick?
@@ -302,7 +302,7 @@ private struct BestButton: View {
                     }
                 })
             } label: {
-                row(icon: "clock", iconColor: maxedRed, title: "Every profile is maxed") {
+                row(icon: "clock", iconColor: maxedRed, title: "\(vendor.label) is maxed in every profile") {
                     if let firstBack { Text("first back \(clockTime.string(from: firstBack))").foregroundStyle(maxedRed) }
                 }
             }
@@ -337,9 +337,17 @@ private struct ProfileCard: View {
     @State private var expanded = false
 
     private var isActive: Bool { data.snapshot.active == profile.name }
-    /// Capacity outranks everything else on the card: a maxed profile says so
-    /// and until when, and the whole card tints so it's found at a glance.
-    private var maxed: Bool { quotaUsage?.maxed ?? false }
+    // The card speaks for the whole profile, so its capacity treatment comes
+    // from every lab it holds, not one. A lab with no usage reading is never
+    // "out" — nothing says it is — so a profile only reads as maxed when each
+    // of its labs is. Labs that are out on their own are named instead, and
+    // their chips carry the maxed state.
+    private func usage(for v: Vendor) -> Usage? { v.id == data.quotaVendor?.id ? quotaUsage : nil }
+    private var labsOut: [(vendor: Vendor, until: Date?)] {
+        slotted.compactMap { v in usage(for: v).flatMap { $0.maxed ? (v, $0.maxedUntil) : nil } }
+    }
+    /// Every lab out: the whole card tints so it's found at a glance.
+    private var maxed: Bool { !slotted.isEmpty && labsOut.count == slotted.count }
     private var repatching: Bool { model.repatching.contains(profile.name) }
     private var stale: Bool { data.staleClones[profile.name] != nil }
     private var selected: Vendor? {
@@ -439,11 +447,23 @@ private struct ProfileCard: View {
                 if let setup = pendingSetup {
                     Text("\(setup.done) of \(setup.labs.count) signed in").foregroundStyle(Color(nsColor: .systemOrange))
                 } else if maxed {
+                    // Back when the first lab is back.
                     HStack(spacing: 4) {
                         Image(systemName: "clock")
-                        Text(quotaUsage?.maxedUntil.map { "Maxed until \(clockTime.string(from: $0))" } ?? "Maxed")
+                        Text(labsOut.compactMap(\.until).min().map { "Maxed until \(clockTime.string(from: $0))" } ?? "Maxed")
                     }
                     .foregroundStyle(maxedRed)
+                } else if let out = labsOut.first {
+                    HStack(spacing: 4) {
+                        Image(systemName: "clock")
+                        if labsOut.count == 1 {
+                            Text(out.until.map { "\(out.vendor.label) out until \(clockTime.string(from: $0))" }
+                                 ?? "\(out.vendor.label) out")
+                        } else {
+                            Text("\(labsOut.count) of \(slotted.count) labs out")
+                        }
+                    }
+                    .foregroundStyle(Color(nsColor: .systemOrange))
                 } else if repatching {
                     Text("Rebuilding…").foregroundStyle(.secondary)
                 } else if stale {
