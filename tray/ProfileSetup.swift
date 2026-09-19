@@ -71,7 +71,7 @@ final class SetupModel: ObservableObject {
 final class ProfileSetup: NSObject, NSWindowDelegate {
     let model: SetupModel
     private weak var host: SetupHost?
-    private var window: NSPanel?
+    private var window: GlassWindow?
     private var poll: Timer?
     private var polling = false
     private var waiters: [([String: Bool]?) -> Void] = []
@@ -86,21 +86,12 @@ final class ProfileSetup: NSObject, NSWindowDelegate {
     func show() {
         let hosting = NSHostingController(rootView: SetupView(model: model, actions: self))
         hosting.sizingOptions = .preferredContentSize
-        // Floating, and it stays when the app deactivates, so it sits above
+        // Floating glass that stays when the app deactivates, so it sits above
         // the terminal while you type a password there.
-        let panel = NSPanel(contentViewController: hosting)
-        panel.styleMask = [.titled, .closable, .fullSizeContentView]
-        panel.titlebarAppearsTransparent = true
-        panel.titleVisibility = .hidden
-        panel.isMovableByWindowBackground = true
-        panel.level = .floating
-        panel.hidesOnDeactivate = false
-        panel.isReleasedWhenClosed = false
-        panel.delegate = self
-        panel.center()
-        window = panel
-        NSApp.activate(ignoringOtherApps: true)
-        panel.makeKeyAndOrderFront(nil)
+        let glass = GlassWindow(content: hosting, behavior: .floating)
+        glass.delegate = self
+        window = glass
+        glass.present()
         if model.step == .signIn { beginSignIn() }
     }
 

@@ -85,7 +85,8 @@ let terminalSpecs: [TerminalSpec] = [
 final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtocol, PanelActions, SetupHost {
     private var statusItem: NSStatusItem!
     private let model = PanelModel()
-    private let popover = NSPopover()
+    // Built on first open: it anchors to the status item's button.
+    private lazy var panel = GlassWindow(content: hosting, behavior: .transient(anchor: statusItem.button!))
     private lazy var hosting = NSHostingController(rootView: PanelView(model: model, actions: self))
     private let fm = FileManager.default
     private let home = NSHomeDirectory()
@@ -149,9 +150,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         statusItem.button?.action = #selector(togglePanel)
 
         hosting.sizingOptions = .preferredContentSize
-        popover.contentViewController = hosting
-        popover.behavior = .transient
-        popover.animates = false
 
         // The panel is ready before anyone clicks: it starts from the last
         // snapshot saved to disk, re-reads now and every few minutes, and an
@@ -188,29 +186,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     // MARK: - Panel (re-read every time it opens)
 
     @objc private func togglePanel() {
-        if popover.isShown {
-            popover.performClose(nil)
+        if panel.isVisible {
+            panel.dismiss()
             return
         }
-        guard let button = statusItem.button else { return }
-        // Size from the already-loaded content so the first frame is the
-        // finished panel, not an empty one that grows into place.
-        popover.contentSize = hosting.view.fittingSize
         var still = Transaction()
         still.disablesAnimations = true
         withTransaction(still) { model.presented = false }
-        NSApp.activate(ignoringOtherApps: true)
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        // A pointer panel: no control starts out keyboard-focused (and ringed).
-        hosting.view.window?.makeFirstResponder(nil)
+        // Sized from the already-loaded content, so the first frame is the
+        // finished panel, not an empty one that grows into place.
+        panel.present()
         DispatchQueue.main.async { self.model.presented = true }
         refreshPanel()
     }
 
     // Anything that opens a window, dialog or terminal closes the panel first:
-    // a transient popover would otherwise vanish under it mid-click.
+    // a transient panel would otherwise vanish under it mid-click.
     private func dismissPanel() {
-        popover.performClose(nil)
+        panel.dismiss()
     }
 
     // A refresh reads the CLI and the disk off the main thread and publishes
