@@ -427,6 +427,9 @@ private struct ProfileCard: View {
                         model.selection = selected?.id == v.id ? nil : Selection(profile: profile.name, vendor: v.id)
                     }
                     .contextMenu {
+                        if data.hasDesktop(v, for: profile) {
+                            Button("Open \(v.desktopName)") { actions.openDesktop(profile: profile.name, vendor: v.id) }
+                        }
                         Button("Sign In Again…") { actions.signIn(profile: profile.name, vendor: v.id, confirm: true) }
                     }
                 }
@@ -519,12 +522,19 @@ private struct ProfileCard: View {
                     Text("Rebuilding…").foregroundStyle(.secondary)
                 } else if stale {
                     Text("Update pending").foregroundStyle(Color(nsColor: .systemOrange))
-                } else if profile.hasApp, let clone = data.cloneVendor {
-                    HStack(spacing: 5) {
-                        if profile.running { Circle().fill(Color(nsColor: .systemGreen)).frame(width: 6, height: 6) }
-                        Text(profile.running ? "\(clone.desktopName) running" : "\(clone.desktopName) idle")
+                } else if let clone = data.cloneVendor, data.hasDesktop(clone, for: profile) {
+                    // The profile's own desktop app: its state, and a click opens it.
+                    Button { actions.openDesktop(profile: profile.name, vendor: clone.id) } label: {
+                        HStack(spacing: 5) {
+                            if profile.running { Circle().fill(Color(nsColor: .systemGreen)).frame(width: 6, height: 6) }
+                            Text(profile.running ? "\(clone.desktopName) running" : "\(clone.desktopName) idle")
+                            Image(systemName: "arrow.up.forward.app").font(.system(size: 9))
+                        }
+                        .foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
                     }
-                    .foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
+                    .help(profile.running ? "Bring \(profile.name)'s \(clone.desktopName) forward" : "Open \(profile.name)'s \(clone.desktopName)")
                 }
             }
             .font(.system(size: 10.5))
@@ -920,6 +930,14 @@ private struct VendorDrawer: View {
                 OpenButton(terminals: data.terminals) { terminal in
                     actions.openSession(profile: profile.name, vendor: vendor.id, terminal: terminal)
                 }
+                if data.hasDesktop(vendor, for: profile) {
+                    Button { actions.openDesktop(profile: profile.name, vendor: vendor.id) } label: {
+                        Label(vendor.desktopName, systemImage: "macwindow").labelStyle(.titleAndIcon)
+                    }
+                    .buttonStyle(PillButtonStyle(height: 22))
+                    .help(vendor.clonesDesktopApp ? "Open \(profile.name)'s \(vendor.desktopName)"
+                                                  : "Open \(vendor.desktopName) — one app, signed in as the active profile")
+                }
                 if usage?.note == .noToken || usage?.note == .staleToken {
                     Button("Log In…") { actions.signIn(profile: profile.name, vendor: vendor.id, confirm: false) }
                         .buttonStyle(PillButtonStyle(height: 22))
@@ -946,17 +964,6 @@ private struct VendorDrawer: View {
                 HStack(spacing: 5) {
                     Text(copied ? "Copied" : command).font(.system(size: 11, design: .monospaced))
                     Image(systemName: "doc.on.doc").font(.system(size: 10))
-                }
-            }
-            if vendor.clonesDesktopApp && data.desktopInstalled && profile.hasApp {
-                DrawerRow(title: LocalizedStringKey(vendor.desktopName)) {
-                    actions.openDesktop(profile: profile.name)
-                } trailing: {
-                    HStack(spacing: 5) {
-                        if profile.running { Circle().fill(Color(nsColor: .systemGreen)).frame(width: 6, height: 6) }
-                        Text(data.staleClones[profile.name] != nil ? "update pending" : profile.running ? "running" : "idle")
-                        Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
-                    }
                 }
             }
             DrawerRow(title: "Sign in again…") {

@@ -127,6 +127,16 @@ vendor_desktop_name() {
   esac
 }
 
+# The desktop app's bundle id, to find and open it. A `clone` lab's per-profile
+# copies carry their own ids; this is the original.
+vendor_desktop_bundle() {
+  case $1 in
+    claude) echo "com.anthropic.claudefordesktop" ;;
+    codex)  echo "com.openai.codex" ;;
+    *)      echo "" ;;
+  esac
+}
+
 vendor_usage() {
   case $1 in
     claude) echo oauth ;;

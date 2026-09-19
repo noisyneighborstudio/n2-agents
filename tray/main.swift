@@ -272,7 +272,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
                          desktopVersion: desktopVersion,
                          staleClones: stale,
                          sessions: SessionInfo.parse(sessions),
-                         terminals: terminals)
+                         terminals: terminals,
+                         launchDesktops: Set(snap.installedVendors.filter {
+                             $0.desktop == "launch" && !$0.desktopBundle.isEmpty
+                                 && NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.desktopBundle) != nil
+                         }.map(\.id)))
     }
 
     // Quota is a network call per profile against a rate-limited endpoint the
@@ -630,8 +634,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         }
     }
 
-    func openDesktop(profile name: String) {
+    func openDesktop(profile name: String, vendor id: String) {
+        guard let v = model.data?.snapshot.vendor(id) else { return }
         dismissPanel()
+        guard v.clonesDesktopApp else { openSharedDesktop(profile: name, vendor: v); return }
         guard name != "Default" else {
             guard let appPath = claudeAppPath else {
                 alert("Claude Desktop not found", "Install it from claude.ai/download, or point N2 Agents at it with “Locate Claude Desktop…”.")
@@ -654,6 +660,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
                 }
             }
         }
+    }
+
+    // A `launch` lab's desktop app is one app for the whole Mac, signed in as
+    // the lab's active profile — macOS doesn't pass env vars to apps it
+    // launches, so it can't be pinned per profile. Opening it for another
+    // profile therefore makes that profile active, asked first.
+    private func openSharedDesktop(profile name: String, vendor v: Vendor) {
+        var args = ["desktop", name, "--vendor", v.id]
+        let active = model.data?.snapshot.profiles.first { $0.name == name }?.isActive(for: v.id) ?? false
+        if !active {
+            let ask = NSAlert()
+            ask.messageText = "Open \(v.desktopName) as “\(name)”?"
+            ask.informativeText = "\(v.desktopName) uses one \(v.label) login for the whole Mac. Opening it for “\(name)” makes “\(name)” the active profile for \(v.label), so plain \(v.label) sessions use it too."
+            ask.addButton(withTitle: "Make Active and Open")
+            ask.addButton(withTitle: "Cancel")
+            NSApp.activate(ignoringOtherApps: true)
+            guard ask.runModal() == .alertFirstButtonReturn else { return }
+            args.append("--switch")
+        }
+        let r = runCLI(args)
+        if r.status != 0 { alert("Couldn't open \(v.desktopName)", r.output) }
+        refreshPanel()
     }
 
     // MARK: - agents CLI (single implementation of profile side effects)

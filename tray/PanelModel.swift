@@ -81,6 +81,8 @@ struct PanelData {
     let staleClones: [String: String]    // profile -> clone version, where it differs from desktopVersion
     let sessions: [SessionInfo]
     let terminals: [String]              // installed terminal names, preferred first
+    /// Labs whose single, shared desktop app (desktop = launch) is installed.
+    let launchDesktops: Set<String>
 
     var desktopInstalled: Bool { desktopVersion != nil }
     /// The lab whose quota the panel can show (Claude alone, today).
@@ -88,6 +90,12 @@ struct PanelData {
     /// The lab whose desktop app is cloned per profile (Claude alone, today) —
     /// every desktop clone feature keys off this, never a lab's name.
     var cloneVendor: Vendor? { snapshot.installedVendors.first { $0.clonesDesktopApp } }
+
+    /// Whether this profile has a desktop app to open for this lab: its own
+    /// clone for a `clone` lab, the lab's one shared app for a `launch` lab.
+    func hasDesktop(_ vendor: Vendor, for profile: Profile) -> Bool {
+        vendor.clonesDesktopApp ? desktopInstalled && profile.hasApp : launchDesktops.contains(vendor.id)
+    }
 }
 
 struct Selection: Equatable {
@@ -167,7 +175,7 @@ protocol PanelActions: AnyObject {
     func openSession(profile: String, vendor: String, terminal: String?)
     func setActive(profile: String, vendor: String?)
     func copyCommand(profile: String, vendor: String)
-    func openDesktop(profile: String)
+    func openDesktop(profile: String, vendor: String)
     func transferSession(profile: String, vendor: String)
     func signIn(profile: String, vendor: String, confirm: Bool)
     func finishSetup(profile: String)

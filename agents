@@ -16,7 +16,7 @@
 #   agents authed <Profile>               per slot: signed in yes|no|unknown
 #   agents sessions [Profile] [--vendor <v>] [--porcelain [--limit N]]
 #   agents transfer <id> --to <Profile>|--next|--best [--from <Profile>] [--vendor <v>]
-#   agents desktop [Name|--next|--best] [--vendor <v>]
+#   agents desktop [Name|--next|--best] [--vendor <v>] [--switch]
 #   agents shims [--remove]               sync <vendor>-<profile> commands on PATH
 #   agents app-path                       print the Claude Desktop bundle path
 #   agents version
@@ -1256,12 +1256,18 @@ cmd_transfer() {
 
 # --- desktop ---------------------------------------------------------------
 
+# A profile's desktop app. `clone` labs (Claude) have one app per profile;
+# `launch` labs (Codex) have a single app that signs in as the lab's active
+# profile — launched apps don't inherit env vars, so it can't be pinned — so
+# opening it for another profile makes that profile active, which --switch
+# confirms.
 cmd_desktop() {
-  name="" vsel=""
+  name="" vsel="" switch=0
   while [ $# -gt 0 ]; do
     case $1 in
       --vendor) vsel=${2:-}; shift 2 ;;
       --vendor=*) vsel=${1#--vendor=}; shift ;;
+      --switch) switch=1; shift ;;
       --next|--best) name=$1; shift ;;
       *) name=$1; shift ;;
     esac
@@ -1273,14 +1279,7 @@ cmd_desktop() {
     vsel=$dv
   fi
   v=$(one_vendor "$vsel")
-  case $(vendor_desktop "$v") in
-    none) die "$(vendor_label "$v") has no desktop app" ;;
-    launch)
-      # The vendor ships its own launcher; profile selection follows whatever
-      # its config dir currently points at.
-      exec "$(vendor_cli "$v")" app
-      ;;
-  esac
+  [ "$(vendor_desktop "$v")" != none ] || die "$(vendor_label "$v") has no desktop app"
 
   case ${name:-} in
     --next) name=$(rotation_next); echo "agents: rotating to profile '$name'" >&2 ;;
@@ -1291,6 +1290,19 @@ cmd_desktop() {
             echo "agents: next best is '$name'" >&2 ;;
     *)      want=$name; name=$(resolve_profile "$want") || die "no profile named '$want'" ;;
   esac
+  if [ "$(vendor_desktop "$v")" = launch ]; then
+    dapp=$(vendor_desktop_name "$v")
+    [ -n "$(mdfind "kMDItemCFBundleIdentifier == '$(vendor_desktop_bundle "$v")'" 2>/dev/null | head -1)" ] || \
+      die "$dapp isn't installed"
+    cur=$(active_profile "$v")
+    if [ "$cur" != "$name" ]; then
+      [ "$switch" = 1 ] || die "$dapp signs in as $(vendor_label "$v")'s active profile ('$cur'), not per profile.
+  Make '$name' active and open it:  agents desktop $name --vendor $v --switch"
+      switch_vendor "$name" "$v" >&2
+    fi
+    open -b "$(vendor_desktop_bundle "$v")"
+    return 0
+  fi
   if [ "$name" = Default ]; then
     app=$(claude_app_path) || die "Claude Desktop is not installed — get it from https://claude.ai/download"
     open -a "$app"
@@ -1352,7 +1364,7 @@ cmd_authed() {
 # above. Padding and emoji belong to the human-facing commands; this one is a
 # contract, and it is the only thing the Swift side parses.
 #
-#   V <vendor> <installed 0|1> <isolation> <desktop> <usage> <label> <sessions> <monogram> <desktop app name>
+#   V <vendor> <installed 0|1> <isolation> <desktop> <usage> <label> <sessions> <monogram> <desktop app name> <desktop bundle id>
 #   P <profile> <desktop-running 0|1> <vendor,vendor,…  or "-">
 #   S <profile> <vendor> <slot-dir> <account or ""> <signed in: yes|no|unknown>   one per slot
 #   L <profile> <vendor>        the last slot `run` started ("next best" starts after it)
@@ -1360,10 +1372,10 @@ cmd_authed() {
 cmd_porcelain() {
   for v in $N2_VENDORS; do
     if vendor_installed "$v"; then i=1; else i=0; fi
-    printf 'V\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf 'V\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$v" "$i" "$(vendor_isolation "$v")" "$(vendor_desktop "$v")" \
       "$(vendor_usage "$v")" "$(vendor_label "$v")" "$(vendor_sessions "$v")" "$(vendor_monogram "$v")" \
-      "$(vendor_desktop_name "$v")"
+      "$(vendor_desktop_name "$v")" "$(vendor_desktop_bundle "$v")"
   done
   for n in $(all_profiles); do
     if profile_running "$n"; then r=1; else r=0; fi

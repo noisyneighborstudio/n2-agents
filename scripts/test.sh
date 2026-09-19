@@ -121,7 +121,7 @@ test "$(run_agents active)" = mixed
 
 # --- porcelain contract (the tray parses this) -----------------------------
 porcelain=$(run_agents porcelain)
-print -r -- "$porcelain" | grep -q '^V	claude	1	env	clone	oauth	Claude Code	projects	CC	Claude Desktop$'
+print -r -- "$porcelain" | grep -q '^V	claude	1	env	clone	oauth	Claude Code	projects	CC	Claude Desktop	com.anthropic.claudefordesktop$'
 print -r -- "$porcelain" | grep -q '^P	Work	'
 print -r -- "$porcelain" | grep -q '^A	'
 # One S row per slot: its directory (the tray watches it during a sign-in)
