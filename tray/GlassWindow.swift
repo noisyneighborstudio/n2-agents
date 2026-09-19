@@ -37,7 +37,10 @@ final class GlassWindow: NSPanel {
         super.init(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: true)
         isOpaque = false
         backgroundColor = .clear
-        hasShadow = true
+        // No window shadow: the glass is composited by the system, so the
+        // window server sees a clear rectangle and shades it as one — a grey
+        // square outline around the rounded corners.
+        hasShadow = false
         isReleasedWhenClosed = false
         hidesOnDeactivate = false
         switch behavior {
@@ -107,9 +110,6 @@ final class GlassWindow: NSPanel {
         } else {
             setFrame(furled(target), display: false)
             alphaValue = 0
-            // The window server draws a moving frame's shadow as a square; the
-            // shadow comes back, fitted to the glass, once the frame lands.
-            hasShadow = false
             makeKeyAndOrderFront(nil)
             unfurling = true
             let generation = generation
@@ -121,8 +121,6 @@ final class GlassWindow: NSPanel {
             } completionHandler: { [weak self] in
                 guard let self, self.generation == generation else { return }
                 self.unfurling = false
-                self.hasShadow = true
-                self.invalidateShadow()
                 self.fit(recenter: false)   // catch up with any resize held back mid-unfurl
             }
         }
@@ -162,7 +160,6 @@ final class GlassWindow: NSPanel {
         }
         dismissing = true
         unfurling = true
-        hasShadow = false
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.16
             context.timingFunction = CAMediaTimingFunction(name: .easeIn)
@@ -174,7 +171,6 @@ final class GlassWindow: NSPanel {
             self.dismissing = false
             self.unfurling = false
             self.alphaValue = 1
-            self.hasShadow = true
         }
     }
 
