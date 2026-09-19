@@ -39,26 +39,31 @@ struct PanelView: View {
     let actions: PanelActions
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// The screen's height less the menu bar gap, header, footer and a margin.
+    static var bodyLimit: CGFloat {
+        (NSScreen.main?.visibleFrame.height ?? 800) - 44 - 31 - 48
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             PanelHeader(model: model, actions: actions)
             Divider()
             if let data = model.data {
-                Banners(data: data, model: model, actions: actions)
-                if data.profiles.count <= 1 {
-                    FirstRun(actions: actions)
-                } else {
-                    // The panel grows with the profile count up to a point,
-                    // then scrolls rather than running off the screen.
-                    if data.profiles.count > 5 {
-                        ScrollView { ProfilesSection(data: data, model: model, actions: actions) }
-                            .frame(height: 520)
-                    } else {
-                        ProfilesSection(data: data, model: model, actions: actions)
-                    }
-                    if !data.sessions.isEmpty {
-                        Divider()
-                        SessionsSection(data: data, actions: actions)
+                // Header and footer stay put; everything between grows with
+                // its content and scrolls once the panel would outgrow the
+                // screen — more profiles, an open drawer, a banner.
+                FittingScroll(maxHeight: Self.bodyLimit, focus: model.selection?.profile) {
+                    VStack(spacing: 0) {
+                        Banners(data: data, model: model, actions: actions)
+                        if data.profiles.count <= 1 {
+                            FirstRun(actions: actions)
+                        } else {
+                            ProfilesSection(data: data, model: model, actions: actions)
+                            if !data.sessions.isEmpty {
+                                Divider()
+                                SessionsSection(data: data, actions: actions)
+                            }
+                        }
                     }
                 }
             } else {
@@ -74,6 +79,39 @@ struct PanelView: View {
         .offset(y: model.presented || reduceMotion ? 0 : 4)
         .animation(.easeOut(duration: reduceMotion ? 0.1 : 0.16), value: model.presented)
     }
+}
+
+// A ScrollView that is only as tall as its content, up to a limit. A bare
+// ScrollView takes all the height it's offered, which would pin the panel at
+// its maximum; this one measures its content and asks for exactly that. When
+// `focus` changes (a drawer opened), that card scrolls into view.
+private struct FittingScroll<Content: View>: View {
+    let maxHeight: CGFloat
+    let focus: String?
+    @ViewBuilder let content: Content
+    @State private var contentHeight: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.vertical) {
+                content.background(GeometryReader { g in
+                    Color.clear.preference(key: ContentHeight.self, value: g.size.height)
+                })
+            }
+            .frame(height: min(contentHeight, maxHeight))
+            .onPreferenceChange(ContentHeight.self) { contentHeight = $0 }
+            .onChange(of: focus) { profile in
+                guard let profile else { return }
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) { proxy.scrollTo(profile) }
+            }
+        }
+    }
+}
+
+private struct ContentHeight: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 // MARK: - Header + footer
@@ -268,6 +306,7 @@ private struct ProfilesSection: View {
             SectionLabel(title: "Profiles", detail: "\(data.profiles.count)")
             ForEach(Array(data.profiles.enumerated()), id: \.element.name) { index, p in
                 ProfileCard(profile: p, index: index, data: data, model: model, actions: actions)
+                    .id(p.name)
             }
             NextBestButton(pick: model.nextBest, data: data, actions: actions)
         }
@@ -761,7 +800,11 @@ private struct VendorChip: View {
     }
 
     private var helpText: String {
-        var parts = [active ? "\(vendor.label) — active in this profile" : "\(vendor.label) — slot ready"]
+        // Blue = this profile is the lab's active one: what a plain run of the
+        // lab's CLI in any terminal signs in as. Outlined = a slot held here,
+        // with another profile active for the lab.
+        var parts = [active ? "\(vendor.label) — active: a plain terminal session uses this profile"
+                            : "\(vendor.label) — held by this profile; another profile is active for it"]
         if let account { parts.append(account) }
         if signedOut {
             parts.append("signed out")
