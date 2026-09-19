@@ -1,5 +1,5 @@
 {
-  "branches": ["release", { "name": "main", "prerelease": "continuous" }],
+  "branches": ["stable", { "name": "main", "prerelease": "continuous" }],
   "plugins": [
     "@semantic-release/commit-analyzer",
     "@semantic-release/release-notes-generator",
@@ -10,7 +10,11 @@
       "assets": [
         { "path": "N2Agents.zip", "name": "N2Agents.zip", "label": "N2Agents.app (zip)" },
         { "path": "N2Agents-*-*.zip", "label": "Sparkle update archive" }
-      ]
+      ],
+      "successComment": false,
+      "failComment": false,
+      "failTitle": false,
+      "releasedLabels": false
     }],
     ["@semantic-release/exec", {
       "publishCmd": "./scripts/publish-appcast.sh ${nextRelease.version} ${nextRelease.gitTag}"

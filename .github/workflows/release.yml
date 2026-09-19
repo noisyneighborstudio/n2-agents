@@ -2,7 +2,7 @@ name: Build and publish updates
 
 on:
   push:
-    branches: [main, release]
+    branches: [main, stable]
 
 permissions:
   contents: write
@@ -13,12 +13,13 @@ concurrency:
 
 jobs:
   publish:
-    runs-on: macos-14
+    # Liquid Glass (NSGlassEffectView) needs the macOS 26 SDK.
+    runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - name: Select isolated channel
@@ -26,10 +27,12 @@ jobs:
           set -euo pipefail
           case "$GITHUB_REF" in
             refs/heads/main) channel=continuous ;;
-            refs/heads/release) channel=stable ;;
+            refs/heads/stable) channel=stable ;;
             *) exit 64 ;;
           esac
-          echo "CLAUDES_CHANNEL=$channel" >> "$GITHUB_ENV"
+          echo "N2_CHANNEL=$channel" >> "$GITHUB_ENV"
+      - name: Test
+        run: ./scripts/test.sh
       - name: Import Developer ID certificate
         env:
           CERTIFICATE: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}
@@ -37,8 +40,10 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.BUILD_KEYCHAIN_PASSWORD }}
         run: |
           set -euo pipefail
-          test -n "$CERTIFICATE"; test -n "$CERTIFICATE_PASSWORD"; test -n "$KEYCHAIN_PASSWORD"
-          cert="$RUNNER_TEMP/developer-id.p12"; keychain="$RUNNER_TEMP/claudes.keychain-db"
+          for name in CERTIFICATE CERTIFICATE_PASSWORD KEYCHAIN_PASSWORD; do
+            [ -n "${!name}" ] || { echo "::error::secret for $name is not set"; exit 1; }
+          done
+          cert="$RUNNER_TEMP/developer-id.p12"; keychain="$RUNNER_TEMP/n2agents.keychain-db"
           umask 077; printf '%s' "$CERTIFICATE" | base64 -D > "$cert"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
           security set-keychain-settings -lut 21600 "$keychain"
@@ -49,19 +54,22 @@ jobs:
       - name: Release
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          # Monotonic across both channels. Resets if this file is renamed.
+          N2_BUILD_NUMBER: ${{ github.run_number }}
           N2_SIGN_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION }}
-          N2_SPARKLE_PUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
           NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
           NOTARY_KEY_ISSUER: ${{ secrets.NOTARY_KEY_ISSUER }}
           NOTARY_KEY: ${{ secrets.NOTARY_KEY_P8 }}
         run: |
           set -euo pipefail
-          test -n "$N2_SIGN_IDENTITY"; test -n "$N2_SPARKLE_PUBLIC_KEY"; test -n "$SPARKLE_PRIVATE_KEY"
-          npm install --no-audit --no-fund
+          for name in N2_SIGN_IDENTITY SPARKLE_PRIVATE_KEY; do
+            [ -n "${!name}" ] || { echo "::error::secret for $name is not set"; exit 1; }
+          done
+          npm ci --no-audit --no-fund
           npx semantic-release
       - name: Remove temporary credentials
         if: always()
         run: |
-          rm -f "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP/notary.p8" "$RUNNER_TEMP/sparkle-private-key"
-          security delete-keychain "$RUNNER_TEMP/claudes.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP/notary.p8"
+          security delete-keychain "$RUNNER_TEMP/n2agents.keychain-db" 2>/dev/null || true

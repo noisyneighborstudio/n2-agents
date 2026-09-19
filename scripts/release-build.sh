@@ -3,11 +3,11 @@
 # in the keychain), notarize + staple when notary credentials are present,
 # and produce N2Agents.zip (holding "N2 Agents.app") for the GitHub release asset.
 set -euo pipefail
-ver=${1:?usage: release-build.sh <version> [build-version]}
-build_ver=${2:-1}
+ver=${1:?usage: release-build.sh <version> <build-number>}
+build_ver=${2:?usage: release-build.sh <version> <build-number>}
 cd "${0:A:h}/.."
 
-N2_VERSION=$ver N2_BUILD_VERSION=$build_ver N2_RELEASE_BUILD=1 ./tray/build.sh
+N2_VERSION=$ver N2_BUILD_VERSION=$build_ver ./tray/build.sh
 
 if [[ -n ${NOTARY_KEY_ID:-} && -n ${NOTARY_KEY_ISSUER:-} && -n ${NOTARY_KEY_FILE:-} ]]; then
   echo "Notarizing…"

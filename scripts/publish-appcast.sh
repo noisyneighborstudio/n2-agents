@@ -7,22 +7,21 @@ cd "${0:A:h}/.."
 
 version=${1:?usage: publish-appcast.sh <version> <git-tag>}
 tag=${2:?git tag required}
-channel=${CLAUDES_CHANNEL:?CLAUDES_CHANNEL must be stable or continuous}
+channel=${N2_CHANNEL:?N2_CHANNEL must be stable or continuous}
+build=${N2_BUILD_NUMBER:?N2_BUILD_NUMBER required}
 : ${SPARKLE_PRIVATE_KEY:?SPARKLE_PRIVATE_KEY required}
 : ${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}
 
-build=${CLAUDES_BUILD_NUMBER:-${GITHUB_RUN_ID:-0}}
 artifact="N2Agents-${channel}-${version}.zip"
 [[ -f $artifact ]] || { echo "✗ missing $artifact — prepare did not run" >&2; exit 1 }
 
-key="${RUNNER_TEMP:-$TMPDIR}/sparkle-private-key"
-umask 077
-printf '%s' "$SPARKLE_PRIVATE_KEY" > "$key"
-result=$(.build/artifacts/sparkle/Sparkle/bin/sign_update -f "$key" "$artifact")
-rm -f "$key"
-signature=${result#*sparkle:edSignature=\"}
-signature=${signature%%\"*}
-[[ -n $signature ]] || { echo "✗ Sparkle produced no signature" >&2; exit 1 }
+# Key via stdin: never on disk, never in argv.
+signature=$(printf '%s' "$SPARKLE_PRIVATE_KEY" | .build/artifacts/sparkle/Sparkle/bin/sign_update -f - -p "$artifact")
+# A key that doesn't match the app's SUPublicEDKey makes every client reject
+# the update — check it the way the app will, before anything is published.
+public_key=$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "tray/build/N2 Agents.app/Contents/Info.plist")
+swift scripts/verify-signature.swift "$public_key" "$signature" "$artifact" \
+  || { echo "✗ SPARKLE_PRIVATE_KEY does not match SUPublicEDKey in tray/Info.plist" >&2; exit 1 }
 
 url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${artifact}"
 publication="${RUNNER_TEMP:-$TMPDIR}/appcasts"

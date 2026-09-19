@@ -3,3 +3,5 @@ tray/build/
 .build/
 Package.resolved
 .test-tmp/
+node_modules/
+N2Agents*.zip

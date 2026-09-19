@@ -39,6 +39,7 @@ swiftc -typecheck tray/main.swift tray/UpdateChannel.swift tray/Vendors.swift tr
   tray/PanelModel.swift tray/PanelView.swift tray/ProfileSetup.swift tray/GlassWindow.swift
 swiftc -typecheck tray/icon-badge/main.swift tray/ProfileColor.swift
 swiftc -typecheck scripts/make-icon.swift
+swiftc -typecheck scripts/verify-signature.swift
 channel_test=$(mktemp -d "$TMPDIR/channel.XXXXXX")/update-channel-tests
 swiftc tray/UpdateChannel.swift tests/UpdateChannelTests.swift -o "$channel_test"
 "$channel_test"
@@ -311,25 +312,40 @@ if command -v fish >/dev/null; then
 fi
 
 # --- release plumbing ------------------------------------------------------
+# One appcast per channel, with the enclosure URL publish-appcast.sh builds
+# and the version pair Sparkle orders by.
 appcast_test=$(mktemp -d "$TMPDIR/appcast.XXXXXX")
-printf artifact > "$appcast_test/N2Agents-continuous-deadbeef.zip"
 signature=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
-./scripts/make-appcast.sh continuous 0.0.1-continuous.deadbeef 1001 \
-  https://github.com/noisyneighborstudio/n2-agents/releases/download/continuous-deadbeef/N2Agents-continuous-deadbeef.zip \
-  "$appcast_test/N2Agents-continuous-deadbeef.zip" "$signature" "$appcast_test/appcast.xml"
-grep -q 'sparkle:channel>continuous<' "$appcast_test/appcast.xml"
-grep -q 'sparkle:edSignature=' "$appcast_test/appcast.xml"
-if ./scripts/make-appcast.sh stable 1.0 1 https://example.invalid/N2Agents-continuous-deadbeef.zip \
-  "$appcast_test/N2Agents-continuous-deadbeef.zip" "$signature" "$appcast_test/bad.xml" 2>/dev/null; then
+for channel version in continuous 1.4.0-continuous.3 stable 1.4.0; do
+  zip_name="N2Agents-$channel-$version.zip"
+  printf artifact > "$appcast_test/$zip_name"
+  url="https://github.com/noisyneighborstudio/n2-agents/releases/download/v$version/$zip_name"
+  ./scripts/make-appcast.sh "$channel" "$version" 1001 "$url" \
+    "$appcast_test/$zip_name" "$signature" "$appcast_test/$channel.xml"
+  xml=$(<"$appcast_test/$channel.xml")
+  [[ $xml == *"<sparkle:channel>$channel</sparkle:channel>"* ]]
+  [[ $xml == *"<enclosure url=\"$url\" sparkle:version=\"1001\" sparkle:shortVersionString=\"$version\" length=\"8\""* ]]
+  [[ $xml == *"sparkle:edSignature=\"$signature\""* ]]
+  xmllint --noout "$appcast_test/$channel.xml"
+done
+if ./scripts/make-appcast.sh stable 1.0 1 https://example.invalid/N2Agents-continuous-1.4.0-continuous.3.zip \
+  "$appcast_test/N2Agents-continuous-1.4.0-continuous.3.zip" "$signature" "$appcast_test/bad.xml" 2>/dev/null; then
   echo "Wrong-channel appcast was accepted" >&2
   exit 1
 fi
 
-grep -Fq 'branches: [main, release]' .github/workflows/release.yml
+# No leftovers from the claudes fork in the release path.
+# (`! grep` would never trip set -e, hence the explicit exit.)
+grep -in claudes .github/workflows/release.yml .releaserc.json scripts/release-*.sh \
+  scripts/publish-appcast.sh scripts/make-appcast.sh tray/build.sh \
+  && { echo "claudes-era names left in the release path" >&2; exit 1 }
+
+grep -Fq 'branches: [main, stable]' .github/workflows/release.yml
 grep -Fq 'refs/heads/main) channel=continuous' .github/workflows/release.yml
-grep -Fq 'refs/heads/release) channel=stable' .github/workflows/release.yml
+grep -Fq 'refs/heads/stable) channel=stable' .github/workflows/release.yml
+grep -Fq 'N2_BUILD_NUMBER: ${{ github.run_number }}' .github/workflows/release.yml
 grep -Fq 'npx semantic-release' .github/workflows/release.yml
-grep -Fq '"branches": ["release", { "name": "main", "prerelease": "continuous" }]' .releaserc.json
+grep -Fq '"branches": ["stable", { "name": "main", "prerelease": "continuous" }]' .releaserc.json
 grep -Fq 'release-prepare.sh ${nextRelease.version}' .releaserc.json
 grep -Fq 'publish-appcast.sh ${nextRelease.version} ${nextRelease.gitTag}' .releaserc.json
 grep -Fq 'cp N2Agents.zip "N2Agents-${channel}-${version}.zip"' scripts/release-prepare.sh

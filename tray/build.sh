@@ -31,11 +31,10 @@ ver=${ver:-0.0.0}
 build_ver=${N2_BUILD_VERSION:-1}
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $ver" "$app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $build_ver" "$app/Contents/Info.plist"
+# SUPublicEDKey is committed in Info.plist, so source and release builds trust
+# the same key; N2_SPARKLE_PUBLIC_KEY overrides it for testing a throwaway key.
 if [[ -n ${N2_SPARKLE_PUBLIC_KEY:-} ]]; then
   /usr/libexec/PlistBuddy -c "Set :SUPublicEDKey $N2_SPARKLE_PUBLIC_KEY" "$app/Contents/Info.plist"
-elif [[ ${N2_RELEASE_BUILD:-0} == 1 ]]; then
-  echo "✗ N2_SPARKLE_PUBLIC_KEY is required for release builds" >&2
-  exit 1
 fi
 echo "Version: $ver ($build_ver)"
 cp ../make-claude-profile.sh ../repatch-claude-profiles.sh ../agents ../vendors.sh "$app/Contents/Resources/"

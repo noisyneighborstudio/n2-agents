@@ -8,11 +8,13 @@ set -euo pipefail
 cd "${0:A:h}/.."
 
 version=${1:?usage: release-prepare.sh <version>}
-channel=${CLAUDES_CHANNEL:?CLAUDES_CHANNEL must be stable or continuous}
+channel=${N2_CHANNEL:?N2_CHANNEL must be stable or continuous}
 [[ $channel == stable || $channel == continuous ]] || { echo "✗ invalid channel: $channel" >&2; exit 1 }
 
-# CFBundleVersion drives Sparkle's ordering, so it must only ever increase.
-build=${CLAUDES_BUILD_NUMBER:-${GITHUB_RUN_ID:-$(date +%s)}}
+# CFBundleVersion drives Sparkle's ordering, so it must only ever increase —
+# across both channels, since switching channel compares builds between feeds.
+build=${N2_BUILD_NUMBER:?N2_BUILD_NUMBER required (CI: the workflow run number)}
+[[ $build =~ '^[0-9]+$' ]] || { echo "✗ N2_BUILD_NUMBER must be a positive integer: $build" >&2; exit 1 }
 
 if [[ -n ${NOTARY_KEY:-} ]]; then
   : ${NOTARY_KEY_ID:?NOTARY_KEY_ID required with NOTARY_KEY}
