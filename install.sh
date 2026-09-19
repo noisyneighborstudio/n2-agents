@@ -2,6 +2,8 @@
 # Installs "N2 Agents.app": prefers the latest signed GitHub release; falls back
 # to building from source (requires Xcode Command Line Tools).
 # Force a source build with: N2_FROM_SOURCE=1 ./install.sh
+# Install a zip you already have (a build copied from another Mac, or a
+# release downloaded by hand): N2_APP_ZIP=/path/to/N2Agents.zip ./install.sh
 set -euo pipefail
 
 REPO="noisyneighborstudio/n2-agents"
@@ -18,6 +20,19 @@ place_app() {  # built or downloaded bundle
   ditto "$1" "$app"
 }
 
+install_from_zip() {  # zip holding the app bundle
+  local tmp
+  tmp=$(mktemp -d)
+  ditto -xk "$1" "$tmp/unzipped" || return 1
+  # Releases from before the rename carry N2Agents.app; take whichever it is.
+  local bundles=("$tmp/unzipped"/*.app(N))
+  (( ${#bundles} == 1 )) || return 1
+  # Signed but not notarized; installed by script, so clear the download quarantine.
+  xattr -dr com.apple.quarantine "$bundles[1]" 2>/dev/null || true
+  place_app "$bundles[1]"
+  rm -rf "$tmp"
+}
+
 install_from_release() {
   local tmp url
   url=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
@@ -26,13 +41,7 @@ install_from_release() {
   echo "Installing from latest release…"
   tmp=$(mktemp -d)
   curl -fsSL "$url" -o "$tmp/N2Agents.zip" || return 1
-  ditto -xk "$tmp/N2Agents.zip" "$tmp/unzipped" || return 1
-  # Releases from before the rename carry N2Agents.app; take whichever it is.
-  local bundles=("$tmp/unzipped"/*.app(N))
-  (( ${#bundles} == 1 )) || return 1
-  # Signed but not notarized; installed by script, so clear the download quarantine.
-  xattr -dr com.apple.quarantine "$bundles[1]" 2>/dev/null || true
-  place_app "$bundles[1]"
+  install_from_zip "$tmp/N2Agents.zip" || return 1
   rm -rf "$tmp"
 }
 
@@ -55,7 +64,10 @@ install_from_source() {
   place_app "tray/build/N2 Agents.app"
 }
 
-if [[ ${N2_FROM_SOURCE:-0} == 1 ]]; then
+if [[ -n ${N2_APP_ZIP:-} ]]; then
+  echo "Installing from $N2_APP_ZIP…"
+  install_from_zip "$N2_APP_ZIP" || { echo "✗ $N2_APP_ZIP doesn't hold one N2 Agents app bundle" >&2; exit 1; }
+elif [[ ${N2_FROM_SOURCE:-0} == 1 ]]; then
   install_from_source
 elif ! install_from_release; then
   echo "No release available — building from source…"
