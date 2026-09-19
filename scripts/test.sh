@@ -344,7 +344,7 @@ grep -Fq 'source ./updates.env' scripts/publish-appcast.sh
 grep -Fq 'FeedURL</key>' tray/Info.plist && { echo "feed URL hard-coded in Info.plist" >&2; exit 1 }
 # No leftovers from the claudes fork in the release path.
 grep -in claudes .github/workflows/release.yml .releaserc.json scripts/release-*.sh \
-  scripts/publish-appcast.sh scripts/make-appcast.sh tray/build.sh \
+  scripts/publish-appcast.sh scripts/make-appcast.sh tray/build.sh docs/releases.md \
   && { echo "claudes-era names left in the release path" >&2; exit 1 }
 
 grep -Fq 'branches: [main, stable]' .github/workflows/release.yml
