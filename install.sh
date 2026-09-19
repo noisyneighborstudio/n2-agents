@@ -9,7 +9,7 @@ set -euo pipefail
 REPO="noisyneighborstudio/n2-agents"
 # Where releases are published: N2_UPDATES_REPO in updates.env. Copied, not
 # sourced — this script runs piped, with no checkout. test.sh keeps them equal.
-UPDATES_REPO="noisyneighborstudio/n2-agents"
+UPDATES_REPO="noisyneighborstudio/n2-agents-updates"
 app="/Applications/N2 Agents.app"
 # Before the rename the bundle was N2Agents.app. Sparkle updates keep an
 # install's path, so older installs may still live there: this script moves

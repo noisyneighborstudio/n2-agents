@@ -52,3 +52,11 @@ git -C "$publication" -c user.name=github-actions -c user.email=github-actions@g
 git -C "$publication" push --quiet "$remote" HEAD:appcasts
 rm -rf "$publication"
 echo "✓ Published $channel appcast for $version → $N2_FEED_BASE_URL/$channel/appcast.xml"
+
+# The installer people curl lives beside the builds, and follows stable.
+if [[ $channel == stable ]]; then
+  sha=$(gh api "repos/$N2_UPDATES_REPO/contents/install.sh" --jq .sha 2>/dev/null || true)
+  gh api -X PUT "repos/$N2_UPDATES_REPO/contents/install.sh" \
+    -f message="install.sh for $version" -f content="$(base64 < install.sh)" ${sha:+-f sha="$sha"} >/dev/null
+  echo "✓ install.sh published with $version"
+fi
