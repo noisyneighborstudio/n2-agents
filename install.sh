@@ -7,6 +7,9 @@
 set -euo pipefail
 
 REPO="noisyneighborstudio/n2-agents"
+# Where releases are published: N2_UPDATES_REPO in updates.env. Copied, not
+# sourced — this script runs piped, with no checkout. test.sh keeps them equal.
+UPDATES_REPO="noisyneighborstudio/n2-agents"
 app="/Applications/N2 Agents.app"
 # Before the rename the bundle was N2Agents.app. Sparkle updates keep an
 # install's path, so older installs may still live there: this script moves
@@ -35,7 +38,7 @@ install_from_zip() {  # zip holding the app bundle
 
 install_from_release() {
   local tmp url
-  url=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
+  url=$(curl -fsSL "https://api.github.com/repos/$UPDATES_REPO/releases/latest" \
         | /usr/bin/python3 -c "import json,sys; r=json.load(sys.stdin); print(next((a['browser_download_url'] for a in r.get('assets',[]) if a['name']=='N2Agents.zip'), ''))" 2>/dev/null) || return 1
   [[ -n $url ]] || return 1
   echo "Installing from latest release…"

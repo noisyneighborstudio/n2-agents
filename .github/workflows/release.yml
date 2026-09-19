@@ -19,6 +19,9 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          # semantic-release and publish-appcast.sh authenticate explicitly; a
+          # persisted github.token header would override the updates-repo token.
+          persist-credentials: false
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -54,6 +57,10 @@ jobs:
       - name: Release
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          # Uploads archives + appcasts to N2_UPDATES_REPO (updates.env). The
+          # secret is only needed when that is another repo. Not GH_TOKEN:
+          # semantic-release would prefer it over GITHUB_TOKEN for this repo.
+          N2_UPDATES_TOKEN: ${{ secrets.N2_UPDATES_TOKEN || github.token }}
           # Monotonic across both channels. Resets if this file is renamed.
           N2_BUILD_NUMBER: ${{ github.run_number }}
           N2_SIGN_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION }}

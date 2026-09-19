@@ -36,6 +36,11 @@ build_ver=${N2_BUILD_VERSION:-1}
 if [[ -n ${N2_SPARKLE_PUBLIC_KEY:-} ]]; then
   /usr/libexec/PlistBuddy -c "Set :SUPublicEDKey $N2_SPARKLE_PUBLIC_KEY" "$app/Contents/Info.plist"
 fi
+# Feed URLs come from updates.env, the one place update hosting is configured.
+source ../updates.env
+for channel key in stable N2AgentsStableFeedURL continuous N2AgentsContinuousFeedURL; do
+  /usr/libexec/PlistBuddy -c "Add :$key string $N2_FEED_BASE_URL/$channel/appcast.xml" "$app/Contents/Info.plist"
+done
 echo "Version: $ver ($build_ver)"
 cp ../make-claude-profile.sh ../repatch-claude-profiles.sh ../agents ../vendors.sh "$app/Contents/Resources/"
 cp ../shell/agents.zsh ../shell/agents.bash ../shell/agents.fish ../shell/agent-as "$app/Contents/Resources/"

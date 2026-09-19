@@ -1,7 +1,8 @@
 #!/bin/zsh
-# semantic-release publish: sign the update archive with Sparkle's EdDSA key and
-# write this channel's appcast on the `appcasts` branch. Runs after the GitHub
-# release exists, so the enclosure URL it records already resolves.
+# semantic-release publish: sign the update archive with Sparkle's EdDSA key,
+# upload the archives to a release on $N2_UPDATES_REPO, then write this
+# channel's appcast on that repo's `appcasts` branch — archives first, so the
+# enclosure URL resolves before any client can read it. Hosting: updates.env.
 set -euo pipefail
 cd "${0:A:h}/.."
 
@@ -10,7 +11,8 @@ tag=${2:?git tag required}
 channel=${N2_CHANNEL:?N2_CHANNEL must be stable or continuous}
 build=${N2_BUILD_NUMBER:?N2_BUILD_NUMBER required}
 : ${SPARKLE_PRIVATE_KEY:?SPARKLE_PRIVATE_KEY required}
-: ${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}
+export GH_TOKEN=${N2_UPDATES_TOKEN:?N2_UPDATES_TOKEN required (write access to the updates repo)}
+source ./updates.env
 
 artifact="N2Agents-${channel}-${version}.zip"
 [[ -f $artifact ]] || { echo "✗ missing $artifact — prepare did not run" >&2; exit 1 }
@@ -23,21 +25,30 @@ public_key=$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "tray/build/N2 Ag
 swift scripts/verify-signature.swift "$public_key" "$signature" "$artifact" \
   || { echo "✗ SPARKLE_PRIVATE_KEY does not match SUPublicEDKey in tray/Info.plist" >&2; exit 1 }
 
-url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${artifact}"
-publication="${RUNNER_TEMP:-$TMPDIR}/appcasts"
-rm -rf "$publication"
-if git ls-remote --exit-code --heads origin appcasts >/dev/null; then
-  git worktree add "$publication" origin/appcasts
+# semantic-release has already created this release when the updates repo is
+# this repo; otherwise it's created here. Continuous stays a prerelease so
+# releases/latest (what install.sh resolves) is always stable.
+if ! gh release view "$tag" -R "$N2_UPDATES_REPO" >/dev/null 2>&1; then
+  kind=(--latest); [[ $channel == continuous ]] && kind=(--prerelease)
+  gh release create "$tag" -R "$N2_UPDATES_REPO" $kind --title "N2 Agents $version" --notes "N2 Agents $version ($channel)"
+fi
+gh release upload "$tag" -R "$N2_UPDATES_REPO" --clobber N2Agents.zip "$artifact"
+url="https://github.com/${N2_UPDATES_REPO}/releases/download/${tag}/${artifact}"
+
+# Token as a header from the environment: out of argv, out of .git/config.
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64)"
+remote="https://github.com/${N2_UPDATES_REPO}.git"
+publication=$(mktemp -d)
+if [[ -n $(git ls-remote --heads "$remote" appcasts) ]]; then
+  git clone --quiet --depth 1 --branch appcasts "$remote" "$publication"
 else
-  git worktree add --detach "$publication" HEAD
-  git -C "$publication" checkout --orphan appcasts
-  git -C "$publication" rm -rf .
+  git init --quiet -b appcasts "$publication"
 fi
 ./scripts/make-appcast.sh "$channel" "$version" "$build" "$url" "$artifact" "$signature" "$publication/$channel/appcast.xml"
 git -C "$publication" add -- "$channel/appcast.xml"
-git -C "$publication" config user.name github-actions
-git -C "$publication" config user.email github-actions@github.com
-git -C "$publication" commit -m "Publish $channel $version"
-git -C "$publication" push origin HEAD:appcasts
-git worktree remove --force "$publication"
-echo "✓ Published $channel appcast for $version"
+git -C "$publication" -c user.name=github-actions -c user.email=github-actions@github.com \
+  commit --quiet -m "Publish $channel $version"
+git -C "$publication" push --quiet "$remote" HEAD:appcasts
+rm -rf "$publication"
+echo "✓ Published $channel appcast for $version → $N2_FEED_BASE_URL/$channel/appcast.xml"

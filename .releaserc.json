@@ -7,10 +7,6 @@
       "prepareCmd": "./scripts/release-prepare.sh ${nextRelease.version}"
     }],
     ["@semantic-release/github", {
-      "assets": [
-        { "path": "N2Agents.zip", "name": "N2Agents.zip", "label": "N2Agents.app (zip)" },
-        { "path": "N2Agents-*-*.zip", "label": "Sparkle update archive" }
-      ],
       "successComment": false,
       "failComment": false,
       "failTitle": false,

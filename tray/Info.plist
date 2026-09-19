@@ -18,10 +18,6 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
-	<key>N2AgentsStableFeedURL</key>
-	<string>https://raw.githubusercontent.com/noisyneighborstudio/n2-agents/appcasts/stable/appcast.xml</string>
-	<key>N2AgentsContinuousFeedURL</key>
-	<string>https://raw.githubusercontent.com/noisyneighborstudio/n2-agents/appcasts/continuous/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>ITXyxjy/n8pI5es/iFcKozvPUtEghdndxYPy/KSAxr8=</string>
 	<key>LSMinimumSystemVersion</key>

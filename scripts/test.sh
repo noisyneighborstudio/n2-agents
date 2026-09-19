@@ -313,13 +313,14 @@ fi
 
 # --- release plumbing ------------------------------------------------------
 # One appcast per channel, with the enclosure URL publish-appcast.sh builds
-# and the version pair Sparkle orders by.
+# from updates.env, and the version pair Sparkle orders by.
+source ./updates.env
 appcast_test=$(mktemp -d "$TMPDIR/appcast.XXXXXX")
 signature=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
 for channel version in continuous 1.4.0-continuous.3 stable 1.4.0; do
   zip_name="N2Agents-$channel-$version.zip"
   printf artifact > "$appcast_test/$zip_name"
-  url="https://github.com/noisyneighborstudio/n2-agents/releases/download/v$version/$zip_name"
+  url="https://github.com/$N2_UPDATES_REPO/releases/download/v$version/$zip_name"
   ./scripts/make-appcast.sh "$channel" "$version" 1001 "$url" \
     "$appcast_test/$zip_name" "$signature" "$appcast_test/$channel.xml"
   xml=$(<"$appcast_test/$channel.xml")
@@ -334,8 +335,14 @@ if ./scripts/make-appcast.sh stable 1.0 1 https://example.invalid/N2Agents-conti
   exit 1
 fi
 
+# Update hosting has one source: updates.env. install.sh runs piped, so it
+# carries a copy of the repo, which must match.
+grep -Fqx "UPDATES_REPO=\"$N2_UPDATES_REPO\"" install.sh
+grep -Fq 'source ../updates.env' tray/build.sh
+grep -Fq 'source ./updates.env' scripts/publish-appcast.sh
+# (`! grep` would never trip set -e, hence the explicit exits.)
+grep -Fq 'FeedURL</key>' tray/Info.plist && { echo "feed URL hard-coded in Info.plist" >&2; exit 1 }
 # No leftovers from the claudes fork in the release path.
-# (`! grep` would never trip set -e, hence the explicit exit.)
 grep -in claudes .github/workflows/release.yml .releaserc.json scripts/release-*.sh \
   scripts/publish-appcast.sh scripts/make-appcast.sh tray/build.sh \
   && { echo "claudes-era names left in the release path" >&2; exit 1 }
@@ -350,7 +357,7 @@ grep -Fq 'release-prepare.sh ${nextRelease.version}' .releaserc.json
 grep -Fq 'publish-appcast.sh ${nextRelease.version} ${nextRelease.gitTag}' .releaserc.json
 grep -Fq 'cp N2Agents.zip "N2Agents-${channel}-${version}.zip"' scripts/release-prepare.sh
 grep -Fq '@executable_path/../Frameworks' Package.swift
-grep -Fq 'push origin HEAD:appcasts' scripts/publish-appcast.sh
+grep -Fq 'push --quiet "$remote" HEAD:appcasts' scripts/publish-appcast.sh
 grep -Fq 'allowedChannels' tray/main.swift
 grep -Fq 'UpdateChannel.preferenceKey' tray/main.swift
 
