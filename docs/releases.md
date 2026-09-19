@@ -15,7 +15,7 @@ N2 Agents updates itself with Sparkle 2, on two channels:
 
 ## Hosting
 
-The source repo is private, so builds are published to the public [`noisyneighborstudio/n2-agents-updates`](https://github.com/noisyneighborstudio/n2-agents-updates): release zips as assets, feeds on its `appcasts` branch, and `install.sh` on `main` (refreshed by every stable release). Writing there needs the `N2_UPDATES_TOKEN` secret. N2's Sparkle key is the login-keychain account `n2agents` (`generate_keys --account n2agents`).
+Builds publish to this (public) repo: release zips as assets, feeds on the `appcasts` branch, and `install.sh` straight from `main`. The workflow's own token is enough. N2's Sparkle key is the login-keychain account `n2agents` (`generate_keys --account n2agents`).
 
 `updates.env` is the one place update hosting is configured: `N2_UPDATES_REPO` (the GitHub repo holding the release zips and the `appcasts` branch) and `N2_FEED_BASE_URL` (the public URL serving that branch). `tray/build.sh` bakes the feed URLs into the app; `install.sh` carries a copy of `N2_UPDATES_REPO`, which `scripts/test.sh` keeps equal. Both must be readable without credentials — Sparkle and `install.sh` never authenticate, so a private repo serves only 404s. Changing hosting only reaches installs built after the change, since the feed URL lives in each app's Info.plist.
 
