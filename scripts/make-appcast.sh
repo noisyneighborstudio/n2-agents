@@ -23,8 +23,8 @@ mkdir -p "${output:h}"
 {
   print '<?xml version="1.0" encoding="utf-8"?>'
   print '<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">'
-  print '<channel><title>Claudes Updates</title><item>'
-  print "<title>Claudes ${version}</title><pubDate>${published}</pubDate>"
+  print '<channel><title>N2 Agents Updates</title><item>'
+  print "<title>N2 Agents ${version}</title><pubDate>${published}</pubDate>"
   print "<sparkle:channel>${channel}</sparkle:channel>"
   print "<enclosure url=\"${download_url}\" sparkle:version=\"${build_version}\" sparkle:shortVersionString=\"${version}\" length=\"${length}\" type=\"application/octet-stream\" sparkle:edSignature=\"${signature}\"/>"
   print '</item></channel></rss>'

@@ -20,6 +20,7 @@
 #   usage       oauth  — server-side quota we can query (Claude only, today)
 #               none
 #   sessions    layout of resumable transcripts, for list/transfer
+#   logout/login  the CLI's own sign-out/sign-in subcommands, for `agents login`
 #
 # POSIX sh on purpose — sourced by `agents`, which any shell may invoke.
 
@@ -121,6 +122,25 @@ vendor_desktop() {
   esac
 }
 
+# The lab's desktop app, as people call it — for labs with one.
+vendor_desktop_name() {
+  case $1 in
+    claude) echo "Claude Desktop" ;;
+    codex)  echo "Codex" ;;
+    *)      echo "" ;;
+  esac
+}
+
+# The desktop app's bundle id, to find and open it. A `clone` lab's per-profile
+# copies carry their own ids; this is the original.
+vendor_desktop_bundle() {
+  case $1 in
+    claude) echo "com.anthropic.claudefordesktop" ;;
+    codex)  echo "com.openai.codex" ;;
+    *)      echo "" ;;
+  esac
+}
+
 vendor_usage() {
   case $1 in
     claude) echo oauth ;;
@@ -133,6 +153,87 @@ vendor_sessions() {
     claude) echo projects ;;   # projects/<slug>/<uuid>.jsonl
     codex)  echo sessions ;;   # sessions/<y>/<m>/<d>/rollout-*.jsonl
     *)      echo none ;;
+  esac
+}
+
+# Sign-out / sign-in subcommands, run with the slot pinned. Empty means the
+# CLI has none: `agents login` then deletes vendor_cred_files from the slot and
+# starts the CLI plainly, which asks for a login on its own.
+vendor_logout() {
+  case $1 in
+    claude|opencode)    echo "auth logout" ;;
+    codex|grok|cursor)  echo "logout" ;;
+    *)                  echo "" ;;
+  esac
+}
+
+vendor_login() {
+  case $1 in
+    claude|opencode)    echo "auth login" ;;
+    codex|grok|cursor)  echo "login" ;;
+    hermes)             echo "setup" ;;   # its wizard: `hermes auth add` needs a provider
+    *)                  echo "" ;;
+  esac
+}
+
+# Account a slot is signed in to, read from the vendor's own files; empty when
+# unknown. Cheap on purpose — the tray reads it on every refresh.
+vendor_account() {  # vendor, slot dir
+  case $1 in
+    claude) grep -o '"emailAddress": *"[^"]*"' "$2/.claude.json" 2>/dev/null | head -1 | sed 's/.*: *"//; s/"$//' ;;
+  esac
+  true
+}
+
+# Whether a slot holds a login: 0 yes, 1 no, 2 can't tell from outside (the
+# CLI keeps it somewhere shared or opaque — Cursor's keychain, opencode's
+# XDG data dir). Cheap: profile setup polls it every couple of seconds.
+vendor_authed() {  # vendor, slot dir, profile
+  case $1 in
+    claude)
+      # Claude Code keys its keychain entry to the config dir it was pinned to.
+      va_svc="Claude Code-credentials-$(printf '%s' "$2" | shasum -a 256 | cut -c1-8)"
+      security find-generic-password -s "$va_svc" >/dev/null 2>&1 && return 0
+      if [ "$3" = Default ]; then
+        security find-generic-password -s "Claude Code-credentials" >/dev/null 2>&1 && return 0
+      fi
+      [ -s "$2/.credentials.json" ] ;;
+    codex|grok|hermes) [ -s "$2/auth.json" ] ;;
+    gemini)     [ -s "$2/oauth_creds.json" ] ;;
+    *)          return 2 ;;
+  esac
+}
+
+# Two-letter tile the panel draws for a lab — N2's own mark, not the lab's.
+vendor_monogram() {
+  case $1 in
+    claude)   echo CC ;;
+    codex)    echo CX ;;
+    grok)     echo GK ;;
+    gemini)   echo GM ;;
+    cursor)   echo CU ;;
+    opencode) echo OC ;;
+    *)        printf '%s' "$1" | cut -c1-2 | tr '[:lower:]' '[:upper:]' ;;
+  esac
+}
+
+# Prints who the CLI is signed in as, run after `agents login` so the terminal
+# confirms the account instead of leaving it to guesswork.
+vendor_whoami() {
+  case $1 in
+    claude)   echo "auth status --text" ;;
+    codex)    echo "login status" ;;
+    cursor)   echo "status" ;;
+    opencode) echo "auth list" ;;
+    *)        echo "" ;;
+  esac
+}
+
+vendor_cred_files() {
+  case $1 in
+    gemini) echo "oauth_creds.json google_accounts.json" ;;
+    hermes) echo "auth.json" ;;
+    *)      echo "" ;;
   esac
 }
 
@@ -149,42 +250,6 @@ vendor_install_hint() {
     cursor)   echo "curl https://cursor.com/install -fsS | bash" ;;
     opencode) echo "curl -fsSL https://opencode.ai/install | bash" ;;
     hermes)   echo "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash" ;;
-  esac
-}
-
-# The file whose presence means "signed in", relative to the config dir. Empty
-# when the vendor keeps its token somewhere we can't see from disk:
-#   claude    keeps OAuth in the macOS keychain, keyed to the config-dir PATH
-#             (see claude_signed_in in `agents`); .credentials.json is the
-#             Linux/fallback location and is checked too
-#   cursor    stores its session outside CURSOR_CONFIG_DIR (not on disk under
-#             ~/.cursor either) — only `cursor-agent status` can tell
-#   opencode  writes auth.json under XDG_DATA_HOME, not XDG_CONFIG_HOME, so its
-#             login is shared by every profile; vendor_auth_file names the
-#             absolute path in that case
-vendor_auth_file() {  # vendor, config-dir -> path or ""
-  case $1 in
-    claude)   echo "$2/.credentials.json" ;;
-    codex)    echo "$2/auth.json" ;;
-    grok)     echo "$2/auth.json" ;;
-    gemini)   echo "$2/oauth_creds.json" ;;
-    hermes)   echo "$2/auth.json" ;;
-    opencode) echo "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/auth.json" ;;
-    *)        echo "" ;;
-  esac
-}
-
-# Arguments that start the vendor's own sign-in flow. Gemini has no login
-# subcommand: it prompts on first run, so running it bare IS the sign-in.
-vendor_login_args() {
-  case $1 in
-    claude)   echo "auth login" ;;
-    codex)    echo "login" ;;
-    grok)     echo "login" ;;
-    cursor)   echo "login" ;;
-    opencode) echo "auth login" ;;
-    hermes)   echo "setup" ;;
-    gemini)   echo "" ;;
   esac
 }
 

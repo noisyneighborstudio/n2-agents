@@ -57,8 +57,11 @@ zsh -n install.sh uninstall.sh make-claude-profile.sh repatch-claude-profiles.sh
   scripts/publish-appcast.sh shell/agents.zsh
 bash -n shell/agents.bash
 command -v fish >/dev/null && fish -n shell/agents.fish
-swiftc -typecheck tray/main.swift tray/UpdateChannel.swift tray/Vendors.swift tray/Onboarding.swift
+swiftc -typecheck tray/main.swift tray/UpdateChannel.swift tray/Vendors.swift tray/ProfileColor.swift \
+  tray/PanelModel.swift tray/PanelView.swift tray/ProfileSetup.swift tray/GlassWindow.swift tray/Onboarding.swift
+swiftc -typecheck tray/icon-badge/main.swift tray/ProfileColor.swift
 swiftc -typecheck scripts/make-icon.swift
+swiftc -typecheck scripts/verify-signature.swift
 channel_test=$(mktemp -d "$TMPDIR/channel.XXXXXX")/update-channel-tests
 swiftc tray/UpdateChannel.swift tests/UpdateChannelTests.swift -o "$channel_test"
 "$channel_test"
@@ -156,12 +159,12 @@ setup_agents() { HOME="$setup_home" PATH="$fake_path" ./agents "$@" }
 
 # Before anything is managed, a "real" dot dir with a login reads as signed in.
 sp=$(setup_agents setup --porcelain)
-print -r -- "$sp" | grep -q '^S	claude	1	real	1	Claude Code	'
-print -r -- "$sp" | grep -q '^S	codex	1	real	1	Codex	'
-print -r -- "$sp" | grep -q '^S	grok	1	real	0	Grok	'
-print -r -- "$sp" | grep -q '^S	hermes	1	absent	0	Hermes	'
+print -r -- "$sp" | grep -q '^S	claude	1	real	yes	Claude Code	'
+print -r -- "$sp" | grep -q '^S	codex	1	real	yes	Codex	'
+print -r -- "$sp" | grep -q '^S	grok	1	real	no	Grok	'
+print -r -- "$sp" | grep -q '^S	hermes	1	absent	no	Hermes	'
 # Cursor keeps its token where nothing on disk can see: reported as unknown.
-print -r -- "$sp" | grep -q '^S	cursor	1	absent	?	Cursor	'
+print -r -- "$sp" | grep -q '^S	cursor	1	absent	unknown	Cursor	'
 
 # Running as an unmanaged Default must UNSET the variable, not spell out the
 # dot dir: Claude's keychain item for "unset" is not the one for "~/.claude".
@@ -176,7 +179,7 @@ slot_hash=$(printf '%s' "$setup_home/.n2-agents/Default/claude" | shasum -a 256 
 test -f "$FAKE_KEYCHAIN/Claude Code-credentials-$slot_hash"
 test "$(sed -n 2p "$FAKE_KEYCHAIN/Claude Code-credentials-$slot_hash")" = '{"claudeAiOauth":{"accessToken":"x"}}'
 sp=$(setup_agents setup --porcelain)
-print -r -- "$sp" | grep -q '^S	claude	1	linked	1	Claude Code	'
+print -r -- "$sp" | grep -q '^S	claude	1	linked	yes	Claude Code	'
 [[ $(setup_agents run Default --vendor claude) == *"CLAUDE_CONFIG_DIR=$setup_home/.n2-agents/Default/claude"* ]]
 
 # Adopting is idempotent and never yanks a vendor back from another profile.
@@ -206,12 +209,99 @@ if setup_agents run Work --vendor grok --switch >/dev/null 2>&1; then :; fi  # e
 
 # --- porcelain contract (the tray parses this) -----------------------------
 porcelain=$(run_agents porcelain)
-print -r -- "$porcelain" | grep -q '^V	claude	1	env	clone	oauth	Claude Code$'
+print -r -- "$porcelain" | grep -q '^V	claude	1	env	clone	oauth	Claude Code	projects	CC	Claude Desktop	com.anthropic.claudefordesktop$'
 print -r -- "$porcelain" | grep -q '^P	Work	'
 print -r -- "$porcelain" | grep -q '^A	'
+# One S row per slot: its directory (the tray watches it during a sign-in)
+# and the account read from the vendor's own files.
+print -r -- "$porcelain" | grep -qx "S	Work	codex	$home/.n2-agents/Work/codex		no"
 # Every P row lists its vendors as comma-separated <vendor>:<state> pairs.
 print -r -- "$porcelain" | awk -F'\t' '$1=="P" && $4!="-" {print $4}' \
   | grep -qE '^[a-z]+:(active|ok)(,[a-z]+:(active|ok))*$'
+
+# The quota meters parse `best --porcelain`: five tab-separated fields, and a
+# vendor with no usage API says so per row instead of printing an empty table.
+printf '{"oauthAccount": {"emailAddress": "work@example.com"}}' > "$home/.n2-agents/Work/claude/.claude.json"
+porcelain=$(run_agents porcelain)
+print -r -- "$porcelain" | grep -qx "S	Work	claude	$home/.n2-agents/Work/claude	work@example.com	no"
+# Signed in = the slot holds the lab's own credential file (codex: auth.json);
+# cursor keeps its login outside the slot, so it can only say unknown.
+echo '{}' > "$home/.n2-agents/Work/codex/auth.json"
+authed=$(run_agents authed Work)
+print -r -- "$authed" | grep -qx 'codex	yes'
+print -r -- "$authed" | grep -qx 'grok	no'
+print -r -- "$authed" | grep -qx 'cursor	unknown'
+rm "$home/.n2-agents/Work/codex/auth.json"
+usage=$(run_agents best --porcelain --vendor codex)
+print -r -- "$usage" | grep -qx 'Work	-	-	-	no-usage-api'
+
+# Recent sessions span labs, newest first, and skip injected context to reach
+# the first real prompt.
+mkdir -p "$home/.n2-agents/Work/claude/projects/p" "$home/.n2-agents/Work/codex/sessions/2026/01/01"
+cat > "$home/.n2-agents/Work/claude/projects/p/c1.jsonl" <<'JSONL'
+{"type":"user","cwd":"/src/alpha","isMeta":true,"message":{"role":"user","content":"Caveat: injected"}}
+{"type":"user","cwd":"/src/alpha","message":{"role":"user","content":[{"type":"text","text":"fix the parser"}]}}
+JSONL
+cat > "$home/.n2-agents/Work/codex/sessions/2026/01/01/rollout-2026-01-01T00-00-00-x1.jsonl" <<'JSONL'
+{"type":"session_meta","payload":{"cwd":"/src/beta"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>x</environment_context>"}]}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /src/beta"}]}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"ship the release"}]}}
+JSONL
+touch -t 202601010000 "$home/.n2-agents/Work/claude/projects/p/c1.jsonl"
+recent=$(run_agents sessions --porcelain --limit 2)
+test "$(print -r -- "$recent" | sed -n 1p | cut -f1-3,5,6)" = "Work	codex	x1	/src/beta	ship the release"
+test "$(print -r -- "$recent" | sed -n 2p | cut -f1-3,5,6)" = "Work	claude	c1	/src/alpha	fix the parser"
+test "$(run_agents sessions --porcelain Work --vendor claude | wc -l | tr -d ' ')" = 1
+
+# login signs the pinned slot out and back in through the CLI's own commands.
+out=$(run_agents login Work --vendor codex 2>&1)
+# A fresh slot has nothing to sign out of: login, then status.
+test "$(print -r -- "$out" | grep -c "CODEX_HOME=$home/.n2-agents/Work/codex")" = 2
+# A signed-in one signs out first: logout, login, status — each pinned.
+echo '{}' > "$home/.n2-agents/Work/codex/auth.json"
+out=$(run_agents login Work --vendor codex 2>&1)
+test "$(print -r -- "$out" | grep -c "CODEX_HOME=$home/.n2-agents/Work/codex")" = 3
+rm "$home/.n2-agents/Work/codex/auth.json"
+# A swap lab without its own logout clears the saved credentials instead — and
+# like `run`, only once the profile is allowed to become the active one.
+echo creds > "$home/.n2-agents/Work/gemini/oauth_creds.json"
+if run_agents login Work --vendor gemini >/dev/null 2>&1; then
+  echo "login switched a swap vendor without --switch" >&2
+  exit 1
+fi
+test -f "$home/.n2-agents/Work/gemini/oauth_creds.json"
+run_agents login Work --vendor gemini --switch >/dev/null 2>&1
+test ! -e "$home/.n2-agents/Work/gemini/oauth_creds.json"
+
+# --- next best: no lab is anyone's default -------------------------------
+# Cursor and opencode keep their logins out of sight, so a slot of theirs can
+# only be taken at its word; drop theirs so every slot here is checkable.
+rm -rf "$home"/.n2-agents/{Default,Work}/{cursor,opencode}
+# Nothing signed in: nothing to guess.
+if run_agents run >/dev/null 2>&1; then echo "run picked a slot with nothing signed in" >&2; exit 1; fi
+# Commands that act on one lab ask rather than defaulting to the first.
+if run_agents login Work >/dev/null 2>&1; then echo "login guessed a lab" >&2; exit 1; fi
+rm -f "$home/.n2-agents/.last-slot"
+echo '{}' > "$home/.n2-agents/Work/codex/auth.json"
+echo '{}' > "$home/.n2-agents/Work/grok/auth.json"
+# The only signed-in slots are Work's Codex and Grok, so that's where it goes…
+out=$(run_agents run 2>&1)
+[[ $out == *"CODEX_HOME=$home/.n2-agents/Work/codex"* ]]
+test "$(cat "$home/.n2-agents/.last-slot")" = "Work:codex"
+# …then on round the rotation, skipping what isn't signed in…
+out=$(run_agents run 2>&1)
+[[ $out == *"GROK_HOME=$home/.n2-agents/Work/grok"* ]]
+out=$(run_agents run 2>&1)
+[[ $out == *"CODEX_HOME=$home/.n2-agents/Work/codex"* ]]
+# …and a profile alone, or a lab alone, fills in the other half the same way.
+out=$(run_agents run Work 2>&1)
+[[ $out == *"GROK_HOME=$home/.n2-agents/Work/grok"* ]]
+out=$(run_agents run --vendor codex 2>&1)
+[[ $out == *"CODEX_HOME=$home/.n2-agents/Work/codex"* ]]
+porcelain=$(run_agents porcelain)
+print -r -- "$porcelain" | grep -qx "L	Work	codex"
+rm "$home/.n2-agents/Work/codex/auth.json" "$home/.n2-agents/Work/grok/auth.json"
 
 # --- adopt: shares claudes state, never copies it --------------------------
 adopt_home="$test_root/adopt-home"
@@ -280,6 +370,11 @@ test ! -e "$shim_bin/grok-expo"
 # Foreign links are never clobbered.
 test "$(readlink "$shim_bin/claude-client")" = "$test_root/foreign/agent-as"
 
+# A shim left pointing into the pre-rename N2Agents.app is ours: re-pointed.
+ln -sf "/Applications/N2Agents.app/Contents/Resources/agent-as" "$shim_bin/claude-expo"
+HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" ./agents shims >/dev/null
+test "$(readlink "$shim_bin/claude-expo")" = "$PWD/shell/agent-as"
+
 # Concurrent syncs must not leave the lock behind.
 HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" TMPDIR="$test_root/one" ./agents shims >/dev/null &
 first=$!
@@ -305,30 +400,52 @@ if command -v fish >/dev/null; then
 fi
 
 # --- release plumbing ------------------------------------------------------
+# One appcast per channel, with the enclosure URL publish-appcast.sh builds
+# from updates.env, and the version pair Sparkle orders by.
+source ./updates.env
 appcast_test=$(mktemp -d "$TMPDIR/appcast.XXXXXX")
-printf artifact > "$appcast_test/N2Agents-continuous-deadbeef.zip"
 signature=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
-./scripts/make-appcast.sh continuous 0.0.1-continuous.deadbeef 1001 \
-  https://github.com/noisyneighborstudio/n2-agents/releases/download/continuous-deadbeef/N2Agents-continuous-deadbeef.zip \
-  "$appcast_test/N2Agents-continuous-deadbeef.zip" "$signature" "$appcast_test/appcast.xml"
-grep -q 'sparkle:channel>continuous<' "$appcast_test/appcast.xml"
-grep -q 'sparkle:edSignature=' "$appcast_test/appcast.xml"
-if ./scripts/make-appcast.sh stable 1.0 1 https://example.invalid/N2Agents-continuous-deadbeef.zip \
-  "$appcast_test/N2Agents-continuous-deadbeef.zip" "$signature" "$appcast_test/bad.xml" 2>/dev/null; then
+for channel version in continuous 1.4.0-continuous.3 stable 1.4.0; do
+  zip_name="N2Agents-$channel-$version.zip"
+  printf artifact > "$appcast_test/$zip_name"
+  url="https://github.com/$N2_UPDATES_REPO/releases/download/v$version/$zip_name"
+  ./scripts/make-appcast.sh "$channel" "$version" 1001 "$url" \
+    "$appcast_test/$zip_name" "$signature" "$appcast_test/$channel.xml"
+  xml=$(<"$appcast_test/$channel.xml")
+  [[ $xml == *"<sparkle:channel>$channel</sparkle:channel>"* ]]
+  [[ $xml == *"<enclosure url=\"$url\" sparkle:version=\"1001\" sparkle:shortVersionString=\"$version\" length=\"8\""* ]]
+  [[ $xml == *"sparkle:edSignature=\"$signature\""* ]]
+  xmllint --noout "$appcast_test/$channel.xml"
+done
+if ./scripts/make-appcast.sh stable 1.0 1 https://example.invalid/N2Agents-continuous-1.4.0-continuous.3.zip \
+  "$appcast_test/N2Agents-continuous-1.4.0-continuous.3.zip" "$signature" "$appcast_test/bad.xml" 2>/dev/null; then
   echo "Wrong-channel appcast was accepted" >&2
   exit 1
 fi
 
-grep -Fq 'branches: [main, release]' .github/workflows/release.yml
+# Update hosting has one source: updates.env. install.sh runs piped, so it
+# carries a copy of the repo, which must match.
+grep -Fqx "UPDATES_REPO=\"$N2_UPDATES_REPO\"" install.sh
+grep -Fq 'source ../updates.env' tray/build.sh
+grep -Fq 'source ./updates.env' scripts/publish-appcast.sh
+# (`! grep` would never trip set -e, hence the explicit exits.)
+grep -Fq 'FeedURL</key>' tray/Info.plist && { echo "feed URL hard-coded in Info.plist" >&2; exit 1 }
+# No leftovers from the claudes fork in the release path.
+grep -in claudes .github/workflows/release.yml .releaserc.json scripts/release-*.sh \
+  scripts/publish-appcast.sh scripts/make-appcast.sh tray/build.sh docs/releases.md \
+  && { echo "claudes-era names left in the release path" >&2; exit 1 }
+
+grep -Fq 'branches: [main, stable]' .github/workflows/release.yml
 grep -Fq 'refs/heads/main) channel=continuous' .github/workflows/release.yml
-grep -Fq 'refs/heads/release) channel=stable' .github/workflows/release.yml
+grep -Fq 'refs/heads/stable) channel=stable' .github/workflows/release.yml
+grep -Fq 'N2_BUILD_NUMBER: ${{ github.run_number }}' .github/workflows/release.yml
 grep -Fq 'npx semantic-release' .github/workflows/release.yml
-grep -Fq '"branches": ["release", { "name": "main", "prerelease": "continuous" }]' .releaserc.json
+grep -Fq '"branches": ["stable", { "name": "main", "prerelease": "continuous" }]' .releaserc.json
 grep -Fq 'release-prepare.sh ${nextRelease.version}' .releaserc.json
 grep -Fq 'publish-appcast.sh ${nextRelease.version} ${nextRelease.gitTag}' .releaserc.json
 grep -Fq 'cp N2Agents.zip "N2Agents-${channel}-${version}.zip"' scripts/release-prepare.sh
 grep -Fq '@executable_path/../Frameworks' Package.swift
-grep -Fq 'push origin HEAD:appcasts' scripts/publish-appcast.sh
+grep -Fq 'push --quiet "$remote" HEAD:appcasts' scripts/publish-appcast.sh
 grep -Fq 'allowedChannels' tray/main.swift
 grep -Fq 'UpdateChannel.preferenceKey' tray/main.swift
 

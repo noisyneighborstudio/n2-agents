@@ -15,8 +15,13 @@ struct Vendor {
     let desktop: String     // "clone" | "launch" | "none"
     let usage: String       // "oauth" | "none"
     let label: String
+    let sessions: String    // transcript layout, "none" when agents can't read them
+    let monogram: String    // two-letter tile the panel draws for the lab
+    let desktopName: String // its desktop app, "" when it has none
+    let desktopBundle: String // that app's bundle id
 
     var hasUsageAPI: Bool { usage == "oauth" }
+    var hasSessions: Bool { sessions != "none" }
     var clonesDesktopApp: Bool { desktop == "clone" }
 }
 
@@ -34,6 +39,16 @@ struct Snapshot {
     let vendors: [Vendor]
     let profiles: [ProfileRow]
     let active: String
+    /// profile -> vendor -> slot directory / signed-in account, from S rows.
+    var slotDirs: [String: [String: String]] = [:]
+    var accounts: [String: [String: String]] = [:]
+    /// true / false = the slot does / doesn't hold a login; absent = can't tell.
+    var signedIn: [String: [String: Bool]] = [:]
+    /// The last slot `agents run` started; next best starts after it.
+    var lastSlot: (profile: String, vendor: String)?
+
+    func account(_ profile: String, _ vendor: String) -> String? { accounts[profile]?[vendor] }
+    func slotDir(_ profile: String, _ vendor: String) -> String? { slotDirs[profile]?[vendor] }
 
     var installedVendors: [Vendor] { vendors.filter { $0.installed } }
     func vendor(_ id: String) -> Vendor? { vendors.first { $0.id == id } }
@@ -46,13 +61,21 @@ struct Snapshot {
         var vendors: [Vendor] = []
         var profiles: [ProfileRow] = []
         var active = "Default"
+        var slotDirs: [String: [String: String]] = [:]
+        var accounts: [String: [String: String]] = [:]
+        var signedIn: [String: [String: Bool]] = [:]
+        var lastSlot: (profile: String, vendor: String)?
 
         for line in text.split(separator: "\n") {
             let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
             switch f.first {
             case "V" where f.count >= 7:
                 vendors.append(Vendor(id: f[1], installed: f[2] == "1", isolation: f[3],
-                                      desktop: f[4], usage: f[5], label: f[6]))
+                                      desktop: f[4], usage: f[5], label: f[6],
+                                      sessions: f.count > 7 ? f[7] : "none",
+                                      monogram: f.count > 8 ? f[8] : String(f[1].prefix(2)).uppercased(),
+                                      desktopName: f.count > 9 ? f[9] : "",
+                                      desktopBundle: f.count > 10 ? f[10] : ""))
             case "P" where f.count >= 4:
                 var slots: [String: String] = [:]
                 if f[3] != "-" {
@@ -62,22 +85,50 @@ struct Snapshot {
                     }
                 }
                 profiles.append(ProfileRow(name: f[1], desktopRunning: f[2] == "1", slots: slots))
+            case "S" where f.count >= 5:
+                slotDirs[f[1], default: [:]][f[2]] = f[3]
+                if !f[4].isEmpty { accounts[f[1], default: [:]][f[2]] = f[4] }
+                if f.count > 5, f[5] != "unknown" { signedIn[f[1], default: [:]][f[2]] = f[5] == "yes" }
+            case "L" where f.count >= 3:
+                lastSlot = (f[1], f[2])
             case "A" where f.count >= 2:
                 active = f[1]
             default:
                 continue
             }
         }
-        return Snapshot(vendors: vendors, profiles: profiles, active: active)
+        return Snapshot(vendors: vendors, profiles: profiles, active: active,
+                        slotDirs: slotDirs, accounts: accounts, signedIn: signedIn, lastSlot: lastSlot)
+    }
+}
+
+// One row of `agents sessions --porcelain`: a resumable transcript in some
+// profile's slot for some lab, newest first.
+struct SessionInfo {
+    let profile: String
+    let vendor: String
+    let id: String
+    let mtime: Date
+    let cwd: String?
+    let snippet: String
+
+    static func parse(_ text: String) -> [SessionInfo] {
+        text.split(separator: "\n").compactMap { line in
+            let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard f.count >= 6, let epoch = TimeInterval(f[3]) else { return nil }
+            return SessionInfo(profile: f[0], vendor: f[1], id: f[2],
+                               mtime: Date(timeIntervalSince1970: epoch),
+                               cwd: f[4].isEmpty ? nil : f[4], snippet: f[5])
+        }
     }
 }
 
 // One line of `agents setup --porcelain`:
-//   S <vendor> <installed 0|1> <absent|real|linked> <signed-in 1|0|?> <label> <install hint>
+//   S <vendor> <installed 0|1> <absent|real|linked> <signed-in yes|no|unknown> <label> <install hint>
 //
 // "real" means the vendor's dot dir is still a plain directory — a login N2
 // Agents doesn't manage yet. "linked" means it is a symlink into a profile
-// slot. "?" is a vendor that keeps its token where nothing on disk can see it.
+// slot. "unknown" is a vendor that keeps its token where nothing on disk can see it.
 struct SetupRow {
     let id: String
     let installed: Bool
@@ -100,13 +151,13 @@ struct SetupRow {
         }
     }
 
-    var isReady: Bool { installed && state == "linked" && signedIn != "0" }
+    var isReady: Bool { installed && state == "linked" && signedIn != "no" }
 
     // Exactly one thing to do next per row, or nothing when it is ready.
     var action: Action? {
         if !installed { return .install(hint: installHint) }
         if state == "real" { return .adopt }
-        if signedIn == "0" || signedIn == "?" { return .signIn }
+        if signedIn != "yes" { return .signIn }
         return nil
     }
 
@@ -114,12 +165,12 @@ struct SetupRow {
         if !installed { return "Not installed" }
         let login: String
         switch signedIn {
-        case "1": login = "Signed in"
-        case "?": login = "Sign-in state unknown"
+        case "yes": login = "Signed in"
+        case "unknown": login = "Sign-in state unknown"
         default: login = "Not signed in"
         }
         switch state {
-        case "linked": return signedIn == "1" ? "Ready" : login
+        case "linked": return signedIn == "yes" ? "Ready" : login
         case "real": return "\(login) · not managed yet"
         default: return "Never run"
         }

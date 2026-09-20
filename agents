@@ -6,15 +6,17 @@
 #   agents vendors                        labs found on this machine, and how each isolates
 #   agents active [--vendor <v>]          print the active profile
 #   agents use <Profile|Default> [--vendor <v>]
-#   agents run <Profile|--next|--best> [--vendor <v>] [--start-from-session=<id>] [args]
-#   agents best [--vendor <v>]            per-profile usage (5h/7d windows)
+#   agents run [Profile|--next|--best] [--vendor <v>] [--start-from-session=<id>] [args]   (unsaid = next best)
+#   agents best [--vendor <v>] [--porcelain]  per-profile usage (5h/7d windows)
 #   agents new <Name> [--vendors a,b] [--cli-only]
 #   agents delete <Name> [--everything] [--yes]
 #   agents repatch [Name]                 rebuild Claude clone(s) after an update
 #   agents adopt [--yes]                  import existing `claudes` profiles (shared, not copied)
-#   agents sessions [Profile] [--vendor <v>]
+#   agents login <Profile> [--vendor <v>] [--switch]  sign that slot out and back in
+#   agents authed <Profile>               per slot: signed in yes|no|unknown
+#   agents sessions [Profile] [--vendor <v>] [--porcelain [--limit N]]
 #   agents transfer <id> --to <Profile>|--next|--best [--from <Profile>] [--vendor <v>]
-#   agents desktop [Name|--next|--best] [--vendor <v>]
+#   agents desktop [Name|--next|--best] [--vendor <v>] [--switch]
 #   agents shims [--remove]               sync <vendor>-<profile> commands on PATH
 #   agents setup [adopt <v> | login <v>]  first-run: find installed labs, keep their logins, sign in
 #   agents app-path                       print the Claude Desktop bundle path
@@ -78,9 +80,10 @@ one_vendor() {
     echo "$v"
     return 0
   fi
-  v=$(vendors_installed | head -1)
-  [ -n "$v" ] || die "no supported agent CLI found on PATH (looked for: $N2_VENDORS)"
-  echo "$v"
+  # Never the first lab in the table: that quietly made one lab everyone's
+  # default. Commands that can do better than asking (run, sessions, best,
+  # transfer, desktop) decide for themselves before they get here.
+  die "which lab? pass --vendor <$(vendors_installed | tr '\n' '|' | sed 's/|$//')>"
 }
 
 # --- Claude Desktop --------------------------------------------------------
@@ -393,7 +396,7 @@ usage_table() {  # vendor
   [ -n "$ut_args" ] || return 0
   # shellcheck disable=SC2086
   /usr/bin/python3 - $ut_args <<'PYEOF'
-import hashlib, json, subprocess, sys, time, urllib.request
+import hashlib, json, subprocess, sys, time, urllib.error, urllib.request
 
 def creds(cfg, is_default):
     # Keychain service is "Claude Code-credentials[-<sha256(cfgdir)[:8]>]";
@@ -438,22 +441,28 @@ for pair in sys.argv[1:]:
         five = r.get('five_hour') or {}
         seven = r.get('seven_day') or {}
         print(f"{name}\t{five.get('utilization', '-')}\t{seven.get('utilization', '-')}"
-              f"\t{(five.get('resets_at') or '-')[:16]}\tok")
+              f"\t{(five.get('resets_at') or '-')[:16]}\tok\t{(seven.get('resets_at') or '-')[:16]}")
+    except urllib.error.HTTPError as e:
+        print(f"{name}\t-\t-\t-\t{'rate-limited' if e.code == 429 else 'fetch-error'}")
     except Exception:
         print(f"{name}\t-\t-\t-\tfetch-error")
 PYEOF
 }
 
-# Lowest 5-hour utilization wins; ties fall to 7-day, then list order.
+# Lowest 5-hour utilization wins; ties fall to 7-day, then list order. A
+# maxed profile (95%+ in either window — the last few points are unusable)
+# is out of the running exactly like one with a bad token.
 # Updates the rotation pointer so --next continues from the pick.
 # $1 vendor, $2 (optional): profile to exclude (a resumed session's source).
 pick_best() {
   pb_best="" pb_five=101 pb_seven=101
-  while IFS="$(printf '\t')" read -r n five seven _ note; do
+  while IFS="$(printf '\t')" read -r n five seven _ note _; do
     [ "$note" = ok ] || continue
     [ "$n" = "${2:-}" ] && continue
     f=${five%.*} s=${seven%.*}
     case $f in ''|*[!0-9]*) continue ;; esac
+    case $s in ''|*[!0-9]*) s=0 ;; esac
+    [ "$f" -ge 95 ] || [ "$s" -ge 95 ] && continue
     if [ "$f" -lt "$pb_five" ] || { [ "$f" -eq "$pb_five" ] && [ "$s" -lt "$pb_seven" ]; }; then
       pb_best=$n pb_five=$f pb_seven=$s
     fi
@@ -466,16 +475,33 @@ EOF
   echo "$pb_best"
 }
 
+# --porcelain prints usage_table's rows untouched — the tray's quota meters
+# parse it, so like `agents porcelain` it is a contract, not a display:
+#   <profile> <5h%> <7d%> <5h-resets UTC> <note: ok|no-token|stale-token|rate-limited|fetch-error|no-usage-api> [<7d-resets UTC>]
 cmd_best() {
-  vsel=""
+  vsel="" porcelain=0
   while [ $# -gt 0 ]; do
     case $1 in
       --vendor) vsel=${2:-}; shift 2 ;;
       --vendor=*) vsel=${1#--vendor=}; shift ;;
+      --porcelain) porcelain=1; shift ;;
       *) shift ;;
     esac
   done
+  if [ -z "$vsel" ]; then
+    # Every lab that reports usage, not whichever sorts first.
+    bv=$(for x in $(vendors_installed); do [ "$(vendor_usage "$x")" = oauth ] && echo "$x"; done; true)
+    [ -n "$bv" ] || die "none of the installed labs reports usage"
+    for x in $bv; do
+      if [ "$porcelain" = 1 ]; then cmd_best --vendor "$x" --porcelain; else cmd_best --vendor "$x"; fi
+    done
+    return 0
+  fi
   v=$(one_vendor "$vsel")
+  if [ "$porcelain" = 1 ]; then
+    usage_table "$v"
+    return 0
+  fi
   if [ "$(vendor_usage "$v")" != oauth ]; then
     echo "$(vendor_label "$v") exposes no usage API — there is nothing to rank." >&2
     echo "Vendors with usage data: $(for x in $N2_VENDORS; do [ "$(vendor_usage "$x")" = oauth ] && printf '%s ' "$x"; done)" >&2
@@ -483,16 +509,98 @@ cmd_best() {
   fi
   echo "vendor: $v"
   printf '%-14s %6s %6s %-18s %s\n' "PROFILE" "5H%" "7D%" "5H RESETS (UTC)" "NOTE"
-  usage_table "$v" | while IFS="$(printf '\t')" read -r n five seven resets note; do
+  usage_table "$v" | while IFS="$(printf '\t')" read -r n five seven resets note _; do
     [ "$note" = ok ] && note=""
     printf '%-14s %6s %6s %-18s %s\n' "$n" "$five" "$seven" "$resets" "$note"
   done
 }
 
+# --- next best -------------------------------------------------------------
+
+# What runs when you don't say which profile or lab — no lab is anyone's
+# default. Every slot (one profile's login for one lab) sits in one rotation:
+# profiles in list order, labs in table order. `run` records the last slot it
+# started; "next best" is the first usable slot after it, wrapping round, so
+# work spreads across accounts and labs. Usable: signed in (or a lab that
+# keeps its login out of sight), and — for a lab that reports quota — read
+# cleanly and under 95% in both windows.
+slot_file="$root/.last-slot"
+
+remember_slot() {  # profile, vendor
+  mkdir -p "$root"
+  printf '%s:%s' "$1" "$2" > "$slot_file"
+}
+
+# usage_table rows, each prefixed with its vendor, for the labs that report usage.
+usage_rows() {  # vendors
+  for ur_v in $1; do
+    [ "$(vendor_usage "$ur_v")" = oauth ] || continue
+    usage_table "$ur_v" | sed "s/^/$ur_v	/"
+  done
+}
+
+slot_signed_in() {  # profile, vendor — yes or can't tell
+  si_d=$(config_dir "$1" "$2")
+  [ -d "$si_d" ] || return 1
+  if vendor_authed "$2" "$si_d" "$1"; then return 0; elif [ $? = 1 ]; then return 1; fi
+  return 0
+}
+
+slot_has_room() {  # profile, vendor, usage rows
+  [ "$(vendor_usage "$2")" = oauth ] || return 0
+  su_row=$(printf '%s\n' "$3" | awk -F'\t' -v v="$2" -v n="$1" '$1 == v && $2 == n' | head -1)
+  [ -n "$su_row" ] || return 1
+  IFS="$(printf '\t')" read -r _ _ su_f su_s _ su_note _ <<EOF
+$su_row
+EOF
+  [ "$su_note" = ok ] || return 1
+  su_f=${su_f%.*} su_s=${su_s%.*}
+  case $su_f in ''|*[!0-9]*) su_f=0 ;; esac
+  case $su_s in ''|*[!0-9]*) su_s=0 ;; esac
+  [ "$su_f" -lt 95 ] && [ "$su_s" -lt 95 ]
+}
+
+next_best() {  # profiles, vendors -> "profile vendor"; fails when nothing is usable
+  nb_slots=$(for n in $1; do for v in $2; do
+    vendor_installed "$v" && [ -d "$(config_dir "$n" "$v")" ] && echo "$n:$v"
+  done; done; true)
+  [ -n "$nb_slots" ] || return 1
+  nb_last=""
+  [ -f "$slot_file" ] && nb_last=$(cat "$slot_file" 2>/dev/null)
+  # The slots after the last one started, then round to it.
+  nb_order=$(printf '%s\n' "$nb_slots" | awk -v last="$nb_last" \
+    '{ a[NR] = $0; if ($0 == last) at = NR } END { for (i = 1; i <= NR; i++) print a[(at + i - 1) % NR + 1] }')
+  # Quota is a network read, so it's fetched once, and only when a signed-in
+  # slot of a lab that reports it comes up.
+  nb_rows="" nb_fetched=0
+  for s in $nb_order; do
+    nb_n=${s%%:*} nb_v=${s#*:}
+    slot_signed_in "$nb_n" "$nb_v" || continue
+    if [ "$(vendor_usage "$nb_v")" = oauth ] && [ "$nb_fetched" = 0 ]; then
+      nb_rows=$(usage_rows "$2")
+      nb_fetched=1
+    fi
+    if slot_has_room "$nb_n" "$nb_v" "$nb_rows"; then
+      echo "$nb_n $nb_v"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# The lab a session belongs to, found by looking in every lab that keeps them.
+session_vendor() {  # id, [profile]
+  for sv_v in $(vendors_installed); do
+    [ "$(vendor_sessions "$sv_v")" != none ] || continue
+    find_session "$1" "$sv_v" ${2:+"$2"} >/dev/null && { echo "$sv_v"; return 0; }
+  done
+  return 1
+}
+
 # --- run -------------------------------------------------------------------
 
 cmd_run() {
-  usage="usage: agents run <Profile|--next|--best> [--vendor <v>] [--start-from-session=<id>] [args...]"
+  usage="usage: agents run [Profile|--next|--best] [--vendor <v>] [--start-from-session=<id>] [args...]"
   name="" sess="" rotate=0 best=0 vsel="" switch=0
   while [ $# -gt 0 ]; do
     case $1 in
@@ -507,7 +615,23 @@ cmd_run() {
     esac
   done
   picks=$(( (rotate + best) + $( [ -n "$name" ] && echo 1 || echo 0 ) ))
-  [ "$picks" = 1 ] || die "$usage (pick exactly one of a profile name, --next, --best)"
+  [ "$picks" -le 1 ] || die "$usage (pick at most one of a profile name, --next, --best)"
+  if [ -n "$name" ]; then
+    want=$name; name=$(resolve_profile "$want") || die "no profile named '$want' (see: agents list)"
+  fi
+  # A resumed session already says which lab it belongs to.
+  if [ -z "$vsel" ] && [ -n "$sess" ]; then
+    vsel=$(session_vendor "$sess") || die "session $sess not found in any profile"
+  fi
+  # Whatever wasn't said — the profile, the lab, or both — comes from next best.
+  if [ -z "$vsel" ] || [ "$picks" = 0 ]; then
+    if [ -n "$name" ]; then nb_p=$name; else nb_p=$(all_profiles); fi
+    if [ -n "$vsel" ]; then nb_v=$(one_vendor "$vsel"); else nb_v=$(vendors_installed); fi
+    pick=$(next_best "$nb_p" "$nb_v") || \
+      die "nothing usable — no slot is signed in with room left (see: agents list, agents best)"
+    name=${pick% *} vsel=${pick#* } rotate=0 best=0
+    echo "agents: next best is $(vendor_label "$vsel") in '$name'" >&2
+  fi
 
   v=$(one_vendor "$vsel")
   cli=$(vendor_cli "$v")
@@ -536,18 +660,8 @@ cmd_run() {
     die "profile '$name' has no $v slot — create it: agents new $name --vendors $v"
   fi
 
-  # A swap-only vendor cannot be pinned per-process: there is no env var to set,
-  # so the only way to run it as this profile is to make the profile active.
-  # That is a global side effect, so it needs an explicit --switch.
-  if [ "$(vendor_isolation "$v")" = swap ]; then
-    cur=$(active_profile "$v")
-    if [ "$cur" != "$name" ]; then
-      [ "$switch" = 1 ] || die "$(vendor_label "$v") has no config-dir env var, so '$name' must be the active profile (currently '$cur').
-  Switch globally and run:  agents run $name --vendor $v --switch
-  Or switch on its own:     agents use $name --vendor $v"
-      switch_vendor "$name" "$v" >&2
-    fi
-  fi
+  pin_swap_vendor "$name" "$v" "$switch" run
+  remember_slot "$name" "$v"
 
   if [ -n "$sess" ]; then
     [ "$src" = "$name" ] || cmd_transfer "$sess" --from "$src" --to "$name" --vendor "$v" >&2
@@ -561,6 +675,19 @@ cmd_run() {
     exec_vendor "$v" "$cfg" "$cli" "$(resume_flag "$v")" "$sess" "$@"
   fi
   exec_vendor "$v" "$cfg" "$cli" "$@"
+}
+
+# A swap-only vendor cannot be pinned per-process: there is no env var to set,
+# so the only way to run it as this profile is to make the profile active.
+# That is a global side effect, so it needs an explicit --switch.
+pin_swap_vendor() {  # profile, vendor, switch 0|1, command name for the hint
+  [ "$(vendor_isolation "$2")" = swap ] || return 0
+  ps_cur=$(active_profile "$2")
+  [ "$ps_cur" != "$1" ] || return 0
+  [ "$3" = 1 ] || die "$(vendor_label "$2") has no config-dir env var, so '$1' must be the active profile (currently '$ps_cur').
+  Switch globally and run:  agents $4 $1 --vendor $2 --switch
+  Or switch on its own:     agents use $1 --vendor $2"
+  switch_vendor "$1" "$2" >&2
 }
 
 resume_flag() {
@@ -588,6 +715,66 @@ exec_vendor() {  # vendor, cfg, cli, args...
     exec env "$ev_env=$ev_val" "$@"
   fi
   exec "$@"
+}
+
+# --- login -----------------------------------------------------------------
+
+# Sign one slot out of its lab and straight back in — for when the wrong
+# account got used. Goes through the CLI's own logout/login, pinned exactly as
+# `run` pins it, so the new credentials land where that CLI will look for them.
+# Interactive (browser OAuth), so it belongs in a terminal.
+cmd_login() {
+  usage="usage: agents login <Profile> [--vendor <v>] [--switch]"
+  name="" vsel="" switch=0
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --switch) switch=1; shift ;;
+      --vendor) vsel=${2:-}; shift 2 ;;
+      --vendor=*) vsel=${1#--vendor=}; shift ;;
+      -*) die "unknown flag: $1" ;;
+      *) name=$1; shift ;;
+    esac
+  done
+  [ -n "$name" ] || die "$usage"
+  want=$name; name=$(resolve_profile "$want") || die "no profile named '$want' (see: agents list)"
+  # Signing out is never a guess: say which lab.
+  [ -n "$vsel" ] || die "which lab? agents login $name --vendor <$(profile_vendors "$name" | tr '\n' '|' | sed 's/|$//')>"
+  v=$(one_vendor "$vsel")
+  cli=$(vendor_cli "$v")
+  command -v "$cli" >/dev/null 2>&1 || \
+    die "$(vendor_label "$v") CLI not found — install it: $(vendor_install_hint "$v")"
+  cfg=$(config_dir "$name" "$v")
+  [ -d "$cfg" ] || die "profile '$name' has no $v slot — create it: agents new $name --vendors $v"
+  pin_swap_vendor "$name" "$v" "$switch" login
+
+  out_args=$(vendor_logout "$v")
+  if vendor_authed "$v" "$cfg" "$name"; then authed=0; else authed=$?; fi
+  if [ "$authed" = 1 ]; then
+    :  # nothing to sign out of — a slot being set up for the first time
+  elif [ -n "$out_args" ]; then
+    echo "Signing $(vendor_label "$v") out of '$name'…"
+    # shellcheck disable=SC2086
+    ( exec_vendor "$v" "$cfg" "$cli" $out_args ) || \
+      echo "agents: '$cli $out_args' reported an error — signing in anyway" >&2
+  else
+    echo "Signing $(vendor_label "$v") out of '$name'…"
+    for f in $(vendor_cred_files "$v"); do rm -f "$cfg/$f"; done
+  fi
+  echo "Now sign in with the account '$name' should use."
+  in_args=$(vendor_login "$v")
+  if [ -z "$in_args" ]; then
+    exec_vendor "$v" "$cfg" "$cli"   # no login subcommand: the CLI asks on start
+  fi
+  echo "(The browser signs in with whatever account it's already using — switch it there first if needed.)"
+  # shellcheck disable=SC2086
+  ( exec_vendor "$v" "$cfg" "$cli" $in_args ) || die "sign-in did not complete"
+  who=$(vendor_whoami "$v")
+  if [ -n "$who" ]; then
+    echo ""
+    echo "'$name' $(vendor_label "$v") is now:"
+    # shellcheck disable=SC2086
+    ( exec_vendor "$v" "$cfg" "$cli" $who ) || true
+  fi
 }
 
 # --- shims -----------------------------------------------------------------
@@ -651,6 +838,13 @@ cmd_shims() {
   trap cleanup_shim_lock 0
   trap 'exit 1' 1 2 15
 
+  # Ours = pointing at this install's agent-as, or at the one inside the
+  # pre-rename N2Agents.app, which the next sync re-points here.
+  our_shim() {
+    case $(readlink "$1") in "$src"|*/N2Agents.app/Contents/Resources/agent-as) return 0 ;; esac
+    return 1
+  }
+
   wanted=""
   if [ "$remove" = 0 ]; then
     [ -x "$src" ] || die "shim script missing: $src"
@@ -674,7 +868,7 @@ cmd_shims() {
     for v in $N2_VENDORS; do
       for f in "$prune_dir/$v"-*; do
         [ -L "$f" ] || continue
-        [ "$(readlink "$f")" = "$src" ] || continue
+        our_shim "$f" || continue
         if [ "$prune_dir" != "$dir" ] || ! printf '%s\n' "$wanted" | grep -qx "$(basename "$f")"; then
           rm -f "$f"
           echo "✓ removed $f"
@@ -692,7 +886,7 @@ cmd_shims() {
       continue
     fi
     if [ -e "$dir/$b" ] || [ -L "$dir/$b" ]; then
-      if [ ! -L "$dir/$b" ] || [ "$(readlink "$dir/$b")" != "$src" ]; then
+      if [ ! -L "$dir/$b" ] || ! our_shim "$dir/$b"; then
         echo "agents: $dir/$b exists and isn't ours — skipped" >&2
         continue
       fi
@@ -825,11 +1019,6 @@ claude_keychain_service() {  # cfg
   fi
 }
 
-claude_signed_in() {  # cfg
-  security find-generic-password -s "$(claude_keychain_service "$1")" >/dev/null 2>&1 \
-    || [ -s "$1/.credentials.json" ]
-}
-
 # Copy Claude's login to the name it will have under a new config-dir path,
 # so migrating ~/.claude into a profile slot doesn't cost a re-login. Written
 # with the same `security` call Claude Code itself uses, so the item's access
@@ -846,15 +1035,9 @@ claude_share_login() {  # from-cfg, to-cfg
   security add-generic-password -a "${csl_acct:-$USER}" -s "$csl_dst" -w "$csl_secret" -U >/dev/null 2>&1
 }
 
-# 1 signed in, 0 not, ? when the vendor keeps its token where we can't look.
+# yes | no | unknown — the same words `agents authed` uses.
 vendor_signed_in() {  # profile, vendor
-  vsi_cfg=$(config_dir "$1" "$2")
-  if [ "$2" = claude ]; then
-    if claude_signed_in "$vsi_cfg"; then echo 1; else echo 0; fi
-    return 0
-  fi
-  vsi_f=$(vendor_auth_file "$2" "$vsi_cfg")
-  if [ -z "$vsi_f" ]; then echo "?"; elif [ -s "$vsi_f" ]; then echo 1; else echo 0; fi
+  authed_word "$2" "$(config_dir "$1" "$2")" "$1"
 }
 
 # What the vendor's dot dir is right now: never created, a real directory
@@ -896,14 +1079,14 @@ setup_login() {  # vendor
     die "$(vendor_label "$sl_v") has no config-dir env var and '$(active_profile "$sl_v")' is active — run: agents use Default --vendor $sl_v"
   fi
   # shellcheck disable=SC2046
-  exec_vendor "$sl_v" "$sl_cfg" "$(vendor_cli "$sl_v")" $(vendor_login_args "$sl_v")
+  exec_vendor "$sl_v" "$sl_cfg" "$(vendor_cli "$sl_v")" $(vendor_login "$sl_v")
 }
 
 # Machine-readable form for the tray's Setup Assistant:
-#   S <vendor> <installed 0|1> <absent|real|linked> <signed-in 1|0|?> <label> <install hint>
+#   S <vendor> <installed 0|1> <absent|real|linked> <signed-in yes|no|unknown> <label> <install hint>
 setup_porcelain() {
   for v in $N2_VENDORS; do
-    if vendor_installed "$v"; then i=1 signed=$(vendor_signed_in Default "$v"); else i=0 signed=0; fi
+    if vendor_installed "$v"; then i=1 signed=$(vendor_signed_in Default "$v"); else i=0 signed=no; fi
     printf 'S\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$v" "$i" "$(setup_state "$v")" "$signed" "$(vendor_label "$v")" "$(vendor_install_hint "$v")"
   done
@@ -926,7 +1109,7 @@ cmd_setup() {
   printf '%-10s %-10s %-10s %s\n' "VENDOR" "INSTALLED" "SIGNED-IN" "CONFIG DIR"
   for v in $N2_VENDORS; do
     if vendor_installed "$v"; then
-      case $(vendor_signed_in Default "$v") in 1) si=yes ;; 0) si=no ;; *) si=unknown ;; esac
+      si=$(vendor_signed_in Default "$v")
       case $(setup_state "$v") in
         linked) st="managed by N2 Agents" ;;
         real)   st="$(vendor_dot "$v") (not managed yet)" ;;
@@ -948,7 +1131,7 @@ cmd_setup() {
   done
 
   for v in $(vendors_installed); do
-    [ "$(vendor_signed_in Default "$v")" = 0 ] || continue
+    [ "$(vendor_signed_in Default "$v")" = no ] || continue
     printf 'Sign in to %s now? [y/N] ' "$(vendor_label "$v")"
     read -r reply
     case $(lower "$reply") in y*) ( setup_login "$v" ) || echo "  $v: sign-in did not complete" ;; *) ;; esac
@@ -1032,29 +1215,36 @@ warn_unadopted() {
 
 # --- sessions --------------------------------------------------------------
 
-# First "cwd" and first user prompt from the head of a session transcript.
-# Claude and Codex both put cwd in their opening records, so one reader serves
-# both; the prompt key differs, hence the two greps.
+# Working dir and first real prompt of a transcript. Both labs record cwd in
+# their opening records. The prompt is the first text on a user-role line that
+# isn't injected context — Claude's meta lines and <system-reminder>s, Codex's
+# <environment_context>, AGENTS.md and file mentions — and Codex can put 100 KB of setup before it, so this
+# scans whole lines rather than a fixed head.
 session_meta() {  # path -> cwd \t snippet
-  head=$(head -c 16384 "$1" 2>/dev/null || true)
-  cwd=$(printf '%s' "$head" | grep -o '"cwd":"[^"]*"' | head -1 | sed 's/^"cwd":"//; s/"$//')
-  snippet=$(printf '%s' "$head" | grep -o '"content":"[^"]*' | head -1 | cut -c12- | cut -c1-70)
-  if [ -z "$snippet" ]; then
-    snippet=$(printf '%s' "$head" | grep -o '"text":"[^"]*' | head -1 | cut -c9- | cut -c1-70)
-  fi
-  snippet=$(printf '%s' "$snippet" | sed 's/\\[nt]/ /g; s/\\"/"/g')
+  cwd=$(grep -m1 -o '"cwd":"[^"]*"' "$1" 2>/dev/null | sed 's/^"cwd":"//; s/"$//' || true)
+  snippet=$(grep -m 40 '"role":"user"' "$1" 2>/dev/null | grep -v '"isMeta":true' \
+    | grep -o '"\(text\|content\)":"[^"]*' | sed 's/^"[a-z]*":"//' \
+    | grep -v -e '^\(\\n\| \)*<' -e '^\(\\n\| \)*# AGENTS.md instructions' \
+             -e '^\(\\n\| \)*# Files mentioned by the user' -e '^\[Request interrupted' | head -1 || true)
+  # Escapes out, and a markdown link reads as its text ([$skill](/path) -> $skill).
+  snippet=$(printf '%s' "$snippet" | sed 's/\\[nt]/ /g; s/\\"/"/g; s/\[\([^]]*\)\]([^)]*)/\1/g' | cut -c1-70)
   printf '%s\t%s\n' "$cwd" "${snippet:-(no prompt)}"
 }
 
-# Every transcript file for one (profile, vendor), newest first.
-session_files() {  # profile, vendor
-  sf_cfg=$(config_dir "$1" "$2")
-  [ -d "$sf_cfg" ] || return 0
+# Where one (profile, vendor) keeps its transcripts; nothing if it keeps none.
+session_root() {  # profile, vendor
+  sr_cfg=$(config_dir "$1" "$2")
   case $(vendor_sessions "$2") in
-    projects) find "$sf_cfg/projects" -type f -name '*.jsonl' 2>/dev/null ;;
-    sessions) find "$sf_cfg/sessions" -type f -name '*.jsonl' 2>/dev/null ;;
-    *) return 0 ;;
+    projects) echo "$sr_cfg/projects" ;;   # projects/<slug>/<uuid>.jsonl
+    sessions) echo "$sr_cfg/sessions" ;;   # sessions/<y>/<m>/<d>/rollout-*.jsonl
   esac
+}
+
+# Every transcript file for one (profile, vendor).
+session_files() {  # profile, vendor
+  sf_dir=$(session_root "$1" "$2")
+  [ -n "$sf_dir" ] && [ -d "$sf_dir" ] || return 0
+  find "$sf_dir" -type f -name '*.jsonl' 2>/dev/null
 }
 
 # Codex names files rollout-<timestamp>-<uuid>.jsonl; Claude names them <uuid>.jsonl.
@@ -1079,16 +1269,65 @@ find_session() {  # id, vendor, [profile]
   done | head -1 | grep . || return 1
 }
 
+# Machine-readable, newest first, across every profile and every lab whose
+# transcripts we can read unless narrowed. Transcript heads are read only for
+# the rows that survive --limit. A contract for the tray, like `porcelain`:
+#   <profile> <vendor> <session-id> <mtime epoch> <cwd> <first prompt>
+sessions_porcelain() {  # profiles, vendors, limit ("" = all)
+  for sp_n in $1; do
+    for sp_v in $2; do
+      sp_dir=$(session_root "$sp_n" "$sp_v")
+      [ -n "$sp_dir" ] && [ -d "$sp_dir" ] || continue
+      # One stat per batch of files, not per file: profiles hold thousands.
+      find "$sp_dir" -type f -name '*.jsonl' -exec stat -f "%m%t$sp_n%t$sp_v%t%N" {} + 2>/dev/null
+    done
+  done | sort -rn | { if [ -n "$3" ]; then head -n "$3"; else cat; fi; } | \
+  while IFS="$(printf '\t')" read -r sp_m sp_n sp_v sp_f; do
+    printf '%s\t%s\t%s\t%s\t%s\n' "$sp_n" "$sp_v" "$(session_id_of "$sp_f")" "$sp_m" "$(session_meta "$sp_f")"
+  done
+}
+
 cmd_sessions() {
-  name="" vsel=""
+  name="" vsel="" porcelain=0 limit=""
   while [ $# -gt 0 ]; do
     case $1 in
       --vendor) vsel=${2:-}; shift 2 ;;
       --vendor=*) vsel=${1#--vendor=}; shift ;;
+      --porcelain) porcelain=1; shift ;;
+      --limit) limit=${2:-}; shift 2 ;;
       -*) die "unknown flag: $1" ;;
       *) name=$1; shift ;;
     esac
   done
+  if [ "$porcelain" = 1 ]; then
+    case $limit in ''|*[!0-9]*) [ -z "$limit" ] || die "--limit takes a number" ;; esac
+    if [ -n "$name" ]; then
+      want=$name; profiles=$(resolve_profile "$want") || die "no profile named '$want'"
+    else
+      profiles=$(all_profiles)
+    fi
+    if [ -n "$vsel" ]; then
+      vendors=$(one_vendor "$vsel")
+    else
+      vendors=$(for x in $(vendors_installed); do [ "$(vendor_sessions "$x")" != none ] && echo "$x"; done; true)
+    fi
+    sessions_porcelain "$profiles" "$vendors" "$limit"
+    return 0
+  fi
+  if [ -z "$vsel" ]; then
+    # Every lab that keeps sessions, each under its own heading.
+    listed=0
+    for x in $(vendors_installed); do
+      [ "$(vendor_sessions "$x")" != none ] || continue
+      out=$( (cmd_sessions ${name:+"$name"} --vendor "$x") 2>/dev/null) || continue
+      [ "$listed" = 1 ] && echo ""
+      echo "$(vendor_label "$x"):"
+      printf '%s\n' "$out"
+      listed=1
+    done
+    [ "$listed" = 1 ] || die "no sessions in '${name:-Default}'"
+    return 0
+  fi
   v=$(one_vendor "$vsel")
   [ "$(vendor_sessions "$v")" != none ] || \
     die "$(vendor_label "$v") stores sessions in a format agents doesn't read yet"
@@ -1130,6 +1369,9 @@ cmd_transfer() {
   done
   { [ -n "$id" ] && [ -n "$to" ]; } || \
     die "usage: agents transfer <id> --to <Profile>|--next|--best [--from <Profile>] [--vendor <v>]"
+  if [ -z "$vsel" ]; then
+    vsel=$(session_vendor "$id" ${from:+"$from"}) || die "session $id not found in any profile"
+  fi
   v=$(one_vendor "$vsel")
   [ "$(vendor_sessions "$v")" != none ] || \
     die "$(vendor_label "$v") stores sessions in a format agents doesn't move yet"
@@ -1193,33 +1435,53 @@ cmd_transfer() {
 
 # --- desktop ---------------------------------------------------------------
 
+# A profile's desktop app. `clone` labs (Claude) have one app per profile;
+# `launch` labs (Codex) have a single app that signs in as the lab's active
+# profile — launched apps don't inherit env vars, so it can't be pinned — so
+# opening it for another profile makes that profile active, which --switch
+# confirms.
 cmd_desktop() {
-  name="" vsel=""
+  name="" vsel="" switch=0
   while [ $# -gt 0 ]; do
     case $1 in
       --vendor) vsel=${2:-}; shift 2 ;;
       --vendor=*) vsel=${1#--vendor=}; shift ;;
+      --switch) switch=1; shift ;;
       --next|--best) name=$1; shift ;;
       *) name=$1; shift ;;
     esac
   done
+  if [ -z "$vsel" ]; then
+    # Only a lab whose desktop is cloned per profile has a profile's desktop.
+    dv=$(for x in $(vendors_installed); do [ "$(vendor_desktop "$x")" = clone ] && echo "$x"; done; true)
+    [ "$(printf '%s\n' "$dv" | grep -c .)" = 1 ] || die "which lab? pass --vendor <v>"
+    vsel=$dv
+  fi
   v=$(one_vendor "$vsel")
-  case $(vendor_desktop "$v") in
-    none) die "$(vendor_label "$v") has no desktop app" ;;
-    launch)
-      # The vendor ships its own launcher; profile selection follows whatever
-      # its config dir currently points at.
-      exec "$(vendor_cli "$v")" app
-      ;;
-  esac
+  [ "$(vendor_desktop "$v")" != none ] || die "$(vendor_label "$v") has no desktop app"
 
   case ${name:-} in
     --next) name=$(rotation_next); echo "agents: rotating to profile '$name'" >&2 ;;
     --best) name=$(pick_best "$v") || die "no profile with a readable token — run 'agents best' to see why"
             echo "agents: best available profile is '$name'" >&2 ;;
-    "")     name=Default ;;
+    "")     pick=$(next_best "$(all_profiles)" "$v") || die "no profile with room left (see: agents best)"
+            name=${pick% *}
+            echo "agents: next best is '$name'" >&2 ;;
     *)      want=$name; name=$(resolve_profile "$want") || die "no profile named '$want'" ;;
   esac
+  if [ "$(vendor_desktop "$v")" = launch ]; then
+    dapp=$(vendor_desktop_name "$v")
+    [ -n "$(mdfind "kMDItemCFBundleIdentifier == '$(vendor_desktop_bundle "$v")'" 2>/dev/null | head -1)" ] || \
+      die "$dapp isn't installed"
+    cur=$(active_profile "$v")
+    if [ "$cur" != "$name" ]; then
+      [ "$switch" = 1 ] || die "$dapp signs in as $(vendor_label "$v")'s active profile ('$cur'), not per profile.
+  Make '$name' active and open it:  agents desktop $name --vendor $v --switch"
+      switch_vendor "$name" "$v" >&2
+    fi
+    open -b "$(vendor_desktop_bundle "$v")"
+    return 0
+  fi
   if [ "$name" = Default ]; then
     app=$(claude_app_path) || die "Claude Desktop is not installed — get it from https://claude.ai/download"
     open -a "$app"
@@ -1261,19 +1523,38 @@ cmd_app_path() {
 
 cmd_profiles() { all_profiles; }
 
+authed_word() {  # vendor, slot dir, profile
+  if vendor_authed "$1" "$2" "$3"; then echo yes; elif [ $? = 1 ]; then echo no; else echo unknown; fi
+}
+
+# Which of a profile's slots hold a login. Profile setup polls this while its
+# window is open, so it touches nothing but the adapter's cheap check.
+cmd_authed() {
+  [ -n "${1:-}" ] || die "usage: agents authed <Profile>"
+  want=$1; name=$(resolve_profile "$want") || die "no profile named '$want'"
+  for v in $(vendors_installed); do
+    d=$(config_dir "$name" "$v")
+    [ -d "$d" ] || continue
+    printf '%s\t%s\n' "$v" "$(authed_word "$v" "$d" "$name")"
+  done
+}
+
 # Stable TSV for the tray app, so the menu never re-implements any of the logic
 # above. Padding and emoji belong to the human-facing commands; this one is a
 # contract, and it is the only thing the Swift side parses.
 #
-#   V <vendor> <installed 0|1> <isolation> <desktop> <usage> <label>
+#   V <vendor> <installed 0|1> <isolation> <desktop> <usage> <label> <sessions> <monogram> <desktop app name> <desktop bundle id>
 #   P <profile> <desktop-running 0|1> <vendor,vendor,…  or "-">
+#   S <profile> <vendor> <slot-dir> <account or ""> <signed in: yes|no|unknown>   one per slot
+#   L <profile> <vendor>        the last slot `run` started ("next best" starts after it)
 #   A <active-summary>
 cmd_porcelain() {
   for v in $N2_VENDORS; do
     if vendor_installed "$v"; then i=1; else i=0; fi
-    printf 'V\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf 'V\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$v" "$i" "$(vendor_isolation "$v")" "$(vendor_desktop "$v")" \
-      "$(vendor_usage "$v")" "$(vendor_label "$v")"
+      "$(vendor_usage "$v")" "$(vendor_label "$v")" "$(vendor_sessions "$v")" "$(vendor_monogram "$v")" \
+      "$(vendor_desktop_name "$v")" "$(vendor_desktop_bundle "$v")"
   done
   for n in $(all_profiles); do
     if profile_running "$n"; then r=1; else r=0; fi
@@ -1283,14 +1564,19 @@ cmd_porcelain() {
       [ -d "$d" ] || continue
       if [ "$(active_profile "$v")" = "$n" ]; then s="$v:active"; else s="$v:ok"; fi
       if [ -z "$slots" ]; then slots=$s; else slots="$slots,$s"; fi
+      printf 'S\t%s\t%s\t%s\t%s\t%s\n' "$n" "$v" "$d" "$(vendor_account "$v" "$d")" "$(authed_word "$v" "$d" "$n")"
     done
     printf 'P\t%s\t%s\t%s\n' "$n" "$r" "${slots:--}"
   done
+  if [ -f "$slot_file" ]; then
+    ls_slot=$(cat "$slot_file" 2>/dev/null)
+    printf 'L\t%s\t%s\n' "${ls_slot%%:*}" "${ls_slot#*:}"
+  fi
   printf 'A\t%s\n' "$(active_summary)"
 }
 
 cmd_help() {
-  sed -n '3,22p' "$self" | sed 's/^# \{0,3\}//'
+  sed -n '3,24p' "$self" | sed 's/^# \{0,3\}//'
 }
 
 cmd=${1:-help}
@@ -1307,6 +1593,8 @@ case $cmd in
   repatch)  cmd_repatch "$@" ;;
   adopt)    cmd_adopt "$@" ;;
   sessions) cmd_sessions "$@" ;;
+  login)    cmd_login "$@" ;;
+  authed)   cmd_authed "$@" ;;
   transfer) cmd_transfer "$@" ;;
   desktop)  cmd_desktop "$@" ;;
   shims)    cmd_shims "$@" ;;

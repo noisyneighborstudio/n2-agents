@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleExecutable</key>
-	<string>N2AgentsTray</string>
+	<string>N2 Agents</string>
 	<key>CFBundleIconFile</key>
 	<string>n2agents</string>
 	<key>CFBundleIdentifier</key>
 	<string>dev.sethwebster.n2agents</string>
 	<key>CFBundleName</key>
-	<string>N2Agents</string>
+	<string>N2 Agents</string>
 	<key>CFBundleDisplayName</key>
 	<string>N2 Agents</string>
 	<key>CFBundlePackageType</key>
@@ -18,14 +18,21 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
-	<key>N2AgentsStableFeedURL</key>
-	<string>https://raw.githubusercontent.com/noisyneighborstudio/n2-agents/appcasts/stable/appcast.xml</string>
-	<key>N2AgentsContinuousFeedURL</key>
-	<string>https://raw.githubusercontent.com/noisyneighborstudio/n2-agents/appcasts/continuous/appcast.xml</string>
 	<key>SUPublicEDKey</key>
-	<string>N2_SPARKLE_PUBLIC_KEY</string>
+	<string>jL5WemMvOsQ1aLHhC1EYNI6DQD3pxP9AHkBzynOarVg=</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>dev.sethwebster.n2agents</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>n2agents</string>
+			</array>
+		</dict>
+	</array>
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>

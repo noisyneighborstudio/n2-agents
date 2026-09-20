@@ -5,11 +5,11 @@ import Foundation
 @main struct SetupRowTests {
     static func main() {
         let text = """
-        S\tclaude\t1\treal\t1\tClaude Code\tnpm install -g @anthropic-ai/claude-code
-        S\tcodex\t1\tlinked\t0\tCodex\tnpm install -g @openai/codex
-        S\tgrok\t0\tabsent\t0\tGrok\thttps://docs.x.ai/docs/grok-cli
-        S\tcursor\t1\tlinked\t?\tCursor\tcurl https://cursor.com/install -fsS | bash
-        S\thermes\t1\tlinked\t1\tHermes\tcurl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+        S\tclaude\t1\treal\tyes\tClaude Code\tnpm install -g @anthropic-ai/claude-code
+        S\tcodex\t1\tlinked\tno\tCodex\tnpm install -g @openai/codex
+        S\tgrok\t0\tabsent\tno\tGrok\thttps://docs.x.ai/docs/grok-cli
+        S\tcursor\t1\tlinked\tunknown\tCursor\tcurl https://cursor.com/install -fsS | bash
+        S\thermes\t1\tlinked\tyes\tHermes\tcurl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
         X\tsomething a newer CLI emits
         """
         let rows = SetupRow.parse(text)
