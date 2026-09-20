@@ -118,6 +118,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         return home + "/Development/n2-agents"
     }
 
+    /// The PATH the bundled scripts run with, read once per launch (a static
+    /// initialises exactly once, whichever thread asks first).
+    private static let scriptPATH = ShellPath.fromLoginShell()
+        ?? ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
+
+    /// What every bundled script runs in: this process's environment, with a
+    /// PATH that can actually find the labs.
+    private static var scriptEnvironment: [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = scriptPATH
+        return env
+    }
+
     // Claude Desktop is not always in /Applications: a per-user install lands in
     // ~/Applications, and the user can point us at any bundle via "Locate Claude
     // Desktop…". Clones carry a suffixed bundle id, so the base id never matches one.
@@ -439,6 +452,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/zsh")
         task.arguments = [scriptsDir + "/repatch-claude-profiles.sh", name]
+        task.environment = Self.scriptEnvironment
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = pipe
@@ -693,6 +707,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/sh")
         task.arguments = [cliPath] + args
+        task.environment = Self.scriptEnvironment
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = pipe
@@ -868,6 +883,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/zsh")
         task.arguments = [scriptsDir + "/make-claude-profile.sh", name]
+        task.environment = Self.scriptEnvironment
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = pipe

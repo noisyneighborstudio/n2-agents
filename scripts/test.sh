@@ -36,13 +36,16 @@ zsh -n install.sh uninstall.sh make-claude-profile.sh repatch-claude-profiles.sh
 bash -n shell/agents.bash
 command -v fish >/dev/null && fish -n shell/agents.fish
 swiftc -typecheck tray/main.swift tray/UpdateChannel.swift tray/Vendors.swift tray/ProfileColor.swift \
-  tray/PanelModel.swift tray/PanelView.swift tray/ProfileSetup.swift tray/GlassWindow.swift
+  tray/PanelModel.swift tray/PanelView.swift tray/ProfileSetup.swift tray/GlassWindow.swift tray/ShellPath.swift
 swiftc -typecheck tray/icon-badge/main.swift tray/ProfileColor.swift
 swiftc -typecheck scripts/make-icon.swift
 swiftc -typecheck scripts/verify-signature.swift
 channel_test=$(mktemp -d "$TMPDIR/channel.XXXXXX")/update-channel-tests
 swiftc tray/UpdateChannel.swift tests/UpdateChannelTests.swift -o "$channel_test"
 "$channel_test"
+path_test=$(mktemp -d "$TMPDIR/shellpath.XXXXXX")/shell-path-tests
+swiftc tray/ShellPath.swift tests/ShellPathTests.swift -o "$path_test"
+"$path_test"
 
 # --- vendor adapter table --------------------------------------------------
 # The isolation tier is the single most load-bearing fact in the app: an `env`
@@ -364,5 +367,9 @@ grep -Fq 'UpdateChannel.preferenceKey' tray/main.swift
 # The tray must not re-implement profile discovery: it parses the CLI instead.
 grep -Fq 'Snapshot.parse' tray/main.swift
 grep -Fq 'runCLI(["porcelain"])' tray/main.swift
+
+# Every bundled script runs with the login shell's PATH: under launchd's four
+# directories the CLI finds no lab installed and the panel comes back empty.
+[ "$(grep -c 'task.environment = Self.scriptEnvironment' tray/main.swift)" = "$(grep -c 'task.arguments = \[\(cliPath\|scriptsDir\)' tray/main.swift)" ]
 
 echo "All tests passed"
