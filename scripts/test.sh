@@ -372,4 +372,10 @@ grep -Fq 'runCLI(["porcelain"])' tray/main.swift
 # directories the CLI finds no lab installed and the panel comes back empty.
 [ "$(grep -c 'task.environment = Self.scriptEnvironment' tray/main.swift)" = "$(grep -c 'task.arguments = \[\(cliPath\|scriptsDir\)' tray/main.swift)" ]
 
+# The glass never fills its window: the system draws the glass's shadow, and a
+# window cut to the glass's size clips it square — a grey wedge past every
+# rounded corner. It goes in a ShadowMargin, and the frames follow the glass.
+grep -Fq 'contentView = ShadowMargin(' tray/GlassWindow.swift
+grep -Fq 'Self.window(around:' tray/GlassWindow.swift
+
 echo "All tests passed"

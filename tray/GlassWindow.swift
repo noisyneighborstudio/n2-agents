@@ -47,7 +47,7 @@ final class GlassWindow: NSPanel {
         backgroundColor = .clear
         // No window shadow: the glass is composited by the system, so the
         // window server sees a clear rectangle and shades it as one — a grey
-        // square outline around the rounded corners.
+        // square outline around the rounded corners. The glass brings its own.
         hasShadow = false
         isReleasedWhenClosed = false
         hidesOnDeactivate = false
@@ -63,7 +63,8 @@ final class GlassWindow: NSPanel {
         stage.layer?.masksToBounds = true
         content.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin]
         stage.addSubview(content)
-        contentView = Self.glass(around: stage, cornerRadius: cornerRadius)
+        contentView = ShadowMargin(Self.glass(around: stage, cornerRadius: cornerRadius),
+                                   inset: Self.shadowInset)
         // Follow the SwiftUI content's size, top edge held still so it grows
         // downward. Coalesced onto the next turn of the run loop: the size is
         // reported mid-layout, and resizing the window there would re-enter it.
@@ -76,6 +77,22 @@ final class GlassWindow: NSPanel {
                 self?.fit(recenter: false)
             }
         }
+    }
+
+    /// Room left around the glass for the shadow the system draws with it.
+    /// A window cut to the glass's own size clips that shadow at the window's
+    /// square corners, leaving a grey wedge past each rounded one. Short of the
+    /// shadow's full reach on purpose — the tail is what made it heavy — but
+    /// well past 6, where the clip starts to show as an edge. The fallback
+    /// material draws no shadow, so it needs no margin.
+    private static let shadowInset: CGFloat = {
+        if #available(macOS 26.0, *) { return 12 }
+        return 0
+    }()
+
+    /// The window frame that puts the glass exactly at `rect`.
+    private static func window(around rect: NSRect) -> NSRect {
+        rect.insetBy(dx: -shadowInset, dy: -shadowInset)
     }
 
     private static func glass(around view: NSView, cornerRadius: CGFloat) -> NSView {
@@ -149,10 +166,13 @@ final class GlassWindow: NSPanel {
     }
 
     /// Where an unfurl starts and a furl ends: centred on the same top edge,
-    /// 55% as wide and header-high.
+    /// 55% as wide and header-high. Measured on the glass, not the window that
+    /// carries its shadow margin.
     private func furled(_ full: NSRect) -> NSRect {
-        let width = (full.width * 0.55).rounded(), height = min(44, full.height)
-        return NSRect(x: full.midX - width / 2, y: full.maxY - height, width: width, height: height)
+        let glass = full.insetBy(dx: Self.shadowInset, dy: Self.shadowInset)
+        let width = (glass.width * 0.55).rounded(), height = min(44, glass.height)
+        return Self.window(around: NSRect(x: glass.midX - width / 2, y: glass.maxY - height,
+                                          width: width, height: height))
     }
 
     /// Transient: furls back up and hides, ready to show again (160 ms).
@@ -209,18 +229,46 @@ final class GlassWindow: NSPanel {
             if let visible = (buttonWindow.screen ?? NSScreen.main)?.visibleFrame {
                 x = min(max(x, visible.minX + 8), visible.maxX - size.width - 8)
             }
-            setFrame(NSRect(x: x, y: anchor.minY - 6 - size.height, width: size.width, height: size.height),
+            setFrame(Self.window(around: NSRect(x: x, y: anchor.minY - 6 - size.height,
+                                                width: size.width, height: size.height)),
                      display: true)
         case .floating:
+            let full = NSSize(width: size.width + Self.shadowInset * 2,
+                              height: size.height + Self.shadowInset * 2)
             if recenter || frame.size == .zero {
-                setContentSize(size)
+                setContentSize(full)
                 center()
             } else {
-                let top = frame.maxY
-                setFrame(NSRect(x: frame.minX, y: top - size.height, width: size.width, height: size.height),
+                setFrame(NSRect(x: frame.minX, y: frame.maxY - full.height,
+                                width: full.width, height: full.height),
                          display: true, animate: false)
             }
         }
+    }
+}
+
+/// Holds the glass inset inside a larger, transparent window, so the shadow
+/// the system draws with the glass has somewhere to land. The margin is
+/// untouchable: clicks in it reach whatever is behind, as they would past the
+/// edge of a popover — and for the panel, that click is what dismisses it.
+private final class ShadowMargin: NSView {
+    private let inset: CGFloat
+
+    init(_ glass: NSView, inset: CGFloat) {
+        self.inset = inset
+        super.init(frame: .zero)
+        addSubview(glass)
+    }
+
+    required init?(coder: NSCoder) { fatalError("not decoded") }
+
+    override func layout() {
+        super.layout()
+        subviews.first?.frame = bounds.insetBy(dx: inset, dy: inset)
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        frame.insetBy(dx: inset, dy: inset).contains(point) ? super.hitTest(point) : nil
     }
 }
 
