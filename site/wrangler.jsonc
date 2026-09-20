@@ -1,0 +1,22 @@
+{
+  // N2 Agents, the marketing site. Static assets, plus one Worker route
+  // (/og.png) that renders the link-unfurl card.
+  //   npx wrangler deploy        (from this directory)
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "n2-agents-site",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-19",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "404-page"
+  },
+  // Lets `import font from './fonts/x.ttf'` hand the bytes to satori.
+  "rules": [
+    { "type": "Data", "globs": ["**/*.ttf"], "fallthrough": true }
+  ],
+  "routes": [
+    { "pattern": "agents.noisyneighbor.studio", "custom_domain": true }
+  ],
+  "observability": { "enabled": true }
+}
