@@ -107,6 +107,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
     )
 #endif
 
+    // First-launch flow; reachable later from 🤖 → Setup Assistant…
+    private lazy var setupAssistant = SetupAssistant(
+        cliPath: cliPath,
+        run: { [unowned self] args in self.runCLI(args) },
+        openInTerminal: { [unowned self] cmd, slug in self.launchSession(cmd, slug: slug, in: self.preferredTerminal) })
+
     private var autoRepatchEnabled: Bool {
         get { UserDefaults.standard.object(forKey: "autoRepatch") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "autoRepatch") }
@@ -164,6 +170,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         // list — real executables, so apps and scripts get them too, and
         // upgrades from a shell-function-only version heal themselves.
         DispatchQueue.global(qos: .utility).async { self.runCLI(["shims"]) }
+
+        // First launch: find the CLIs already here and keep their logins, before
+        // the user discovers a profile command that isn't signed in.
+        if !UserDefaults.standard.bool(forKey: SetupAssistant.completedKey) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.setupAssistant.show() }
+        }
 
 #if canImport(Sparkle)
         // Sparkle owns automatic scheduling and signature verification. Both
@@ -264,6 +276,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         // profile is just a config dir — creating one must stay possible.
         menu.addItem(actionItem(claudeInstalled ? "New Profile…" : "New Profile (Claude Code only)…",
                                 #selector(newProfile(_:)), nil))
+        menu.addItem(actionItem("Setup Assistant…", #selector(showSetupAssistant(_:)), nil))
         if claudeInstalled {
             menu.addItem(actionItem("Re-patch All (after Claude update)", #selector(repatchAll(_:)), nil))
         }
@@ -502,6 +515,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         }
         UserDefaults.standard.set(path, forKey: "claudeAppPath")
         autoRepatchTick()
+    }
+
+    @objc private func showSetupAssistant(_ sender: NSMenuItem) {
+        setupAssistant.show()
     }
 
     @objc private func downloadClaude(_ sender: NSMenuItem) {

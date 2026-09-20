@@ -15,13 +15,39 @@ export SWIFT_MODULECACHE_PATH="$test_root/cache/swift"
 # from touching a real login.
 fake_bin="$test_root/fake-bin"
 mkdir -p "$fake_bin"
-for v in claude codex grok gemini cursor-agent opencode; do
+for v in claude codex grok gemini cursor-agent opencode hermes; do
   cat > "$fake_bin/$v" <<'FAKE'
 #!/bin/sh
-echo "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-} CODEX_HOME=${CODEX_HOME:-} GROK_HOME=${GROK_HOME:-} CURSOR_CONFIG_DIR=${CURSOR_CONFIG_DIR:-} XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-}"
+echo "args=[$*] CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-} CODEX_HOME=${CODEX_HOME:-} GROK_HOME=${GROK_HOME:-} CURSOR_CONFIG_DIR=${CURSOR_CONFIG_DIR:-} XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-} HERMES_HOME=${HERMES_HOME:-}"
 FAKE
   chmod +x "$fake_bin/$v"
 done
+# Fake `security`: the keychain is a directory of files named after the
+# service, first line the account, second the secret. Shadows /usr/bin/security
+# so the setup tests never read or write a real keychain item.
+cat > "$fake_bin/security" <<'FAKE'
+#!/bin/sh
+cmd=$1; shift; svc="" acct="" pw="" want_pw=0
+while [ $# -gt 0 ]; do
+  case $1 in
+    -s) svc=$2; shift 2 ;;
+    -a) acct=$2; shift 2 ;;
+    -w) if [ "$cmd" = add-generic-password ]; then pw=$2; shift 2; else want_pw=1; shift; fi ;;
+    *) shift ;;
+  esac
+done
+f="$FAKE_KEYCHAIN/$svc"
+case $cmd in
+  find-generic-password)
+    [ -f "$f" ] || exit 44
+    if [ $want_pw = 1 ]; then sed -n 2p "$f"; else printf '    "acct"<blob>="%s"\n    "svce"<blob>="%s"\n' "$(sed -n 1p "$f")" "$svc"; fi ;;
+  add-generic-password) printf '%s\n%s\n' "$acct" "$pw" > "$f" ;;
+  *) exit 1 ;;
+esac
+FAKE
+chmod +x "$fake_bin/security"
+export FAKE_KEYCHAIN="$test_root/keychain"
+mkdir -p "$FAKE_KEYCHAIN"
 fake_path="$fake_bin:/usr/bin:/bin"
 
 # --- syntax ----------------------------------------------------------------
@@ -31,11 +57,14 @@ zsh -n install.sh uninstall.sh make-claude-profile.sh repatch-claude-profiles.sh
   scripts/publish-appcast.sh shell/agents.zsh
 bash -n shell/agents.bash
 command -v fish >/dev/null && fish -n shell/agents.fish
-swiftc -typecheck tray/main.swift tray/UpdateChannel.swift tray/Vendors.swift
+swiftc -typecheck tray/main.swift tray/UpdateChannel.swift tray/Vendors.swift tray/Onboarding.swift
 swiftc -typecheck scripts/make-icon.swift
 channel_test=$(mktemp -d "$TMPDIR/channel.XXXXXX")/update-channel-tests
 swiftc tray/UpdateChannel.swift tests/UpdateChannelTests.swift -o "$channel_test"
 "$channel_test"
+setup_row_test=$(mktemp -d "$TMPDIR/setuprow.XXXXXX")/setup-row-tests
+swiftc tray/Vendors.swift tests/SetupRowTests.swift -o "$setup_row_test"
+"$setup_row_test"
 
 # --- vendor adapter table --------------------------------------------------
 # The isolation tier is the single most load-bearing fact in the app: an `env`
@@ -48,6 +77,10 @@ print -r -- "$adapter" | grep -qx 'codex env CODEX_HOME'
 print -r -- "$adapter" | grep -qx 'grok env GROK_HOME'
 print -r -- "$adapter" | grep -qx 'cursor env CURSOR_CONFIG_DIR'
 print -r -- "$adapter" | grep -qx 'opencode env XDG_CONFIG_HOME'
+print -r -- "$adapter" | grep -qx 'hermes env HERMES_HOME'
+# Every lab in the table has a mark for the Setup Assistant, and the build ships them.
+for v in $(sh -c '. ./vendors.sh; echo $N2_VENDORS'); do test -f "tray/vendor-icons/$v.svg"; done
+grep -Fq 'cp -R vendor-icons' tray/build.sh
 # Gemini reads GEMINI_DIR as a source constant (".gemini"), never from the
 # environment — so it must stay swap-only until that changes upstream.
 print -r -- "$adapter" | grep -qx 'gemini swap '
@@ -111,6 +144,65 @@ done
 # Mixed state is reported as such rather than silently picking one.
 run_agents use Work --vendor codex >/dev/null
 test "$(run_agents active)" = mixed
+
+# --- setup: first run keeps existing logins ---------------------------------
+setup_home="$test_root/setup-home"
+mkdir -p "$setup_home/.claude" "$setup_home/.codex" "$setup_home/.grok/bin"
+echo tok > "$setup_home/.codex/auth.json"
+# Claude's login lives in the keychain under the UNSUFFIXED name (made by
+# plain `claude`); nothing on disk says "signed in".
+printf 'tester\n{"claudeAiOauth":{"accessToken":"x"}}\n' > "$FAKE_KEYCHAIN/Claude Code-credentials"
+setup_agents() { HOME="$setup_home" PATH="$fake_path" ./agents "$@" }
+
+# Before anything is managed, a "real" dot dir with a login reads as signed in.
+sp=$(setup_agents setup --porcelain)
+print -r -- "$sp" | grep -q '^S	claude	1	real	1	Claude Code	'
+print -r -- "$sp" | grep -q '^S	codex	1	real	1	Codex	'
+print -r -- "$sp" | grep -q '^S	grok	1	real	0	Grok	'
+print -r -- "$sp" | grep -q '^S	hermes	1	absent	0	Hermes	'
+# Cursor keeps its token where nothing on disk can see: reported as unknown.
+print -r -- "$sp" | grep -q '^S	cursor	1	absent	?	Cursor	'
+
+# Running as an unmanaged Default must UNSET the variable, not spell out the
+# dot dir: Claude's keychain item for "unset" is not the one for "~/.claude".
+[[ $(setup_agents run Default --vendor claude) == *"CLAUDE_CONFIG_DIR= "* ]]
+
+# Adopting moves the dir, links the dot dir back, and copies Claude's keychain
+# item to the name Claude will look for under the slot's path — so the
+# pinned command is signed in without a fresh login.
+setup_agents setup adopt claude >/dev/null
+test "$(readlink "$setup_home/.claude")" = "$setup_home/.n2-agents/Default/claude"
+slot_hash=$(printf '%s' "$setup_home/.n2-agents/Default/claude" | shasum -a 256 | cut -c1-8)
+test -f "$FAKE_KEYCHAIN/Claude Code-credentials-$slot_hash"
+test "$(sed -n 2p "$FAKE_KEYCHAIN/Claude Code-credentials-$slot_hash")" = '{"claudeAiOauth":{"accessToken":"x"}}'
+sp=$(setup_agents setup --porcelain)
+print -r -- "$sp" | grep -q '^S	claude	1	linked	1	Claude Code	'
+[[ $(setup_agents run Default --vendor claude) == *"CLAUDE_CONFIG_DIR=$setup_home/.n2-agents/Default/claude"* ]]
+
+# Adopting is idempotent and never yanks a vendor back from another profile.
+setup_agents setup adopt codex >/dev/null
+setup_agents new Work --vendors codex --cli-only >/dev/null 2>&1
+setup_agents use Work --vendor codex >/dev/null
+[[ $(setup_agents setup adopt codex) == *"already managed"* ]]
+test "$(readlink "$setup_home/.codex")" = "$setup_home/.n2-agents/Work/codex"
+# …and signing in to Default still lands in Default's slot, not Work's.
+[[ $(setup_agents setup login codex 2>/dev/null) == *"args=[login] "*"CODEX_HOME=$setup_home/.n2-agents/Default/codex"* ]]
+
+# A vendor that has never run: login creates Default's slot, links, then execs
+# the vendor's own sign-in flow pinned to it.
+out=$(setup_agents setup login hermes 2>/dev/null)
+[[ $out == *"args=[setup] "*"HERMES_HOME=$setup_home/.n2-agents/Default/hermes"* ]]
+test "$(readlink "$setup_home/.hermes")" = "$setup_home/.n2-agents/Default/hermes"
+
+# Grok installs itself inside ~/.grok: migrating into Default is fine, but the
+# global switch must skip it rather than make the `grok` command vanish.
+setup_agents setup adopt grok >/dev/null
+test -d "$setup_home/.n2-agents/Default/grok/bin"
+setup_agents new Work --vendors grok --cli-only >/dev/null 2>&1
+[[ $(setup_agents use Work --vendor grok 2>/dev/null) == *"skipped grok"* ]]
+test "$(readlink "$setup_home/.grok")" = "$setup_home/.n2-agents/Default/grok"
+if setup_agents run Work --vendor grok --switch >/dev/null 2>&1; then :; fi  # env vendor: --switch is ignored
+[[ $(setup_agents run Work --vendor grok) == *"GROK_HOME=$setup_home/.n2-agents/Work/grok"* ]]
 
 # --- porcelain contract (the tray parses this) -----------------------------
 porcelain=$(run_agents porcelain)
@@ -243,5 +335,9 @@ grep -Fq 'UpdateChannel.preferenceKey' tray/main.swift
 # The tray must not re-implement profile discovery: it parses the CLI instead.
 grep -Fq 'Snapshot.parse' tray/main.swift
 grep -Fq 'runCLI(["porcelain"])' tray/main.swift
+# The Setup Assistant likewise renders `agents setup --porcelain`, never its own discovery.
+grep -Fq 'run(["setup", "--porcelain"])' tray/Onboarding.swift
+grep -Fq 'run(["setup", "adopt", v])' tray/Onboarding.swift
+grep -Fq 'SetupAssistant.completedKey' tray/main.swift
 
 echo "All tests passed"

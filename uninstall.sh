@@ -39,6 +39,7 @@ vendor_dots=(
   gemini   "$HOME/.gemini"
   cursor   "$HOME/.cursor"
   opencode "$HOME/.config/opencode"
+  hermes   "$HOME/.hermes"
 )
 for vendor dot in ${(kv)vendor_dots}; do
   [[ -L $dot ]] || continue

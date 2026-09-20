@@ -17,12 +17,12 @@ function __n2agents_vendors
 end
 
 complete -c agents -f -n __fish_use_subcommand \
-    -a 'list vendors active use run best new delete repatch adopt sessions transfer desktop shims porcelain profiles version help'
+    -a 'list vendors active use run best new delete repatch adopt setup sessions transfer desktop shims porcelain profiles version help'
 complete -c agents -f -n 'not __fish_use_subcommand' \
     -a '(agents profiles 2>/dev/null) --next --best'
 complete -c agents -f -l vendor -a '(__n2agents_vendors)'
 complete -c agents -f -l vendors -a '(__n2agents_vendors)'
 
-for v in claude codex grok gemini cursor opencode
+for v in claude codex grok gemini cursor opencode hermes
     complete -c "$v-as" -f -a '(agents profiles 2>/dev/null) --next --best'
 end

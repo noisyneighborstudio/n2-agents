@@ -16,6 +16,7 @@
 #   agents transfer <id> --to <Profile>|--next|--best [--from <Profile>] [--vendor <v>]
 #   agents desktop [Name|--next|--best] [--vendor <v>]
 #   agents shims [--remove]               sync <vendor>-<profile> commands on PATH
+#   agents setup [adopt <v> | login <v>]  first-run: find installed labs, keep their logins, sign in
 #   agents app-path                       print the Claude Desktop bundle path
 #   agents version
 #
@@ -151,10 +152,22 @@ resolve_profile() {
 # dir or when `adopt` links a claudes-era profile in — checking for the slot
 # rather than for "is the dot dir a symlink" covers both, and covers the case
 # where another vendor has been switched but this one hasn't.
+#
+# Once the dot dir is a symlink it belongs to whichever profile it points at,
+# so a slot-less Default is reported as its (not yet existing) slot rather
+# than as the dot dir — otherwise "run as Default" would silently run as the
+# profile that happens to be active.
+#
+# A slot that is itself a symlink (an adopted `claudes` profile) resolves to
+# its target. Claude Code keys its keychain item to the LITERAL value of
+# CLAUDE_CONFIG_DIR, so the same directory spelled two ways is two logins —
+# pinning through the canonical path keeps the one the user already has.
 config_dir() {  # profile, vendor
   cd_slot="$root/$1/$(vendor_slot_name "$2")"
-  if [ "$1" = Default ] && [ ! -e "$cd_slot" ] && [ ! -L "$cd_slot" ]; then
+  if [ "$1" = Default ] && [ ! -e "$cd_slot" ] && [ ! -L "$cd_slot" ] && [ ! -L "$(vendor_dot "$2")" ]; then
     vendor_dot "$2"
+  elif [ -L "$cd_slot" ]; then
+    abspath "$cd_slot"
   else
     echo "$cd_slot"
   fi
@@ -259,12 +272,29 @@ cmd_list() {
 
 # --- use -------------------------------------------------------------------
 
+# Grok and Hermes install themselves INSIDE their config dir (vendors.sh,
+# vendor_install_dir). Migrating that dir into Default and linking back is
+# fine — the command still resolves through the link — but pointing the dot
+# dir at a profile without the install would make the command vanish.
+# Returns 1 with the reason on stderr; per-process pinning still works.
+swappable() {  # profile, vendor
+  sw_inst=$(vendor_install_dir "$2")
+  [ -n "$sw_inst" ] || return 0
+  sw_dot=$(vendor_dot "$2")
+  [ -d "$sw_dot/$sw_inst" ] || return 0
+  [ -d "$root/$1/$(vendor_slot_name "$2")/$sw_inst" ] && return 0
+  [ "$1" = Default ] && [ ! -L "$sw_dot" ] && return 0   # the one-time migration
+  echo "agents: $(vendor_label "$2") is installed inside $sw_dot ($sw_inst/), so it can't be switched globally — pin it per process instead: $2-$(lower "$1")" >&2
+  return 1
+}
+
 # Point one vendor's dot dir at a profile's slot, migrating the original
 # directory into Default the first time we ever touch that vendor.
 switch_vendor() {  # profile, vendor
   sv_profile=$1 sv_vendor=$2
   sv_dot=$(vendor_dot "$sv_vendor")
   sv_default="$root/Default/$(vendor_slot_name "$sv_vendor")"
+  swappable "$sv_profile" "$sv_vendor" || exit 1
 
   # One-time migration: the real dot dir becomes the Default slot.
   if [ -e "$sv_dot" ] && [ ! -L "$sv_dot" ]; then
@@ -305,6 +335,7 @@ cmd_use() {
   echo "Active profile: $name"
   for v in $targets; do
     vendor_installed "$v" || { echo "  skipped $v (not installed)"; continue; }
+    swappable "$name" "$v" 2>/dev/null || { echo "  skipped $v (installed inside its own config dir — use $v-$(lower "$name"))"; continue; }
     switch_vendor "$name" "$v"
   done
   echo "New sessions everywhere use it; running sessions keep the profile they started with."
@@ -500,7 +531,10 @@ cmd_run() {
   fi
 
   cfg=$(config_dir "$name" "$v")
-  [ -d "$cfg" ] || die "profile '$name' has no $v slot — create it: agents new $name --vendors $v"
+  if [ ! -d "$cfg" ]; then
+    if [ "$name" = Default ]; then die "Default has no $v slot yet — create it: agents setup login $v"; fi
+    die "profile '$name' has no $v slot — create it: agents new $name --vendors $v"
+  fi
 
   # A swap-only vendor cannot be pinned per-process: there is no env var to set,
   # so the only way to run it as this profile is to make the profile active.
@@ -538,10 +572,18 @@ resume_flag() {
 
 # Launch a vendor CLI pinned to a config dir. `env` vendors get their variable;
 # `swap` vendors were already pointed at the profile by the caller.
+#
+# Pinning to the vendor's own default dir is done by UNSETTING the variable,
+# not by spelling the path out: Claude's keychain item for an unset
+# CLAUDE_CONFIG_DIR has a different name from the one for "~/.claude" written
+# literally, and only the former holds the login made by plain `claude`.
 exec_vendor() {  # vendor, cfg, cli, args...
   ev_vendor=$1 ev_cfg=$2; shift 2
   ev_env=$(vendor_env "$ev_vendor")
   if [ -n "$ev_env" ]; then
+    if [ "$ev_cfg" = "$(vendor_dot "$ev_vendor")" ]; then
+      exec env -u "$ev_env" "$@"
+    fi
     ev_val=$(vendor_env_value "$ev_vendor" "$ev_cfg")
     exec env "$ev_env=$ev_val" "$@"
   fi
@@ -768,6 +810,154 @@ cmd_delete() {
 
 cmd_repatch() {
   exec "$scripts_dir/repatch-claude-profiles.sh" "$@"
+}
+
+# --- setup (first run) -----------------------------------------------------
+
+# Claude Code names its keychain item after the config dir it was given:
+# "Claude Code-credentials" when CLAUDE_CONFIG_DIR is unset, else with a
+# "-<sha256(path)[:8]>" suffix of the literal string.
+claude_keychain_service() {  # cfg
+  if [ "$1" = "$(vendor_dot claude)" ]; then
+    echo "Claude Code-credentials"
+  else
+    echo "Claude Code-credentials-$(printf '%s' "$1" | shasum -a 256 | cut -c1-8)"
+  fi
+}
+
+claude_signed_in() {  # cfg
+  security find-generic-password -s "$(claude_keychain_service "$1")" >/dev/null 2>&1 \
+    || [ -s "$1/.credentials.json" ]
+}
+
+# Copy Claude's login to the name it will have under a new config-dir path,
+# so migrating ~/.claude into a profile slot doesn't cost a re-login. Written
+# with the same `security` call Claude Code itself uses, so the item's access
+# list matches and nothing prompts. No-op when the destination already has
+# one; returns 1 when there is nothing to copy.
+claude_share_login() {  # from-cfg, to-cfg
+  csl_src=$(claude_keychain_service "$1")
+  csl_dst=$(claude_keychain_service "$2")
+  [ "$csl_src" = "$csl_dst" ] && return 0
+  security find-generic-password -s "$csl_dst" >/dev/null 2>&1 && return 0
+  csl_secret=$(security find-generic-password -s "$csl_src" -w 2>/dev/null) || return 1
+  csl_acct=$(security find-generic-password -s "$csl_src" 2>/dev/null \
+    | sed -n 's/^ *"acct"<blob>="\(.*\)"$/\1/p')
+  security add-generic-password -a "${csl_acct:-$USER}" -s "$csl_dst" -w "$csl_secret" -U >/dev/null 2>&1
+}
+
+# 1 signed in, 0 not, ? when the vendor keeps its token where we can't look.
+vendor_signed_in() {  # profile, vendor
+  vsi_cfg=$(config_dir "$1" "$2")
+  if [ "$2" = claude ]; then
+    if claude_signed_in "$vsi_cfg"; then echo 1; else echo 0; fi
+    return 0
+  fi
+  vsi_f=$(vendor_auth_file "$2" "$vsi_cfg")
+  if [ -z "$vsi_f" ]; then echo "?"; elif [ -s "$vsi_f" ]; then echo 1; else echo 0; fi
+}
+
+# What the vendor's dot dir is right now: never created, a real directory
+# (a login N2 doesn't manage yet), or a symlink into a profile slot.
+setup_state() {  # vendor
+  ss_dot=$(vendor_dot "$1")
+  if [ -L "$ss_dot" ]; then echo linked; elif [ -d "$ss_dot" ]; then echo real; else echo absent; fi
+}
+
+# Bring a vendor under N2 Agents without a re-login: its real dot dir becomes
+# Default's slot and the dot dir a symlink to it, so plain `codex` and
+# `codex-default` read one login. Already-linked vendors are left alone —
+# re-running setup must never yank a vendor back from another profile.
+setup_adopt() {  # vendor
+  sa_v=$1
+  vendor_installed "$sa_v" || die "$(vendor_label "$sa_v") CLI not found — install it: $(vendor_install_hint "$sa_v")"
+  [ "$(setup_state "$sa_v")" = linked ] && { echo "  $sa_v: already managed by N2 Agents"; return 0; }
+  sa_before=$(config_dir Default "$sa_v")
+  switch_vendor Default "$sa_v"
+  if [ "$sa_v" = claude ]; then
+    if claude_share_login "$sa_before" "$(config_dir Default claude)"; then
+      echo "  claude    login shared with the profile slot (keychain)"
+    else
+      echo "  claude    no existing login to share — sign in once: agents setup login claude"
+    fi
+  fi
+}
+
+# Adopt if needed, then hand off to the vendor's own sign-in, pinned to Default.
+setup_login() {  # vendor
+  sl_v=$(lower "$1")
+  vendor_known "$sl_v" || die "unknown vendor '$1' (known: $N2_VENDORS)"
+  setup_adopt "$sl_v" >&2
+  # Adopt leaves the dot dir linked; if another profile holds that link,
+  # Default's own slot may not exist yet — the sign-in has to land somewhere.
+  sl_cfg=$(config_dir Default "$sl_v")
+  mkdir -p "$sl_cfg"
+  if [ "$(vendor_isolation "$sl_v")" = swap ] && [ "$(active_profile "$sl_v")" != Default ]; then
+    die "$(vendor_label "$sl_v") has no config-dir env var and '$(active_profile "$sl_v")' is active — run: agents use Default --vendor $sl_v"
+  fi
+  # shellcheck disable=SC2046
+  exec_vendor "$sl_v" "$sl_cfg" "$(vendor_cli "$sl_v")" $(vendor_login_args "$sl_v")
+}
+
+# Machine-readable form for the tray's Setup Assistant:
+#   S <vendor> <installed 0|1> <absent|real|linked> <signed-in 1|0|?> <label> <install hint>
+setup_porcelain() {
+  for v in $N2_VENDORS; do
+    if vendor_installed "$v"; then i=1 signed=$(vendor_signed_in Default "$v"); else i=0 signed=0; fi
+    printf 'S\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$v" "$i" "$(setup_state "$v")" "$signed" "$(vendor_label "$v")" "$(vendor_install_hint "$v")"
+  done
+}
+
+cmd_setup() {
+  case ${1:-} in
+    --porcelain) setup_porcelain; return 0 ;;
+    adopt) [ -n "${2:-}" ] || die "usage: agents setup adopt <vendor>"
+           v=$(lower "$2"); vendor_known "$v" || die "unknown vendor '$2' (known: $N2_VENDORS)"
+           setup_adopt "$v"; return 0 ;;
+    login) [ -n "${2:-}" ] || die "usage: agents setup login <vendor>"
+           setup_login "$2" ;;
+    "") ;;
+    *) die "usage: agents setup [--porcelain | adopt <vendor> | login <vendor>]" ;;
+  esac
+
+  echo "N2 Agents setup — one identity, every lab."
+  echo ""
+  printf '%-10s %-10s %-10s %s\n' "VENDOR" "INSTALLED" "SIGNED-IN" "CONFIG DIR"
+  for v in $N2_VENDORS; do
+    if vendor_installed "$v"; then
+      case $(vendor_signed_in Default "$v") in 1) si=yes ;; 0) si=no ;; *) si=unknown ;; esac
+      case $(setup_state "$v") in
+        linked) st="managed by N2 Agents" ;;
+        real)   st="$(vendor_dot "$v") (not managed yet)" ;;
+        absent) st="none yet" ;;
+      esac
+      printf '%-10s %-10s %-10s %s\n' "$v" yes "$si" "$st"
+    else
+      printf '%-10s %-10s %-10s %s\n' "$v" no - "install: $(vendor_install_hint "$v")"
+    fi
+  done
+  echo ""
+
+  for v in $(vendors_installed); do
+    [ "$(setup_state "$v")" = real ] || continue
+    printf 'Bring %s into N2 Agents? %s moves to ~/.n2-agents/Default/%s and a symlink takes its place, so the existing login is kept. [Y/n] ' \
+      "$(vendor_label "$v")" "$(vendor_dot "$v")" "$(vendor_slot_name "$v")"
+    read -r reply
+    case $(lower "$reply") in n*) echo "  skipped" ;; *) setup_adopt "$v" ;; esac
+  done
+
+  for v in $(vendors_installed); do
+    [ "$(vendor_signed_in Default "$v")" = 0 ] || continue
+    printf 'Sign in to %s now? [y/N] ' "$(vendor_label "$v")"
+    read -r reply
+    case $(lower "$reply") in y*) ( setup_login "$v" ) || echo "  $v: sign-in did not complete" ;; *) ;; esac
+  done
+
+  sync_shims
+  echo ""
+  echo "✓ Setup complete. Every installed lab now runs from ~/.n2-agents/Default."
+  echo "  A second identity:  agents new Work"
 }
 
 # --- adopt -----------------------------------------------------------------
@@ -1100,7 +1290,7 @@ cmd_porcelain() {
 }
 
 cmd_help() {
-  sed -n '3,21p' "$self" | sed 's/^# \{0,3\}//'
+  sed -n '3,22p' "$self" | sed 's/^# \{0,3\}//'
 }
 
 cmd=${1:-help}
@@ -1120,6 +1310,7 @@ case $cmd in
   transfer) cmd_transfer "$@" ;;
   desktop)  cmd_desktop "$@" ;;
   shims)    cmd_shims "$@" ;;
+  setup)    cmd_setup "$@" ;;
   app-path) cmd_app_path ;;
   profiles) cmd_profiles ;;
   porcelain) cmd_porcelain ;;

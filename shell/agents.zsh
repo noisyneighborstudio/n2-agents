@@ -25,7 +25,7 @@ _n2agents_profiles() {
 # `--vendor` takes a vendor id; everything else takes a profile.
 _n2agents_cli() {
   if (( CURRENT == 2 )); then
-    _values 'command' list vendors active use run best new delete repatch adopt \
+    _values 'command' list vendors active use run best new delete repatch adopt setup \
       sessions transfer desktop shims porcelain profiles version help
   elif [[ ${words[CURRENT-1]} == (--vendor|--vendors) ]]; then
     local -a vendors
@@ -38,7 +38,7 @@ _n2agents_cli() {
 
 if (( $+functions[compdef] )); then
   compdef _n2agents_cli agents
-  for _n2agents_v in claude codex grok gemini cursor opencode; do
+  for _n2agents_v in claude codex grok gemini cursor opencode hermes; do
     compdef _n2agents_profiles "$_n2agents_v-as" 2>/dev/null
   done
   unset _n2agents_v

@@ -40,6 +40,7 @@ fi
 echo "Version: $ver ($build_ver)"
 cp ../make-claude-profile.sh ../repatch-claude-profiles.sh ../agents ../vendors.sh "$app/Contents/Resources/"
 cp ../shell/agents.zsh ../shell/agents.bash ../shell/agents.fish ../shell/agent-as "$app/Contents/Resources/"
+cp -R vendor-icons "$app/Contents/Resources/vendor-icons"
 chmod +x "$app/Contents/Resources/"*.sh "$app/Contents/Resources/agents" "$app/Contents/Resources/agent-as"
 
 # App icon: build multi-res icns from n2agents.png

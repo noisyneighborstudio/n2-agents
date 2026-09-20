@@ -7,7 +7,7 @@
 <p align="center">
   <strong>One identity, every lab.</strong><br>
   Work · personal · client — each profile holds its own Claude, Codex, Grok, Gemini,
-  Cursor and opencode login, switched together or pinned one at a time.<br>
+  Cursor, opencode and Hermes login, switched together or pinned one at a time.<br>
   A menu bar app plus a small CLI.
 </p>
 
@@ -54,6 +54,20 @@ The installer prefers the signed release and falls back to building from source
 per-profile commands on your `PATH`, and adds tab completion for **zsh**,
 **bash**, and **fish** — whichever you have.
 
+Then the **Setup Assistant** opens on first launch (and lives under the menu
+bar icon afterwards). It finds every agent CLI on your Mac and, for each one:
+
+- **Already signed in** → *Bring In*. The CLI's config dir moves to
+  `~/.n2-agents/Default/<lab>` and a symlink takes its place, so the plain
+  command, `<lab>-default`, and every profile you add later all read the **one
+  login you already have**. Claude's keychain item is copied to the name it
+  will look for under the new path, so nothing asks you to sign in again.
+- **Installed, not signed in** → *Sign In…* opens the lab's own login flow in
+  your terminal, pinned to Default.
+- **Not installed** → *Install…* with the vendor's install command.
+
+The same flow from a shell: `agents setup`.
+
 Then:
 
 1. Menu bar → **N2 Agents icon** → **New Profile…** → e.g. `Work`
@@ -83,7 +97,7 @@ preference — it is whatever that CLI actually supports:
 
 | Tier | What it means | Labs |
 |---|---|---|
-| `env` | The CLI reads a config-dir environment variable, so a profile can be pinned **per process**. Two profiles run side by side, and a running session keeps its profile no matter what you switch to later. | Claude, Codex, Grok, Cursor, opencode |
+| `env` | The CLI reads a config-dir environment variable, so a profile can be pinned **per process**. Two profiles run side by side, and a running session keeps its profile no matter what you switch to later. | Claude, Codex, Grok, Cursor, opencode, Hermes |
 | `swap` | No such variable exists, so the only lever is swapping the dot dir symlink. **One profile at a time**, and switching is global. | Gemini |
 
 `agents vendors` prints the live table. A `swap` lab refuses to run as a
@@ -117,6 +131,7 @@ functions, so editors, GUI apps and scripts get them too.
 | Grok | `grok` | `~/.grok` | `GROK_HOME` | — | — | — |
 | Cursor | `cursor-agent` | `~/.cursor` | `CURSOR_CONFIG_DIR` | — | — | — |
 | opencode | `opencode` | `~/.config/opencode` | `XDG_CONFIG_HOME` | — | — | — |
+| Hermes | `hermes` | `~/.hermes` | `HERMES_HOME` | — | — | — |
 | Gemini | `gemini` | `~/.gemini` | *none* | — | — | — |
 
 Every one of those isolation levers was verified against the shipped binary
@@ -126,6 +141,12 @@ why it is the one `swap` lab.
 
 Only Claude currently exposes a server-side quota endpoint, so `agents best`
 works for Claude and tells you plainly that the others have nothing to rank.
+
+Grok and Hermes install **themselves** inside their config dir (`~/.grok/bin`,
+`~/.hermes/hermes-agent`). Bringing them into Default is fine — the command
+still resolves through the symlink — but `agents use Work` skips them, because
+pointing `~/.grok` at a profile without the install would make `grok` vanish.
+Pin them per process instead: `grok-work`.
 
 **Adding a lab** means adding one `case` arm to each accessor in
 [`vendors.sh`](vendors.sh). Nothing in `agents` or the menu bar app needs to
@@ -148,6 +169,9 @@ agents transfer <id> --to <Profile>|--next|--best [--vendor <v>]
 agents desktop [Name|--next|--best] [--vendor <v>]
 agents shims [--remove]               sync <vendor>-<profile> commands on PATH
 agents repatch [Name]                 rebuild Claude clones after an update
+agents setup [--porcelain]            first run: find labs, keep their logins, sign in
+agents setup adopt <v>                bring ~/.<v> into Default (symlink back, keep login)
+agents setup login <v>                adopt if needed, then the lab's own sign-in, pinned to Default
 ```
 
 The CLI is the single authoritative implementation. The menu bar app parses
@@ -214,6 +238,13 @@ allowed. `agents list` shows which is where; `agents use <Profile>` realigns the
 
 **A shim is missing** — `agents shims`. Shims exist only for
 (lab, profile) pairs that actually have a slot.
+
+**`claude-default` isn't signed in but plain `claude` is** — Claude Code keys
+its keychain item to the literal `CLAUDE_CONFIG_DIR` string, so the same
+directory reached by a new path is a fresh login. Run the Setup Assistant (or
+`agents setup adopt claude`); it copies the item to the name the slot's path
+hashes to. Adopted `claudes` profiles are pinned through their original
+`~/.claude-profiles/<Name>` path for the same reason.
 
 ## Development
 

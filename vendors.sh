@@ -25,7 +25,7 @@
 
 # Order matters: it's the display order everywhere, and the first installed
 # vendor is the default when a command needs one and the user didn't say.
-N2_VENDORS="claude codex grok gemini cursor opencode"
+N2_VENDORS="claude codex grok gemini cursor opencode hermes"
 
 vendor_known() {
   for v in $N2_VENDORS; do [ "$v" = "$1" ] && return 0; done
@@ -40,6 +40,7 @@ vendor_label() {
     gemini)   echo "Gemini" ;;
     cursor)   echo "Cursor" ;;
     opencode) echo "opencode" ;;
+    hermes)   echo "Hermes" ;;
     *)        echo "$1" ;;
   esac
 }
@@ -61,6 +62,7 @@ vendor_dot() {
     gemini)   echo "$HOME/.gemini" ;;
     cursor)   echo "$HOME/.cursor" ;;
     opencode) echo "$HOME/.config/opencode" ;;
+    hermes)   echo "$HOME/.hermes" ;;
   esac
 }
 
@@ -74,6 +76,7 @@ vendor_dot() {
 #   cursor    CURSOR_CONFIG_DIR   present in the bundled JS
 #   opencode  XDG_CONFIG_HOME     standard XDG lookup; we point at the PARENT,
 #                                 and opencode appends /opencode itself
+#   hermes    HERMES_HOME         read from the environment in hermes_constants.py
 #   gemini    (none)              GEMINI_DIR is a source constant equal to
 #                                 ".gemini", never read from the environment
 vendor_env() {
@@ -83,6 +86,7 @@ vendor_env() {
     grok)     echo "GROK_HOME" ;;
     cursor)   echo "CURSOR_CONFIG_DIR" ;;
     opencode) echo "XDG_CONFIG_HOME" ;;
+    hermes)   echo "HERMES_HOME" ;;
     gemini)   echo "" ;;
   esac
 }
@@ -144,6 +148,56 @@ vendor_install_hint() {
     gemini)   echo "npm install -g @google/gemini-cli" ;;
     cursor)   echo "curl https://cursor.com/install -fsS | bash" ;;
     opencode) echo "curl -fsSL https://opencode.ai/install | bash" ;;
+    hermes)   echo "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash" ;;
+  esac
+}
+
+# The file whose presence means "signed in", relative to the config dir. Empty
+# when the vendor keeps its token somewhere we can't see from disk:
+#   claude    keeps OAuth in the macOS keychain, keyed to the config-dir PATH
+#             (see claude_signed_in in `agents`); .credentials.json is the
+#             Linux/fallback location and is checked too
+#   cursor    stores its session outside CURSOR_CONFIG_DIR (not on disk under
+#             ~/.cursor either) — only `cursor-agent status` can tell
+#   opencode  writes auth.json under XDG_DATA_HOME, not XDG_CONFIG_HOME, so its
+#             login is shared by every profile; vendor_auth_file names the
+#             absolute path in that case
+vendor_auth_file() {  # vendor, config-dir -> path or ""
+  case $1 in
+    claude)   echo "$2/.credentials.json" ;;
+    codex)    echo "$2/auth.json" ;;
+    grok)     echo "$2/auth.json" ;;
+    gemini)   echo "$2/oauth_creds.json" ;;
+    hermes)   echo "$2/auth.json" ;;
+    opencode) echo "${XDG_DATA_HOME:-$HOME/.local/share}/opencode/auth.json" ;;
+    *)        echo "" ;;
+  esac
+}
+
+# Arguments that start the vendor's own sign-in flow. Gemini has no login
+# subcommand: it prompts on first run, so running it bare IS the sign-in.
+vendor_login_args() {
+  case $1 in
+    claude)   echo "auth login" ;;
+    codex)    echo "login" ;;
+    grok)     echo "login" ;;
+    cursor)   echo "login" ;;
+    opencode) echo "auth login" ;;
+    hermes)   echo "setup" ;;
+    gemini)   echo "" ;;
+  esac
+}
+
+# Some vendors install THEMSELVES inside their config dir (Grok's binary is
+# ~/.grok/bin/grok; Hermes' venv is ~/.hermes/hermes-agent). Migrating that
+# dir into Default and symlinking back is harmless, but pointing the dot dir at
+# any other profile would make the command itself vanish. `switch_vendor`
+# refuses that; per-process pinning (grok-work) still works for them.
+vendor_install_dir() {  # vendor -> subdir that must stay reachable, or ""
+  case $1 in
+    grok)   echo "bin" ;;
+    hermes) echo "hermes-agent" ;;
+    *)      echo "" ;;
   esac
 }
 

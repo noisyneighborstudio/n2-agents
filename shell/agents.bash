@@ -22,7 +22,7 @@ _n2agents_vendors() {
 _n2agents_complete() {
   local prev=${COMP_WORDS[COMP_CWORD-1]} words
   if [ "$COMP_CWORD" -eq 1 ]; then
-    words="list vendors active use run best new delete repatch adopt sessions transfer desktop shims porcelain profiles version help"
+    words="list vendors active use run best new delete repatch adopt setup sessions transfer desktop shims porcelain profiles version help"
   elif [ "$prev" = "--vendor" ] || [ "$prev" = "--vendors" ]; then
     words="$(_n2agents_vendors)"
   else
@@ -35,7 +35,7 @@ complete -F _n2agents_complete agents
 _n2agents_as_complete() {
   COMPREPLY=($(compgen -W "$(agents profiles 2>/dev/null) --next --best" -- "${COMP_WORDS[COMP_CWORD]}"))
 }
-for _n2agents_v in claude codex grok gemini cursor opencode; do
+for _n2agents_v in claude codex grok gemini cursor opencode hermes; do
   complete -F _n2agents_as_complete "$_n2agents_v-as"
 done
 unset _n2agents_v

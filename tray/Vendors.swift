@@ -71,3 +71,66 @@ struct Snapshot {
         return Snapshot(vendors: vendors, profiles: profiles, active: active)
     }
 }
+
+// One line of `agents setup --porcelain`:
+//   S <vendor> <installed 0|1> <absent|real|linked> <signed-in 1|0|?> <label> <install hint>
+//
+// "real" means the vendor's dot dir is still a plain directory — a login N2
+// Agents doesn't manage yet. "linked" means it is a symlink into a profile
+// slot. "?" is a vendor that keeps its token where nothing on disk can see it.
+struct SetupRow {
+    let id: String
+    let installed: Bool
+    let state: String
+    let signedIn: String
+    let label: String
+    let installHint: String
+
+    enum Action {
+        case install(hint: String)
+        case adopt
+        case signIn
+
+        var title: String {
+            switch self {
+            case .install: return "Install…"
+            case .adopt: return "Bring In"
+            case .signIn: return "Sign In…"
+            }
+        }
+    }
+
+    var isReady: Bool { installed && state == "linked" && signedIn != "0" }
+
+    // Exactly one thing to do next per row, or nothing when it is ready.
+    var action: Action? {
+        if !installed { return .install(hint: installHint) }
+        if state == "real" { return .adopt }
+        if signedIn == "0" || signedIn == "?" { return .signIn }
+        return nil
+    }
+
+    var detail: String {
+        if !installed { return "Not installed" }
+        let login: String
+        switch signedIn {
+        case "1": login = "Signed in"
+        case "?": login = "Sign-in state unknown"
+        default: login = "Not signed in"
+        }
+        switch state {
+        case "linked": return signedIn == "1" ? "Ready" : login
+        case "real": return "\(login) · not managed yet"
+        default: return "Never run"
+        }
+    }
+
+    static func parse(_ text: String) -> [SetupRow] {
+        text.split(separator: "\n").compactMap { line in
+            let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard f.count >= 7, f[0] == "S" else { return nil }
+            return SetupRow(id: f[1], installed: f[2] == "1", state: f[3], signedIn: f[4],
+                            label: f[5], installHint: f[6])
+        }
+    }
+}
