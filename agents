@@ -369,32 +369,32 @@ import hashlib, json, os, subprocess, sys, time, urllib.error, urllib.request
 
 def claude_creds(cfg, is_default):
     # Keychain service is "Claude Code-credentials[-<sha256(cfgdir)[:8]>]";
-    # the unsuffixed entry belongs to the default ~/.claude config dir.
-    svcs = ['Claude Code-credentials-' + hashlib.sha256(cfg.encode()).hexdigest()[:8]]
+    # the unsuffixed entry belongs to the default ~/.claude config dir. The
+    # hash is of whatever path the CLI was handed, so a slot that is a symlink
+    # (adopted from `claudes`) has an entry under each path; the one written
+    # last is the live login.
+    paths = {cfg, os.path.realpath(cfg)}
+    svcs = ['Claude Code-credentials-' + hashlib.sha256(p.encode()).hexdigest()[:8] for p in paths]
     if is_default:
-        svcs.insert(0, 'Claude Code-credentials')
-    found = None
+        svcs.append('Claude Code-credentials')
+    found = []
     for svc in svcs:
         p = subprocess.run(['security', 'find-generic-password', '-s', svc, '-w'],
                            capture_output=True, text=True)
         if p.returncode == 0:
             try:
-                c = json.loads(p.stdout.strip()).get('claudeAiOauth', {})
+                found.append(json.loads(p.stdout.strip()).get('claudeAiOauth', {}))
             except ValueError:
-                continue
-            if c.get('accessToken'):
-                found = c
-                if c.get('expiresAt', 0) / 1000 > time.time():
-                    return c, 'ok'
+                pass
     try:
-        c = json.load(open(cfg + '/.credentials.json')).get('claudeAiOauth', {})
-        if c.get('accessToken'):
-            if c.get('expiresAt', 0) / 1000 > time.time():
-                return c, 'ok'
-            found = found or c
+        found.append(json.load(open(cfg + '/.credentials.json')).get('claudeAiOauth', {}))
     except (OSError, ValueError):
         pass
-    return (found, 'stale-token') if found else (None, 'no-token')
+    found = [c for c in found if c.get('accessToken')]
+    if not found:
+        return None, 'no-token'
+    c = max(found, key=lambda c: c.get('expiresAt', 0))
+    return c, 'ok' if c.get('expiresAt', 0) / 1000 > time.time() else 'stale-token'
 
 def claude(name, cfg):
     c, status = claude_creds(cfg, name == 'Default')
@@ -1104,6 +1104,12 @@ session_files() {  # profile, vendor
   find "$sf_dir" -type f -name '*.jsonl' 2>/dev/null
 }
 
+# Codex records its own helpers (the guardian that reviews tool calls, spawned
+# agents) as transcripts too, marked in their opening record. Not yours.
+session_is_subagent() {  # path
+  head -1 "$1" 2>/dev/null | grep -q '"source":{"subagent"'
+}
+
 # Codex names files rollout-<timestamp>-<uuid>.jsonl; Claude names them <uuid>.jsonl.
 session_id_of() {  # path
   b=$(basename "$1" .jsonl)
@@ -1138,10 +1144,14 @@ sessions_porcelain() {  # profiles, vendors, limit ("" = all)
       # One stat per batch of files, not per file: profiles hold thousands.
       find "$sp_dir" -type f -name '*.jsonl' -exec stat -f "%m%t$sp_n%t$sp_v%t%N" {} + 2>/dev/null
     done
-  done | sort -rn | { if [ -n "$3" ]; then head -n "$3"; else cat; fi; } | \
-  while IFS="$(printf '\t')" read -r sp_m sp_n sp_v sp_f; do
-    printf '%s\t%s\t%s\t%s\t%s\n' "$sp_n" "$sp_v" "$(session_id_of "$sp_f")" "$sp_m" "$(session_meta "$sp_f")"
-  done
+  done | sort -rn | {
+    sp_left=${3:--1}
+    while [ "$sp_left" != 0 ] && IFS="$(printf '\t')" read -r sp_m sp_n sp_v sp_f; do
+      session_is_subagent "$sp_f" && continue
+      printf '%s\t%s\t%s\t%s\t%s\n' "$sp_n" "$sp_v" "$(session_id_of "$sp_f")" "$sp_m" "$(session_meta "$sp_f")"
+      sp_left=$((sp_left - 1))
+    done
+  }
 }
 
 cmd_sessions() {
@@ -1196,6 +1206,7 @@ cmd_sessions() {
     stat -f '%m %N' "$f"
   done | sort -rn | while IFS= read -r line; do
     f=${line#* }
+    session_is_subagent "$f" && continue
     meta=$(session_meta "$f")
     cwd=${meta%%	*}
     if [ -n "$cwd" ]; then proj=$(basename "$cwd"); else proj=$(basename "$(dirname "$f")"); fi

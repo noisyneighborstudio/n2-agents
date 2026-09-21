@@ -182,7 +182,15 @@ cat > "$home/.n2-agents/Work/codex/sessions/2026/01/01/rollout-2026-01-01T00-00-
 {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /src/beta"}]}}
 {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"ship the release"}]}}
 JSONL
+# Codex's own helpers (the tool-call reviewer) leave transcripts too; the
+# newest file here is one, and it neither shows nor uses up the limit.
+cat > "$home/.n2-agents/Work/codex/sessions/2026/01/01/rollout-2026-01-01T00-00-01-g1.jsonl" <<'JSONL'
+{"type":"session_meta","payload":{"cwd":"/src/beta","source":{"subagent":{"other":"guardian"}}}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"The following is the Codex agent history"}]}}
+JSONL
 touch -t 202601010000 "$home/.n2-agents/Work/claude/projects/p/c1.jsonl"
+touch -t 202601010100 "$home/.n2-agents/Work/codex/sessions/2026/01/01/rollout-2026-01-01T00-00-00-x1.jsonl"
+touch -t 202601020000 "$home/.n2-agents/Work/codex/sessions/2026/01/01/rollout-2026-01-01T00-00-01-g1.jsonl"
 recent=$(run_agents sessions --porcelain --limit 2)
 test "$(print -r -- "$recent" | sed -n 1p | cut -f1-3,5,6)" = "Work	codex	x1	/src/beta	ship the release"
 test "$(print -r -- "$recent" | sed -n 2p | cut -f1-3,5,6)" = "Work	claude	c1	/src/alpha	fix the parser"
