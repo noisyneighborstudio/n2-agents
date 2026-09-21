@@ -23,6 +23,6 @@ complete -c agents -f -n 'not __fish_use_subcommand' \
 complete -c agents -f -l vendor -a '(__n2agents_vendors)'
 complete -c agents -f -l vendors -a '(__n2agents_vendors)'
 
-for v in claude codex grok gemini cursor opencode
+for v in claude codex grok gemini cursor opencode muse
     complete -c "$v-as" -f -a '(agents profiles 2>/dev/null) --next --best'
 end

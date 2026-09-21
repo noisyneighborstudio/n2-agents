@@ -15,7 +15,7 @@ export SWIFT_MODULECACHE_PATH="$test_root/cache/swift"
 # from touching a real login.
 fake_bin="$test_root/fake-bin"
 mkdir -p "$fake_bin"
-for v in claude codex grok gemini cursor-agent opencode; do
+for v in claude codex grok gemini cursor-agent opencode muse; do
   cat > "$fake_bin/$v" <<'FAKE'
 #!/bin/sh
 echo "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-} CODEX_HOME=${CODEX_HOME:-} GROK_HOME=${GROK_HOME:-} CURSOR_CONFIG_DIR=${CURSOR_CONFIG_DIR:-} XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-}"
@@ -58,14 +58,17 @@ print -r -- "$adapter" | grep -qx 'codex env CODEX_HOME'
 print -r -- "$adapter" | grep -qx 'grok env GROK_HOME'
 print -r -- "$adapter" | grep -qx 'cursor env CURSOR_CONFIG_DIR'
 print -r -- "$adapter" | grep -qx 'opencode env XDG_CONFIG_HOME'
+print -r -- "$adapter" | grep -qx 'muse env XDG_CONFIG_HOME'
 # Gemini reads GEMINI_DIR as a source constant (".gemini"), never from the
 # environment — so it must stay swap-only until that changes upstream.
 print -r -- "$adapter" | grep -qx 'gemini swap '
 
-# opencode is the one vendor whose env var names the PARENT of its config dir.
+# opencode and muse are the vendors whose env var names the PARENT of their config dir.
 slot=$(sh -c '. ./vendors.sh; vendor_slot_name opencode')
 test "$slot" = "opencode/opencode"
 test "$(sh -c '. ./vendors.sh; vendor_env_value opencode /root/P/opencode/opencode')" = "/root/P/opencode"
+test "$(sh -c '. ./vendors.sh; vendor_slot_name muse')" = "muse/muse"
+test "$(sh -c '. ./vendors.sh; vendor_env_value muse /root/P/muse/muse')" = "/root/P/muse"
 test "$(sh -c '. ./vendors.sh; vendor_env_value claude /root/P/claude')" = "/root/P/claude"
 
 # --- profile lifecycle, multi-vendor ---------------------------------------

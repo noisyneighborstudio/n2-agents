@@ -35,7 +35,7 @@ complete -F _n2agents_complete agents
 _n2agents_as_complete() {
   COMPREPLY=($(compgen -W "$(agents profiles 2>/dev/null) --next --best" -- "${COMP_WORDS[COMP_CWORD]}"))
 }
-for _n2agents_v in claude codex grok gemini cursor opencode; do
+for _n2agents_v in claude codex grok gemini cursor opencode muse; do
   complete -F _n2agents_as_complete "$_n2agents_v-as"
 done
 unset _n2agents_v

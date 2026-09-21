@@ -7,7 +7,7 @@
 <p align="center">
   <strong>One identity, every lab.</strong><br>
   Work · personal · client — each profile holds its own Claude, Codex, Grok, Gemini,
-  Cursor and opencode login, switched together or pinned one at a time.<br>
+  Cursor, opencode and Muse login, switched together or pinned one at a time.<br>
   A menu bar app plus a small CLI.
 </p>
 
@@ -83,7 +83,7 @@ preference — it is whatever that CLI actually supports:
 
 | Tier | What it means | Labs |
 |---|---|---|
-| `env` | The CLI reads a config-dir environment variable, so a profile can be pinned **per process**. Two profiles run side by side, and a running session keeps its profile no matter what you switch to later. | Claude, Codex, Grok, Cursor, opencode |
+| `env` | The CLI reads a config-dir environment variable, so a profile can be pinned **per process**. Two profiles run side by side, and a running session keeps its profile no matter what you switch to later. | Claude, Codex, Grok, Cursor, opencode, Muse |
 | `swap` | No such variable exists, so the only lever is swapping the dot dir symlink. **One profile at a time**, and switching is global. | Gemini |
 
 `agents vendors` prints the live table. A `swap` lab refuses to run as a
@@ -117,6 +117,7 @@ functions, so editors, GUI apps and scripts get them too.
 | Grok | `grok` | `~/.grok` | `GROK_HOME` | — | — | — |
 | Cursor | `cursor-agent` | `~/.cursor` | `CURSOR_CONFIG_DIR` | — | — | — |
 | opencode | `opencode` | `~/.config/opencode` | `XDG_CONFIG_HOME` | — | — | — |
+| Muse (Meta) | `muse` | `~/.config/muse` | `XDG_CONFIG_HOME` | — | — | — |
 | Gemini | `gemini` | `~/.gemini` | *none* | — | — | — |
 
 Every one of those isolation levers was verified against the shipped binary
