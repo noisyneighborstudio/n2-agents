@@ -531,7 +531,7 @@ private struct ProfileCard: View {
             }
             Text(s.text)
             if let used = reading.used {
-                Text(verbatim: "· \(used)%").monospacedDigit().fontWeight(.semibold).foregroundStyle(.primary)
+                Text(verbatim: "· \(used)% used").monospacedDigit().fontWeight(.semibold).foregroundStyle(.primary)
             }
         }
         .font(.system(size: 10.5))
@@ -644,10 +644,10 @@ private struct SlotRow: View {
             Gauge(percent: b.percent)
                 .frame(height: 4)
                 .matchedGeometryEffect(id: SlotID.gauge(profile.name, vendor.id), in: namespace)
-            Text(verbatim: "\(b.percent)%")
+            Text(verbatim: "\(b.percent)% used")
                 .font(.system(size: 10.5)).monospacedDigit()
                 .foregroundStyle(u.maxed ? maxedRed : .primary)
-                .frame(width: 30, alignment: .trailing)
+                .frame(width: 56, alignment: .trailing)
             meta(u, b)
         } else if let note = usage?.note {
             flat(note == .staleToken ? "exclamationmark.triangle" : "arrow.clockwise", label(for: note), Ink.amber)
