@@ -4,6 +4,9 @@
   //   npx wrangler deploy        (from this directory)
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "n2-agents-site",
+  // The OAuth token sees two accounts, so both CI and a local deploy have to
+  // be told which one owns this Worker. Without it, wrangler stops to ask.
+  "account_id": "76a59d239619ed344d267008c790ba18",
   "main": "src/index.js",
   "compatibility_date": "2026-09-19",
   "assets": {

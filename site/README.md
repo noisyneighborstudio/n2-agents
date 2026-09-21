@@ -15,18 +15,26 @@ step: `wrangler deploy` bundles the Worker on its way up.
 
 ## Deploy
 
+Merging to `main` deploys, whenever the merge touches `site/`. The workflow is
+`.github/workflows/deploy-site.yml`: it builds, deploys, then checks that the
+live page and `/og.png` both answer and that the card really is a 1200x630 PNG.
+Pull requests run the build only, so a broken Worker is caught before merge
+rather than after.
+
+That needs one repository secret, `CLOUDFLARE_API_TOKEN`, with Account /
+Workers Scripts: Edit and Zone / DNS: Edit on noisyneighbor.studio. Without it
+the deploy stops with that message instead of failing somewhere confusing.
+
+To push a build by hand:
+
     cd site
     npx wrangler deploy
 
-That's it. `wrangler.jsonc` declares `agents.noisyneighbor.studio` as a
-`custom_domain`, so the first deploy creates the DNS record and the certificate
-in the same Cloudflare zone that already serves noisyneighbor.studio. Later
-deploys just replace the assets.
-
-Requires a wrangler session for the Cloudflare account that owns the zone.
-`npx wrangler whoami` should name it. If you'd rather deploy from CI, set
-`CLOUDFLARE_API_TOKEN` (Workers Scripts: Edit + Zone DNS: Edit) and run the same
-command.
+`wrangler.jsonc` pins `account_id`, because the login sees more than one
+account and wrangler stops to ask otherwise. It also declares
+`agents.noisyneighbor.studio` as a `custom_domain`, so the first deploy created
+the DNS record and the certificate in the same Cloudflare zone that already
+serves noisyneighbor.studio. Later deploys just replace the assets.
 
 ## The unfurl card
 
