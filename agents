@@ -340,13 +340,13 @@ rotation_next() {
   echo "$next"
 }
 
-# Server-side usage per profile, from the same OAuth endpoint the CLI's /usage
-# screen reads. Ground truth (includes web/desktop/other machines), not a local
-# heuristic. Prints: name<TAB>5h%<TAB>7d%<TAB>5h-resets<TAB>note
+# Server-side usage per profile, from the endpoint the lab's own CLI reads for
+# its usage screen (Claude: /usage; Codex: /status). Ground truth (includes
+# web/desktop/other machines), not a local heuristic.
+# Prints: name<TAB>5h%<TAB>7d%<TAB>5h-resets<TAB>note<TAB>7d-resets
 #
 # Only vendors whose adapter reports usage=oauth can answer this; the rest have
-# no public quota endpoint, and guessing from local logs would be worse than
-# saying so.
+# no quota endpoint, and guessing from local logs would be worse than saying so.
 usage_table() {  # vendor
   if [ "$(vendor_usage "$1")" != oauth ]; then
     for n in $(all_profiles); do
@@ -364,10 +364,10 @@ usage_table() {  # vendor
   done
   [ -n "$ut_args" ] || return 0
   # shellcheck disable=SC2086
-  /usr/bin/python3 - $ut_args <<'PYEOF'
-import hashlib, json, subprocess, sys, time, urllib.error, urllib.request
+  /usr/bin/python3 - "$1" $ut_args <<'PYEOF'
+import hashlib, json, os, subprocess, sys, time, urllib.error, urllib.request
 
-def creds(cfg, is_default):
+def claude_creds(cfg, is_default):
     # Keychain service is "Claude Code-credentials[-<sha256(cfgdir)[:8]>]";
     # the unsuffixed entry belongs to the default ~/.claude config dir.
     svcs = ['Claude Code-credentials-' + hashlib.sha256(cfg.encode()).hexdigest()[:8]]
@@ -396,23 +396,58 @@ def creds(cfg, is_default):
         pass
     return (found, 'stale-token') if found else (None, 'no-token')
 
-for pair in sys.argv[1:]:
+def claude(name, cfg):
+    c, status = claude_creds(cfg, name == 'Default')
+    if status != 'ok':
+        return status, None
+    return 'ok', urllib.request.Request('https://api.anthropic.com/api/oauth/usage',
+        headers={'Authorization': 'Bearer ' + c['accessToken'],
+                 'anthropic-beta': 'oauth-2025-04-20', 'User-Agent': 'n2-agents'})
+
+def claude_row(r):
+    five, seven = r.get('five_hour') or {}, r.get('seven_day') or {}
+    return (five.get('utilization', '-'), seven.get('utilization', '-'),
+            (five.get('resets_at') or '-')[:16], (seven.get('resets_at') or '-')[:16])
+
+def codex(name, cfg):
+    # An API-key login has no plan quota to read, and no tokens.
+    try:
+        t = json.load(open(cfg + '/auth.json')).get('tokens') or {}
+    except (OSError, ValueError):
+        t = {}
+    if not t.get('access_token'):
+        return 'no-token', None
+    url = os.environ.get('N2_CODEX_USAGE_URL', 'https://chatgpt.com/backend-api/wham/usage')
+    return 'ok', urllib.request.Request(url,
+        headers={'Authorization': 'Bearer ' + t['access_token'],
+                 'ChatGPT-Account-Id': t.get('account_id', ''), 'User-Agent': 'n2-agents'})
+
+def codex_row(r):
+    # Plans differ in which windows they have (a 5-hour one, a weekly one, or
+    # both), so each window is placed by its length, not its position.
+    rl = r.get('rate_limit') or {}
+    cols = {}
+    for w in (rl.get('primary_window'), rl.get('secondary_window')):
+        if w:
+            used = 100 if rl.get('limit_reached') else w.get('used_percent', '-')
+            reset = time.strftime('%Y-%m-%dT%H:%M', time.gmtime(w['reset_at'])) if w.get('reset_at') else '-'
+            cols['five' if w.get('limit_window_seconds', 0) <= 5 * 3600 else 'seven'] = (used, reset)
+    five, seven = cols.get('five', ('-', '-')), cols.get('seven', ('-', '-'))
+    return five[0], seven[0], five[1], seven[1]
+
+request, row = {'claude': (claude, claude_row), 'codex': (codex, codex_row)}[sys.argv[1]]
+for pair in sys.argv[2:]:
     name, cfg = pair.split('=', 1)
-    c, status = creds(cfg, name == 'Default')
+    status, req = request(name, cfg)
     if status != 'ok':
         print(f"{name}\t-\t-\t-\t{status}")
         continue
-    req = urllib.request.Request('https://api.anthropic.com/api/oauth/usage',
-        headers={'Authorization': 'Bearer ' + c['accessToken'],
-                 'anthropic-beta': 'oauth-2025-04-20', 'User-Agent': 'n2-agents'})
     try:
-        r = json.load(urllib.request.urlopen(req, timeout=10))
-        five = r.get('five_hour') or {}
-        seven = r.get('seven_day') or {}
-        print(f"{name}\t{five.get('utilization', '-')}\t{seven.get('utilization', '-')}"
-              f"\t{(five.get('resets_at') or '-')[:16]}\tok\t{(seven.get('resets_at') or '-')[:16]}")
+        five, seven, five_at, seven_at = row(json.load(urllib.request.urlopen(req, timeout=10)))
+        print(f"{name}\t{five}\t{seven}\t{five_at}\tok\t{seven_at}")
     except urllib.error.HTTPError as e:
-        print(f"{name}\t-\t-\t-\t{'rate-limited' if e.code == 429 else 'fetch-error'}")
+        note = {429: 'rate-limited', 401: 'stale-token', 403: 'stale-token'}.get(e.code, 'fetch-error')
+        print(f"{name}\t-\t-\t-\t{note}")
     except Exception:
         print(f"{name}\t-\t-\t-\tfetch-error")
 PYEOF
@@ -428,8 +463,9 @@ pick_best() {
   while IFS="$(printf '\t')" read -r n five seven _ note _; do
     [ "$note" = ok ] || continue
     [ "$n" = "${2:-}" ] && continue
+    # A plan may have only one of the windows; the other counts as empty.
     f=${five%.*} s=${seven%.*}
-    case $f in ''|*[!0-9]*) continue ;; esac
+    case $f in ''|*[!0-9]*) f=0 ;; esac
     case $s in ''|*[!0-9]*) s=0 ;; esac
     [ "$f" -ge 95 ] || [ "$s" -ge 95 ] && continue
     if [ "$f" -lt "$pb_five" ] || { [ "$f" -eq "$pb_five" ] && [ "$s" -lt "$pb_seven" ]; }; then

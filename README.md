@@ -102,7 +102,7 @@ codex-work                      # run Codex as Work
 grok-personal                   # run Grok as Personal
 
 agents run Work --vendor codex  # the long form of the same thing
-agents run --best               # whichever profile has the most Claude quota left
+agents run --best               # whichever profile has the most quota left
 ```
 
 The `<vendor>-<profile>` commands are real executables on `PATH`, not shell
@@ -113,7 +113,7 @@ functions, so editors, GUI apps and scripts get them too.
 | Lab | CLI | Config home | Isolation | Desktop app | Usage API | Sessions |
 |---|---|---|---|---|---|---|
 | Claude | `claude` | `~/.claude` | `CLAUDE_CONFIG_DIR` | cloned per profile | ✅ | ✅ |
-| Codex | `codex` | `~/.codex` | `CODEX_HOME` | `codex app` | — | ✅ |
+| Codex | `codex` | `~/.codex` | `CODEX_HOME` | `codex app` | ✅ | ✅ |
 | Grok | `grok` | `~/.grok` | `GROK_HOME` | — | — | — |
 | Cursor | `cursor-agent` | `~/.cursor` | `CURSOR_CONFIG_DIR` | — | — | — |
 | opencode | `opencode` | `~/.config/opencode` | `XDG_CONFIG_HOME` | — | — | — |
@@ -124,8 +124,8 @@ rather than taken from documentation. Gemini's `GEMINI_DIR` looks like an
 environment variable but is a source constant equal to `".gemini"`, which is
 why it is the one `swap` lab.
 
-Only Claude currently exposes a server-side quota endpoint, so `agents best`
-works for Claude and tells you plainly that the others have nothing to rank.
+Only Claude and Codex expose a server-side quota endpoint, so `agents best`
+works for those two and tells you plainly that the others have nothing to rank.
 
 **Adding a lab** means adding one `case` arm to each accessor in
 [`vendors.sh`](vendors.sh). Nothing in `agents` or the menu bar app needs to
@@ -164,8 +164,8 @@ agents transfer <id> --to Personal --vendor codex
 agents run Personal --vendor codex --start-from-session=<id>
 ```
 
-`--best` picks the profile with the most Claude quota left (from the same OAuth
-endpoint the CLI's own `/usage` screen reads — real server-side numbers, not a
+`--best` picks the profile with the most quota left (from the same endpoint
+the lab's own CLI reads for its usage screen — real server-side numbers, not a
 local guess). `--next` round-robins.
 
 ## Coming from Claudes

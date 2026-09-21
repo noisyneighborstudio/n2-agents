@@ -147,8 +147,27 @@ print -r -- "$authed" | grep -qx 'codex	yes'
 print -r -- "$authed" | grep -qx 'grok	no'
 print -r -- "$authed" | grep -qx 'cursor	unknown'
 rm "$home/.n2-agents/Work/codex/auth.json"
-usage=$(run_agents best --porcelain --vendor codex)
+usage=$(run_agents best --porcelain --vendor grok)
 print -r -- "$usage" | grep -qx 'Work	-	-	-	no-usage-api'
+# Codex reports quota too. Signed out says so; signed in, each window lands in
+# the column for its length (a weekly-only plan has no 5h figure), and a
+# reached limit reads as full whatever the percentage.
+usage=$(run_agents best --porcelain --vendor codex)
+print -r -- "$usage" | grep -qx 'Work	-	-	-	no-token'
+codex_usage() {  # used%, limit reached
+  printf '{"rate_limit": {"limit_reached": %s, "primary_window": {"used_percent": %s, "limit_window_seconds": 604800, "reset_at": 1790411072}, "secondary_window": null}}' \
+    "$2" "$1" > "$test_root/codex-usage.json"
+}
+export N2_CODEX_USAGE_URL="file://$test_root/codex-usage.json"
+codex_auth='{"tokens": {"access_token": "t", "account_id": "a"}}'
+echo "$codex_auth" > "$home/.n2-agents/Work/codex/auth.json"
+codex_usage 44 false
+usage=$(run_agents best --porcelain --vendor codex)
+print -r -- "$usage" | grep -qx 'Work	-	44	-	ok	2026-09-26T08:24'
+codex_usage 80 true
+usage=$(run_agents best --porcelain --vendor codex)
+print -r -- "$usage" | grep -qx 'Work	-	100	-	ok	2026-09-26T08:24'
+rm "$home/.n2-agents/Work/codex/auth.json"
 
 # Recent sessions span labs, newest first, and skip injected context to reach
 # the first real prompt.
@@ -198,7 +217,8 @@ if run_agents run >/dev/null 2>&1; then echo "run picked a slot with nothing sig
 # Commands that act on one lab ask rather than defaulting to the first.
 if run_agents login Work >/dev/null 2>&1; then echo "login guessed a lab" >&2; exit 1; fi
 rm -f "$home/.n2-agents/.last-slot"
-echo '{}' > "$home/.n2-agents/Work/codex/auth.json"
+echo "$codex_auth" > "$home/.n2-agents/Work/codex/auth.json"
+codex_usage 10 false
 echo '{}' > "$home/.n2-agents/Work/grok/auth.json"
 # The only signed-in slots are Work's Codex and Grok, so that's where it goes…
 out=$(run_agents run 2>&1)
@@ -216,6 +236,12 @@ out=$(run_agents run --vendor codex 2>&1)
 [[ $out == *"CODEX_HOME=$home/.n2-agents/Work/codex"* ]]
 porcelain=$(run_agents porcelain)
 print -r -- "$porcelain" | grep -qx "L	Work	codex"
+# A lab at its limit is passed over, every time round.
+codex_usage 100 true
+out=$(run_agents run 2>&1)
+[[ $out == *"GROK_HOME=$home/.n2-agents/Work/grok"* ]]
+out=$(run_agents run 2>&1)
+[[ $out == *"GROK_HOME=$home/.n2-agents/Work/grok"* ]]
 rm "$home/.n2-agents/Work/codex/auth.json" "$home/.n2-agents/Work/grok/auth.json"
 
 # --- adopt: shares claudes state, never copies it --------------------------

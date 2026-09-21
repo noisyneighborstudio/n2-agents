@@ -303,7 +303,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     private var usageSlowTimer: DispatchWorkItem?
 
     private func refreshUsage(force: Bool) {
-        guard let vendor = model.data?.quotaVendor else { return }
+        guard let vendors = model.data?.quotaVendors, !vendors.isEmpty else { return }
         let due = force || usageFetchedAt.map { Date().timeIntervalSince($0) >= usageTTL } ?? true
         guard due else { return }
         if model.usageLoading {
@@ -316,15 +316,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         usageSlowTimer = slow
         DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: slow)
         DispatchQueue.global(qos: .utility).async {
-            let r = self.runCLI(["best", "--porcelain", "--vendor", vendor.id])
+            let fresh = Dictionary(uniqueKeysWithValues: vendors.map { v in
+                let r = self.runCLI(["best", "--porcelain", "--vendor", v.id])
+                return (v.id, r.status == 0 ? Usage.parse(r.output) : [:])
+            })
             DispatchQueue.main.async {
                 self.model.usageLoading = false
                 self.usageSlowTimer?.cancel()
                 self.model.usageSlow = false
                 self.usageFetchedAt = Date()
-                let fresh = r.status == 0 ? Usage.parse(r.output) : [:]
-                self.usageTTL = fresh.values.contains { $0.note == .rateLimited } ? 900 : 300
-                self.model.usage = Usage.merge(self.model.usage, fresh)
+                self.usageTTL = fresh.values.contains { $0.values.contains { $0.note == .rateLimited } } ? 900 : 300
+                let old = self.model.usage
+                self.model.usage = fresh.reduce(into: [:]) { $0[$1.key] = Usage.merge(old[$1.key] ?? [:], $1.value) }
                 if self.usageRefetch {
                     self.usageRefetch = false
                     self.refreshUsage(force: true)

@@ -17,7 +17,7 @@
 #   desktop     clone  — a macOS bundle we copy per profile (Claude)
 #               launch — the CLI opens its own desktop app (Codex)
 #               none
-#   usage       oauth  — server-side quota we can query (Claude only, today)
+#   usage       oauth  — server-side quota we can query (Claude, Codex)
 #               none
 #   sessions    layout of resumable transcripts, for list/transfer
 #   logout/login  the CLI's own sign-out/sign-in subcommands, for `agents login`
@@ -139,7 +139,7 @@ vendor_desktop_bundle() {
 
 vendor_usage() {
   case $1 in
-    claude) echo oauth ;;
+    claude|codex) echo oauth ;;
     *)      echo none ;;
   esac
 }

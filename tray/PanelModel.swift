@@ -23,9 +23,10 @@ struct Usage {
     var fetchedAt = Date()
 
     /// Used in whichever window is tighter — the one that stops you first.
+    /// A plan may have only one of the two.
     var used: Int? {
-        guard note == .ok, let f = fiveHour else { return nil }
-        return max(f, sevenDay ?? 0)
+        guard note == .ok, fiveHour != nil || sevenDay != nil else { return nil }
+        return max(fiveHour ?? 0, sevenDay ?? 0)
     }
 
     /// 95%+ in either window. The endpoint reports utilisation and the last
@@ -85,8 +86,8 @@ struct PanelData {
     let launchDesktops: Set<String>
 
     var desktopInstalled: Bool { desktopVersion != nil }
-    /// The lab whose quota the panel can show (Claude alone, today).
-    var quotaVendor: Vendor? { snapshot.installedVendors.first { $0.hasUsageAPI } }
+    /// The labs whose quota the panel can show.
+    var quotaVendors: [Vendor] { snapshot.installedVendors.filter(\.hasUsageAPI) }
     /// The lab whose desktop app is cloned per profile (Claude alone, today) —
     /// every desktop clone feature keys off this, never a lab's name.
     var cloneVendor: Vendor? { snapshot.installedVendors.first { $0.clonesDesktopApp } }
@@ -118,8 +119,9 @@ enum UpdateStatus: Equatable {
 
 final class PanelModel: ObservableObject {
     @Published var data: PanelData?
-    /// Quota for data.quotaVendor, profile -> row. Empty until the first fetch lands.
-    @Published var usage: [String: Usage] = [:]
+    /// Quota for data.quotaVendors, vendor -> profile -> row. A lab is
+    /// missing until its first fetch lands.
+    @Published var usage: [String: [String: Usage]] = [:]
     @Published var usageLoading = false
     /// A fetch has run 3 s with nothing to show: sweeps give way to a label,
     /// because motion that outlives its welcome reads as a hang.
@@ -153,10 +155,11 @@ final class PanelModel: ObservableObject {
             let (profile, vendor) = slots[(after + 1 + i) % slots.count]
             guard snap.signedIn[profile]?[vendor.id] != false else { continue }
             guard vendor.hasUsageAPI else { return .slot(profile: profile, vendor: vendor.id, used: nil) }
-            guard vendor.id == data.quotaVendor?.id, let u = usage[profile] else {
-                if usage.isEmpty && usageLoading { return nil }
+            guard let rows = usage[vendor.id] else {
+                if usageLoading { return nil }
                 continue
             }
+            guard let u = rows[profile] else { continue }
             guard u.note == .ok else { continue }
             if u.maxed {
                 sawMaxed = true

@@ -22,12 +22,11 @@ private func meterColor(_ percent: Int) -> Color {
 
 private let maxedRed = Color(nsColor: .systemRed)
 
-private let clockTime: DateFormatter = {
-    let f = DateFormatter()
-    f.timeStyle = .short
-    f.dateStyle = .none
-    return f
-}()
+/// "3:20 PM" today, "Fri 3:20 PM" further out — a weekly window resets days away.
+private func clockTime(_ date: Date) -> String {
+    date.formatted(Calendar.current.isDateInToday(date) ? .dateTime.hour().minute()
+                                                        : .dateTime.weekday(.abbreviated).hour().minute())
+}
 
 // MARK: - Root
 
@@ -348,7 +347,7 @@ private struct NextBestButton: View {
                 })
             } label: {
                 row(icon: "clock", iconColor: maxedRed, title: "Everything is maxed") {
-                    if let firstBack { Text("first back \(clockTime.string(from: firstBack))").foregroundStyle(maxedRed) }
+                    if let firstBack { Text("first back \(clockTime(firstBack))").foregroundStyle(maxedRed) }
                 }
             }
             .buttonStyle(RowButtonStyle(radius: 8, border: true))
@@ -391,7 +390,7 @@ private struct ProfileCard: View {
     // "out" — nothing says it is — so a profile only reads as maxed when each
     // of its labs is. Labs that are out on their own are named instead, and
     // their chips carry the maxed state.
-    private func usage(for v: Vendor) -> Usage? { v.id == data.quotaVendor?.id ? quotaUsage : nil }
+    private func usage(for v: Vendor) -> Usage? { model.usage[v.id]?[profile.name] }
     private var labsOut: [(vendor: Vendor, until: Date?)] {
         slotted.compactMap { v in usage(for: v).flatMap { $0.maxed ? (v, $0.maxedUntil) : nil } }
     }
@@ -476,19 +475,17 @@ private struct ProfileCard: View {
         }
     }
 
-    private var quotaUsage: Usage? { model.usage[profile.name] }
-
     private func signedOut(_ v: Vendor) -> Bool {
-        v.id == data.quotaVendor?.id && (quotaUsage?.note == .noToken || quotaUsage?.note == .staleToken)
+        usage(for: v)?.note == .noToken || usage(for: v)?.note == .staleToken
     }
 
     // Four pictures that never look alike: a reading (track + fill), no
     // reading yet or a failed one (empty track), loading (sweep), and no
     // quota API at all (no track).
     private func gauge(for v: Vendor) -> ChipGauge? {
-        guard v.id == data.quotaVendor?.id else { return nil }
-        if let used = quotaUsage?.used { return .used(used) }
-        if quotaUsage == nil && !model.usageSlow { return .loading }
+        guard v.hasUsageAPI else { return nil }
+        if let used = usage(for: v)?.used { return .used(used) }
+        if usage(for: v) == nil && !model.usageSlow { return .loading }
         return .noReading
     }
 
@@ -504,14 +501,14 @@ private struct ProfileCard: View {
                     // Back when the first lab is back.
                     HStack(spacing: 4) {
                         Image(systemName: "clock")
-                        Text(labsOut.compactMap(\.until).min().map { "Maxed until \(clockTime.string(from: $0))" } ?? "Maxed")
+                        Text(labsOut.compactMap(\.until).min().map { "Maxed until \(clockTime($0))" } ?? "Maxed")
                     }
                     .foregroundStyle(maxedRed)
                 } else if let out = labsOut.first {
                     HStack(spacing: 4) {
                         Image(systemName: "clock")
                         if labsOut.count == 1 {
-                            Text(out.until.map { "\(out.vendor.label) out until \(clockTime.string(from: $0))" }
+                            Text(out.until.map { "\(out.vendor.label) out until \(clockTime($0))" }
                                  ?? "\(out.vendor.label) out")
                         } else {
                             Text("\(labsOut.count) of \(slotted.count) labs out")
@@ -543,8 +540,13 @@ private struct ProfileCard: View {
     }
 
     // Clone state outranks capacity: while a clone is behind, that is the
-    // thing to act on. Otherwise the card carries the most constrained lab's
-    // capacity — Claude's, as the only lab with a usage API today.
+    // thing to act on. Otherwise the card carries the selected lab's capacity,
+    // or else the most constrained lab's.
+    private var quotaShown: Vendor? {
+        if let v = selected, v.hasUsageAPI { return v }
+        return slotted.filter(\.hasUsageAPI).max { (usage(for: $0)?.used ?? -1) < (usage(for: $1)?.used ?? -1) }
+    }
+
     // A setup left unfinished: labs chosen, and some known to be signed out.
     // (A lab that keeps its login out of sight counts as done, as in setup.)
     private var pendingSetup: (labs: [String], done: Int, missing: [String])? {
@@ -564,8 +566,8 @@ private struct ProfileCard: View {
             InlineStatus(text: profile.running ? "Waiting — clone is in use"
                                                : actions.autoRepatch ? "Queued for rebuild" : "Auto-repatch is off",
                          button: "Rebuild Now") { actions.rebuildClone(profile.name) }
-        } else if let v = data.quotaVendor, profile.slots[v.id] != nil {
-            QuotaRegion(vendor: v, usage: quotaUsage, slow: model.usageSlow, index: index) {
+        } else if let v = quotaShown {
+            QuotaRegion(vendor: v, usage: usage(for: v), slow: model.usageSlow, index: index) {
                 actions.signIn(profile: profile.name, vendor: v.id, confirm: false)
             } retry: {
                 actions.retryUsage()
@@ -608,10 +610,15 @@ private struct QuotaRegion: View {
         case .ok?:
             // Fills rise from zero, cards 80 ms apart.
             let delay = reduceMotion ? 0 : Double(index) * 0.08
+            // A plan may have only one of the windows (Codex Pro: weekly alone).
             VStack(spacing: 7) {
-                MeterRow(label: "5h", percent: usage?.fiveHour,
-                         meta: usage?.resets.map { "resets \(Self.resetTime.string(from: $0))" } ?? "", delay: delay)
-                MeterRow(label: "7d", percent: usage?.sevenDay, meta: sevenDayMeta, delay: delay)
+                if let five = usage?.fiveHour {
+                    MeterRow(label: "5h", percent: five,
+                             meta: usage?.resets.map { "resets \(Self.resetTime.string(from: $0))" } ?? "", delay: delay)
+                }
+                if let seven = usage?.sevenDay {
+                    MeterRow(label: "7d", percent: seven, meta: sevenDayMeta, delay: delay)
+                }
             }
         case .noToken?:
             InlineStatus(text: "\(vendor.label) quota unavailable — not signed in", button: "Log In", action: logIn)
@@ -913,7 +920,7 @@ private struct VendorDrawer: View {
     let actions: PanelActions
     @State private var copied = false
 
-    private var usage: Usage? { data.quotaVendor?.id == vendor.id ? model.usage[profile.name] : nil }
+    private var usage: Usage? { model.usage[vendor.id]?[profile.name] }
     private var command: String { "\(vendor.id)-\(profile.name.lowercased())" }
 
     private var summary: String {
