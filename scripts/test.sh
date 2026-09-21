@@ -35,7 +35,7 @@ zsh -n install.sh uninstall.sh make-claude-profile.sh repatch-claude-profiles.sh
   scripts/publish-appcast.sh shell/agents.zsh
 bash -n shell/agents.bash
 command -v fish >/dev/null && fish -n shell/agents.fish
-swiftc -typecheck tray/main.swift tray/UpdateChannel.swift tray/Vendors.swift tray/ProfileColor.swift tray/Ink.swift \
+swiftc -typecheck tray/main.swift tray/UpdateChannel.swift tray/Vendors.swift tray/ProfileColor.swift tray/Ink.swift tray/LabMark.swift \
   tray/PanelModel.swift tray/PanelView.swift tray/ProfileSetup.swift tray/GlassWindow.swift tray/ShellPath.swift
 swiftc -typecheck tray/icon-badge/main.swift tray/ProfileColor.swift
 swiftc -typecheck scripts/make-icon.swift
