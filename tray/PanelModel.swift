@@ -34,6 +34,15 @@ struct Usage {
     static let maxedAt = 95
     var maxed: Bool { (used ?? 0) >= Self.maxedAt }
 
+    /// The window that binds — the one that stops you first — with its reset.
+    /// Depth 2 shows this one; depth 3 shows both.
+    var binding: (tag: String, percent: Int, resets: Date?)? {
+        guard note == .ok else { return nil }
+        let f = fiveHour ?? -1, d = sevenDay ?? -1
+        guard f >= 0 || d >= 0 else { return nil }
+        return f >= d ? ("5h", max(f, 0), resets) : ("7d", max(d, 0), sevenResets)
+    }
+
     /// When a maxed lab comes back: the latest reset among the maxed windows.
     var maxedUntil: Date? {
         guard maxed else { return nil }
@@ -86,6 +95,10 @@ struct PanelData {
     let launchDesktops: Set<String>
 
     var desktopInstalled: Bool { desktopVersion != nil }
+    /// The labs this profile holds, in table order.
+    func slotted(_ profile: Profile) -> [Vendor] {
+        snapshot.installedVendors.filter { profile.slots[$0.id] != nil }
+    }
     /// The labs whose quota the panel can show.
     var quotaVendors: [Vendor] { snapshot.installedVendors.filter(\.hasUsageAPI) }
     /// The lab whose desktop app is cloned per profile (Claude alone, today) —
@@ -111,6 +124,21 @@ enum NextBest {
     case nothingSignedIn
 }
 
+/// Where a profile stands, as one closed vocabulary. The card's status slot
+/// answers exactly one question — can I work here right now — so everything
+/// that isn't capacity (a desktop app's process, a pending rebuild) lives
+/// deeper or in the banner, never here.
+enum ProfileState: Equatable {
+    case ready
+    case checking
+    /// Some labs are out; `until` is the soonest one back.
+    case labsOut(out: Int, of: Int, until: Date?)
+    /// Nothing left to run at all.
+    case allOut(until: Date?)
+    case needsSignIn(Int)
+    case notSignedIn
+}
+
 enum UpdateStatus: Equatable {
     case upToDate
     case available
@@ -129,10 +157,51 @@ final class PanelModel: ObservableObject {
     /// Flips false → true on every open; the content rises into place off it.
     @Published var presented = true
     @Published var repatching: Set<String> = []
+    /// The one profile showing its labs. One at a time keeps the panel's
+    /// height bounded, which is what lets depth 3 open in place.
+    @Published var expanded: String?
+    /// The one slot showing its actions, inside the expanded profile.
     @Published var selection: Selection?
     @Published var updateStatus: UpdateStatus?
     /// Profiles whose setup was left unfinished: profile -> the labs it set up.
     @Published var pendingSetups: [String: [String]] = [:]
+
+    /// A profile's status and its capacity, read together because they answer
+    /// halves of the same question.
+    ///
+    /// The number is the mean of `used` across the slots that reported one:
+    /// equal weighting is a rule that can be stated, and a profile with one lab
+    /// maxed and six with room is genuinely usable — the mean says so while the
+    /// strip below it shows where the hole is. Labs with no quota API and labs
+    /// that aren't signed in contribute no number rather than a guessed one.
+    func reading(_ profile: Profile, _ data: PanelData) -> (state: ProfileState, used: Int?) {
+        let slotted = data.snapshot.installedVendors.filter { profile.slots[$0.id] != nil }
+        let metered = slotted.filter(\.hasUsageAPI)
+        func signedIn(_ v: Vendor) -> Bool { data.snapshot.signedIn[profile.name]?[v.id] != false }
+        func row(_ v: Vendor) -> Usage? { usage[v.id]?[profile.name] }
+
+        let live = metered.filter(signedIn)
+        let readable = live.compactMap { row($0) }.filter { $0.note == .ok }
+        let values = readable.compactMap(\.used)
+        let used = values.isEmpty ? nil : Int((Double(values.reduce(0, +)) / Double(values.count)).rounded())
+
+        let out = readable.filter(\.maxed)
+        let back = out.compactMap(\.maxedUntil).min()
+        let signedOut = slotted.filter { !signedIn($0) }
+
+        if !slotted.isEmpty, signedOut.count == slotted.count { return (.notSignedIn, nil) }
+        if !live.isEmpty, live.allSatisfy({ row($0) == nil }) { return (.checking, nil) }
+        if !live.isEmpty, out.count == live.count {
+            // A lab with no quota API can still be opened, so it keeps the
+            // profile out of the red even when every metered one is spent.
+            let openable = slotted.contains { !$0.hasUsageAPI && signedIn($0) }
+            return openable ? (.labsOut(out: out.count, of: slotted.count, until: back), used)
+                            : (.allOut(until: back), used)
+        }
+        if !out.isEmpty { return (.labsOut(out: out.count, of: slotted.count, until: back), used) }
+        if !signedOut.isEmpty { return (.needsSignIn(signedOut.count), used) }
+        return (.ready, used)
+    }
 
     /// The CLI's next_best, run over what's already read, so the button names
     /// its pick before anything starts: every slot in one rotation (profiles
