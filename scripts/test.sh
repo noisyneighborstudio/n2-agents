@@ -93,6 +93,13 @@ out=$(run_agents run Work --vendor codex)
 out=$(run_agents run Work --vendor grok)
 [[ $out == *"GROK_HOME=$home/.n2-agents/Work/grok"* ]]
 
+# A sign-in names the profile and slot it writes to before the vendor's own
+# prompt appears; ordinary runs stay quiet.
+err=$(run_agents run Work --vendor codex login 2>&1 >/dev/null)
+[[ $err == *"login for profile 'Work' (CODEX_HOME=$home/.n2-agents/Work/codex)"* ]]
+err=$(run_agents run Work --vendor codex exec hi 2>&1 >/dev/null)
+[[ -z $err ]]
+
 # A swap-only vendor must refuse to run as a non-active profile without
 # --switch, because there is no way to pin it per process. The slot exists, so
 # this can only be the isolation guard talking.
