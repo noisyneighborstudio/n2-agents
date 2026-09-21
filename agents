@@ -19,6 +19,7 @@
 #   agents desktop [Name|--next|--best] [--vendor <v>] [--switch]
 #   agents shims [--remove]               sync <vendor>-<profile> commands on PATH
 #   agents app-path                       print the Claude Desktop bundle path
+#   agents fleet <verb>                   fleet identity, enrollment, peers
 #   agents version
 #
 # A profile is an IDENTITY, not a login: "Work" holds one slot per vendor, so
@@ -53,6 +54,9 @@ lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
 # The vendor adapter table — every lab-specific fact lives there.
 . "$scripts_dir/vendors.sh"
+
+# The fleet layer — identity, enrollment, peer transport (docs/fleet-design.md).
+. "$scripts_dir/fleet.sh"
 
 # --- vendor selection ------------------------------------------------------
 
@@ -1417,6 +1421,7 @@ case $cmd in
   login)    cmd_login "$@" ;;
   authed)   cmd_authed "$@" ;;
   transfer) cmd_transfer "$@" ;;
+  fleet)    cmd_fleet "$@" ;;
   desktop)  cmd_desktop "$@" ;;
   shims)    cmd_shims "$@" ;;
   app-path) cmd_app_path ;;

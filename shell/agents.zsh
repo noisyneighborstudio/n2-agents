@@ -26,7 +26,9 @@ _n2agents_profiles() {
 _n2agents_cli() {
   if (( CURRENT == 2 )); then
     _values 'command' list vendors active use run best new delete repatch adopt \
-      sessions transfer desktop shims porcelain profiles version help
+      sessions transfer fleet desktop shims porcelain profiles version help
+  elif [[ ${words[2]} == fleet ]]; then
+    (( CURRENT == 3 )) && _values 'fleet verb' init id invite join pair pending approve deny revoke discover reconcile rehost route roster peers ping status send serve help
   elif [[ ${words[CURRENT-1]} == (--vendor|--vendors) ]]; then
     local -a vendors
     vendors=(${(f)"$(agents porcelain 2>/dev/null | awk -F'\t' '$1=="V" && $3=="1" {print $2}')"})

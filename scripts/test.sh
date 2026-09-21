@@ -27,9 +27,13 @@ done
 printf '#!/bin/sh\nexit 44\n' > "$fake_bin/security"
 chmod +x "$fake_bin/security"
 fake_path="$fake_bin:/usr/bin:/bin"
+# The suite asserts which vendor env vars `agents` sets, so any inherited from
+# the developer's own shell (a real CODEX_HOME, XDG_CONFIG_HOME, …) would read
+# as a leak. Clear them once, here, so the run means the same everywhere.
+unset CLAUDE_CONFIG_DIR CODEX_HOME GROK_HOME CURSOR_CONFIG_DIR XDG_CONFIG_HOME GEMINI_DIR
 
 # --- syntax ----------------------------------------------------------------
-sh -n agents vendors.sh shell/agent-as
+sh -n agents vendors.sh fleet.sh shell/agent-as scripts/test-fleet.sh
 zsh -n install.sh uninstall.sh make-claude-profile.sh repatch-claude-profiles.sh tray/build.sh \
   scripts/release-build.sh scripts/make-appcast.sh scripts/release-prepare.sh \
   scripts/publish-appcast.sh shell/agents.zsh
