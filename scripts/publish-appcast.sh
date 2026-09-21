@@ -34,6 +34,21 @@ if ! gh release view "$tag" -R "$N2_UPDATES_REPO" >/dev/null 2>&1; then
 fi
 gh release upload "$tag" -R "$N2_UPDATES_REPO" --clobber N2Agents.zip "$artifact"
 url="https://github.com/${N2_UPDATES_REPO}/releases/download/${tag}/${artifact}"
+# A freshly uploaded asset can answer 504 for minutes, and clients fetch it
+# the moment the appcast names it ("An error occurred while downloading the
+# update"). So the appcast waits until the archive downloads whole, three
+# times running.
+size=$(stat -f %z "$artifact") served=0 got=""
+for attempt in {1..60}; do
+  got=$(curl -sL -o /dev/null -w '%{http_code} %{size_download}' "$url" || true)
+  if [[ $got == "200 $size" ]]; then
+    (( ++served >= 3 )) && break
+  else
+    served=0
+  fi
+  sleep 20
+done
+(( served >= 3 )) || { echo "✗ $url still not downloadable after 20 min (last: $got)" >&2; exit 1 }
 
 # Token as a header from the environment: out of argv, out of .git/config.
 export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader

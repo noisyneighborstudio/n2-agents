@@ -97,6 +97,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     private var repatchInFlight = Set<String>() {
         didSet { model.repatching = repatchInFlight }
     }
+    private var updateStatus: UpdateStatus? {
+        didSet {
+            model.updateStatus = updateStatus
+            refreshStatusTitle()
+        }
+    }
+    private var staleExists = false
     private var appsDirSource: DispatchSourceFileSystemObject?
     private var repatchDebounce: DispatchWorkItem?
 #if canImport(Sparkle)
@@ -153,7 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let r = Bundle.main.resourcePath, let icon = NSImage(contentsOfFile: r + "/n2agents.icns") {
-            icon.size = NSSize(width: 18, height: 18)
+            icon.size = NSSize(width: 20, height: 20)
             statusItem.button?.image = icon
             statusItem.button?.imagePosition = .imageLeft
         } else {
@@ -483,13 +490,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     }
 
     private func updateStatusTitle(staleExists: Bool) {
+        self.staleExists = staleExists
+        refreshStatusTitle()
+    }
+
+    // An update waiting shows as an arrow beside the icon, in the menu bar's
+    // own ink, so it's seen without opening the panel.
+    private func refreshStatusTitle() {
+        let waiting = updateStatus == .available
+        statusItem.button?.toolTip = waiting ? "N2 Agents — update available" : nil
         let busy = !repatchInFlight.isEmpty
-        let suffix = busy ? "⏳" : (staleExists ? "⬆️" : "")
-        if statusItem.button?.image != nil {
-            statusItem.button?.title = suffix
-        } else {
-            statusItem.button?.title = "🤖" + suffix
-        }
+        let suffix = (busy ? "⏳" : staleExists ? "⬆️" : "") + (waiting ? "↑" : "")
+        // A plain title, not an attributed one: only that takes the menu bar's ink.
+        statusItem.button?.font = .systemFont(ofSize: 12, weight: .bold)
+        statusItem.button?.title = (statusItem.button?.image == nil ? "🤖" : "") + suffix
     }
 
     func setAutoRepatch(_ on: Bool) {
@@ -550,7 +564,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 
     func setUpdateChannel(_ channel: UpdateChannel) {
         UserDefaults.standard.set(channel.rawValue, forKey: UpdateChannel.preferenceKey)
-        model.updateStatus = nil
+        updateStatus = nil
 #if canImport(Sparkle)
         updaterController.updater.resetUpdateCycle()
 #endif
@@ -580,15 +594,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
         let e = error as NSError
         guard !(e.domain == SUSparkleErrorDomain && e.code == Int(SUError.noUpdateError.rawValue)) else { return }
-        model.updateStatus = .failed(e.localizedDescription)
+        updateStatus = .failed(e.localizedDescription)
     }
 
     func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
-        model.updateStatus = .upToDate
+        updateStatus = .upToDate
     }
 
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
-        model.updateStatus = .available
+        updateStatus = .available
     }
 #endif
 
