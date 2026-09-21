@@ -1196,13 +1196,18 @@ private struct SessionsSection: View {
                                 .foregroundStyle(Ink.secondary)
                                 .frame(minWidth: 22, alignment: .trailing)
                         }
+                        // Two lines: only two sessions show here, so the
+                        // vertical room is free, and the prompt is the thing
+                        // you recognise a session by.
                         Text(s.snippet)
                             .font(.system(size: 11)).foregroundStyle(Ink.secondary)
-                            .lineLimit(1).truncationMode(.tail)
+                            .lineLimit(2).truncationMode(.tail)
+                            .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .padding(.horizontal, 8)
-                    .frame(height: 42)
+                    .padding(.vertical, 7)
+                    .frame(minHeight: 56, alignment: .top)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(RowButtonStyle(radius: 7, resting: 0.05))
