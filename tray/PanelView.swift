@@ -1131,7 +1131,7 @@ private struct OpenButton: View {
 // A small tag. Takes a monogram when the thing has one, a symbol otherwise —
 // never bare text, so a row can be scanned rather than read.
 private struct Chip: View {
-    let text: String
+    var text: String? = nil
     var vendor: Vendor? = nil
     var symbol: String? = nil
     var tint: Color = .primary
@@ -1143,9 +1143,9 @@ private struct Chip: View {
             } else if let symbol {
                 Image(systemName: symbol).font(.system(size: 8, weight: .semibold))
             }
-            Text(text).font(.system(size: 10))
+            if let text { Text(text).font(.system(size: 10)) }
         }
-        .padding(.horizontal, 5)
+        .padding(.horizontal, text == nil ? 3.5 : 5)
         .frame(height: 16)
         .foregroundStyle(tint)
         .background(Capsule().fill(tint.opacity(0.12)))
@@ -1173,26 +1173,36 @@ private struct SessionsSection: View {
             SectionLabel(title: "Recent sessions", detail: "", symbol: "clock.arrow.circlepath")
             ForEach(data.sessions.prefix(2), id: \.id) { s in
                 Button { actions.resumeSession(s) } label: {
-                    HStack(spacing: 8) {
-                        VStack(alignment: .leading, spacing: 1) {
+                    // Where it was and what it was doing are two different
+                    // questions, so they get two lines. The tags ride with the
+                    // folder; the summary — the line you actually recognise a
+                    // session by — gets the full width instead of the scraps
+                    // left over beside them.
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 5) {
                             Text(s.cwd.map { ($0 as NSString).lastPathComponent } ?? "—")
                                 .font(.system(size: 12.5))
-                            Text(s.snippet).font(.system(size: 11)).foregroundStyle(Ink.secondary)
+                                .lineLimit(1).truncationMode(.middle)
+                            Spacer(minLength: 6)
+                            Chip(text: s.profile, symbol: "person.crop.circle",
+                                 tint: profileColor(s.profile))
+                            // The logo is the lab's name; spelling it out again
+                            // was costing the summary its width.
+                            if let v = data.snapshot.vendor(s.vendor) {
+                                Chip(vendor: v, tint: Ink.secondary)
+                            }
+                            Text(Self.age.string(from: s.mtime, to: Date()) ?? "")
+                                .font(.system(size: 11)).monospacedDigit()
+                                .foregroundStyle(Ink.secondary)
+                                .frame(minWidth: 22, alignment: .trailing)
                         }
-                        .lineLimit(1)
-                        Spacer(minLength: 6)
-                        // Which profile and which lab are both tags, not prose.
-                        Chip(text: s.profile, symbol: "person.crop.circle", tint: profileColor(s.profile))
-                        if let v = data.snapshot.vendor(s.vendor) {
-                            Chip(text: v.label, vendor: v, tint: Ink.secondary)
-                        }
-                        Text(Self.age.string(from: s.mtime, to: Date()) ?? "")
-                            .font(.system(size: 11)).monospacedDigit()
-                            .foregroundStyle(Ink.secondary)
-                            .frame(minWidth: 24, alignment: .trailing)
+                        Text(s.snippet)
+                            .font(.system(size: 11)).foregroundStyle(Ink.secondary)
+                            .lineLimit(1).truncationMode(.tail)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .padding(.horizontal, 8)
-                    .frame(height: 40)
+                    .frame(height: 42)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(RowButtonStyle(radius: 7, resting: 0.05))
