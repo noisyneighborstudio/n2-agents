@@ -109,7 +109,20 @@ private struct FittingScroll<Content: View>: View {
                 })
             }
             .frame(height: min(contentHeight, maxHeight))
-            .onPreferenceChange(ContentHeight.self) { contentHeight = $0 }
+            // Mid-animation the frame trails the content, which would read as
+            // scrollable and flash the scroller on every card opened. Only a
+            // panel taller than the screen scrolls.
+            .scrollIndicators(contentHeight > maxHeight ? .automatic : .never)
+            .scrollDisabled(contentHeight <= maxHeight)
+            // On the content's own curve: set bare, the frame (and the footer
+            // under it) would jump to the new height while the cards animate.
+            // The first measurement lands as is — the panel opens at size.
+            .onPreferenceChange(ContentHeight.self) { height in
+                let first = contentHeight == 0
+                withAnimation(first || reduceMotion ? nil : .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.32)) {
+                    contentHeight = height
+                }
+            }
             .onChange(of: focus) { profile in
                 guard let profile else { return }
                 withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) { proxy.scrollTo(profile) }
