@@ -580,8 +580,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     }
 
 #if canImport(Sparkle)
+    // raw.githubusercontent.com caches each encoding of the feed for 5
+    // minutes, and the gzip copy Sparkle asks for can lag a release: "up to
+    // date" while an update sits published. A query unique to the check
+    // skips the cache.
     func feedURLString(for updater: SPUUpdater) -> String? {
-        Bundle.main.object(forInfoDictionaryKey: UpdateChannel.selected().feedInfoKey) as? String
+        (Bundle.main.object(forInfoDictionaryKey: UpdateChannel.selected().feedInfoKey) as? String)
+            .map { "\($0)?t=\(Int(Date().timeIntervalSince1970))" }
     }
 
     func allowedChannels(for updater: SPUUpdater) -> Set<String> {
