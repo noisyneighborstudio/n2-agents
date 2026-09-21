@@ -17,10 +17,10 @@ private func profileColor(_ name: String) -> Color { Color(nsColor: ProfileColor
 // Used: under 50 plenty, 50–79 working on it, 80+ nearly gone. Colour only
 // reinforces — the length of the fill is the reading.
 private func meterColor(_ percent: Int) -> Color {
-    percent < 50 ? Color(nsColor: .systemGreen) : percent < 80 ? Color(nsColor: .systemOrange) : Color(nsColor: .systemRed)
+    percent < 50 ? Ink.green : percent < 80 ? Ink.amber : Ink.red
 }
 
-private let maxedRed = Color(nsColor: .systemRed)
+private let maxedRed = Ink.red
 
 /// "3:20 PM" today, "Fri 3:20 PM" further out — a weekly window resets days away.
 private func clockTime(_ date: Date) -> String {
@@ -131,7 +131,7 @@ private struct PanelHeader: View {
             } else if let data = model.data, data.profiles.count > 1 {
                 Button { popUpActiveMenu(data) } label: {
                     HStack(spacing: 5) {
-                        Text("Active").foregroundStyle(.secondary)
+                        Text("Active").foregroundStyle(Ink.secondary)
                         if data.snapshot.active != "mixed" {
                             Circle().fill(profileColor(data.snapshot.active)).frame(width: 6, height: 6)
                         }
@@ -222,10 +222,10 @@ private struct PanelFooter: View {
             Button(versionLine) { actions.checkForUpdates() }
                 .buttonStyle(.plain)
                 .help(updateHelp)
-                .foregroundStyle(model.updateStatus == .available ? Color.accentColor : .secondary)
+                .foregroundStyle(model.updateStatus == .available ? Ink.link : Ink.secondary)
             Spacer()
-            Button("Report a Bug") { actions.reportBug() }.buttonStyle(.plain).foregroundStyle(Color.accentColor)
-            Button("Quit") { actions.quit() }.buttonStyle(.plain).foregroundStyle(Color.accentColor)
+            Button("Report a Bug") { actions.reportBug() }.buttonStyle(.plain).foregroundStyle(Ink.link)
+            Button("Quit") { actions.quit() }.buttonStyle(.plain).foregroundStyle(Ink.link)
         }
         .font(.system(size: 11))
         .padding(.horizontal, Metrics.side)
@@ -267,18 +267,18 @@ private struct Banner<Buttons: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Image(systemName: icon).foregroundStyle(Color(nsColor: .systemOrange))
+                Image(systemName: icon).foregroundStyle(Ink.amber)
                 Text(text).font(.system(size: 11.5))
                 Spacer(minLength: 0)
             }
             HStack(spacing: 6) { buttons }
-                .buttonStyle(PillButtonStyle(tint: Color(nsColor: .systemOrange)))
+                .buttonStyle(PillButtonStyle(tint: Ink.amber))
                 .padding(.leading, 22)
         }
         .padding(.horizontal, Metrics.side)
         .padding(.vertical, 9)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .systemOrange).opacity(0.16))
+        .background(Ink.amber.opacity(0.16))
         .overlay(alignment: .bottom) { Divider() }
     }
 }
@@ -298,7 +298,7 @@ private struct SectionLabel: View {
             Spacer()
             Text(verbatim: detail).font(.system(size: 11))
         }
-        .foregroundStyle(.secondary)
+        .foregroundStyle(Ink.secondary)
     }
 }
 
@@ -335,10 +335,10 @@ private struct NextBestButton: View {
         switch pick {
         case .slot(let profile, let vendorID, let used)?:
             Button { actions.openSession(profile: profile, vendor: vendorID, terminal: nil) } label: {
-                row(icon: "bolt", iconColor: .accentColor, title: "Open next best") {
+                row(icon: "bolt", iconColor: Ink.link, title: "Open next best") {
                     Text(verbatim: [data.snapshot.vendor(vendorID)?.label ?? vendorID, profile, used.map { "\($0)% used" }]
                             .compactMap { $0 }.joined(separator: " · "))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Ink.secondary)
                 }
             }
             .buttonStyle(RowButtonStyle(radius: 8, border: true))
@@ -359,9 +359,9 @@ private struct NextBestButton: View {
             }
             .buttonStyle(RowButtonStyle(radius: 8, border: true))
         case .nothingSignedIn?:
-            row(icon: "bolt.slash", iconColor: .secondary, title: "Nothing is signed in") { EmptyView() }
+            row(icon: "bolt.slash", iconColor: Ink.secondary, title: "Nothing is signed in") { EmptyView() }
                 .background(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.12)))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Ink.secondary)
         case nil:
             row(icon: "bolt", iconColor: .primary, title: "Open next best") { EmptyView() }
                 .background(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.12)))
@@ -450,7 +450,7 @@ private struct ProfileCard: View {
                         Image(systemName: "plus").font(.system(size: 9, weight: .semibold)).frame(width: 17, height: 17)
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Ink.secondary)
                     .help("Add a lab to \(profile.name)")
                 }
             }
@@ -460,8 +460,9 @@ private struct ProfileCard: View {
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 9)
-        .background(RoundedRectangle(cornerRadius: Metrics.cardRadius)
-            .fill(maxed ? maxedRed.opacity(0.13) : isActive ? Color.accentColor.opacity(0.16) : Color.primary.opacity(0.05)))
+        .background(RoundedRectangle(cornerRadius: Metrics.cardRadius).fill(Ink.surface)
+            .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius)
+                .fill(maxed ? maxedRed.opacity(0.13) : isActive ? Color.accentColor.opacity(0.16) : Color.clear)))
         .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius)
             .strokeBorder(maxed ? maxedRed.opacity(0.5) : isActive ? Color.accentColor.opacity(0.55) : Color.primary.opacity(0.08)))
         .contextMenu {
@@ -503,7 +504,7 @@ private struct ProfileCard: View {
             Spacer()
             Group {
                 if let setup = pendingSetup {
-                    Text("\(setup.done) of \(setup.labs.count) signed in").foregroundStyle(Color(nsColor: .systemOrange))
+                    Text("\(setup.done) of \(setup.labs.count) signed in").foregroundStyle(Ink.amber)
                 } else if maxed {
                     // Back when the first lab is back.
                     HStack(spacing: 4) {
@@ -521,20 +522,20 @@ private struct ProfileCard: View {
                             Text("\(labsOut.count) of \(slotted.count) labs out")
                         }
                     }
-                    .foregroundStyle(Color(nsColor: .systemOrange))
+                    .foregroundStyle(Ink.amber)
                 } else if repatching {
-                    Text("Rebuilding…").foregroundStyle(.secondary)
+                    Text("Rebuilding…").foregroundStyle(Ink.secondary)
                 } else if stale {
-                    Text("Update pending").foregroundStyle(Color(nsColor: .systemOrange))
+                    Text("Update pending").foregroundStyle(Ink.amber)
                 } else if let clone = data.cloneVendor, data.hasDesktop(clone, for: profile) {
                     // The profile's own desktop app: its state, and a click opens it.
                     Button { actions.openDesktop(profile: profile.name, vendor: clone.id) } label: {
                         HStack(spacing: 5) {
-                            if profile.running { Circle().fill(Color(nsColor: .systemGreen)).frame(width: 6, height: 6) }
+                            if profile.running { Circle().fill(Ink.green).frame(width: 6, height: 6) }
                             Text(profile.running ? "\(clone.desktopName) running" : "\(clone.desktopName) idle")
                             Image(systemName: "arrow.up.forward.app").font(.system(size: 9))
                         }
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Ink.secondary)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -568,7 +569,7 @@ private struct ProfileCard: View {
             InlineStatus(text: "\(names.joined(separator: ", ")) never finished signing in",
                          button: "Finish setup") { actions.finishSetup(profile: profile.name) }
         } else if repatching {
-            ProgressView().progressViewStyle(.linear).controlSize(.small).tint(Color(nsColor: .systemOrange))
+            ProgressView().progressViewStyle(.linear).controlSize(.small).tint(Ink.amber)
         } else if stale {
             InlineStatus(text: profile.running ? "Waiting — clone is in use"
                                                : actions.autoRepatch ? "Queued for rebuild" : "Auto-repatch is off",
@@ -639,7 +640,7 @@ private struct QuotaRegion: View {
             EmptyView()
         case nil:
             if slow {
-                Text("Checking quota…").font(.system(size: 10.5)).foregroundStyle(.secondary)
+                Text("Checking quota…").font(.system(size: 10.5)).foregroundStyle(Ink.secondary)
             } else {
                 VStack(spacing: 7) {
                     MeterRow(label: "5h", percent: nil, meta: "", delay: 0)
@@ -671,7 +672,7 @@ private struct MeterRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(label).foregroundStyle(.secondary).frame(width: 15, alignment: .leading)
+            Text(label).foregroundStyle(Ink.secondary).frame(width: 15, alignment: .leading)
             GeometryReader { g in
                 ZStack(alignment: .leading) {
                     if let p = percent {
@@ -686,7 +687,7 @@ private struct MeterRow: View {
             }
             .frame(height: 4)
             Text(percent.map { "\($0)%" } ?? "").monospacedDigit().frame(width: 30, alignment: .trailing)
-            Text(meta).foregroundStyle(.secondary).lineLimit(1).frame(width: 84, alignment: .trailing)
+            Text(meta).foregroundStyle(Ink.secondary).lineLimit(1).frame(width: 84, alignment: .trailing)
         }
         .font(.system(size: 10.5))
         .frame(height: 11)
@@ -770,10 +771,10 @@ private struct ColdStart: View {
                 }
                 .padding(.vertical, 8)
                 .padding(.horizontal, 9)
-                .background(RoundedRectangle(cornerRadius: Metrics.cardRadius).fill(Color.primary.opacity(0.05)))
+                .background(RoundedRectangle(cornerRadius: Metrics.cardRadius).fill(Ink.surface))
                 .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius).strokeBorder(Color.primary.opacity(0.08)))
             }
-            Text("Reading profiles…").font(.system(size: 11)).foregroundStyle(.secondary)
+            Text("Reading profiles…").font(.system(size: 11)).foregroundStyle(Ink.secondary)
         }
         .padding(.horizontal, Metrics.side)
         .padding(.vertical, 12)
@@ -787,7 +788,7 @@ private struct InlineStatus: View {
 
     var body: some View {
         HStack {
-            Text(text).font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(text).font(.system(size: 11)).foregroundStyle(Ink.secondary)
             Spacer(minLength: 6)
             Button(button, action: action).buttonStyle(PillButtonStyle())
         }
@@ -847,7 +848,7 @@ private struct VendorChip: View {
             }
             if signedOut {
                 Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 8))
-                    .foregroundStyle(active ? Color.white : Color(nsColor: .systemOrange))
+                    .foregroundStyle(active ? Color.white : Ink.amber)
             }
             Text(vendor.label).opacity(maxed ? 0.55 : 1)
         }
@@ -856,7 +857,7 @@ private struct VendorChip: View {
         .frame(height: 17)
         .foregroundStyle(active && !maxed ? Color.white : Color.primary)
         .background(RoundedRectangle(cornerRadius: 4)
-            .fill(maxed ? maxedRed.opacity(0.15) : active ? Color.accentColor : Color.clear))
+            .fill(maxed ? maxedRed.opacity(0.15) : active ? Ink.chip : Color.clear))
         .overlay(alignment: .bottom) {
             switch gauge {
             case .used(let u)?: UsageLine(percent: u)
@@ -891,7 +892,7 @@ private struct SmallChip: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(Ink.secondary)
     }
 }
 
@@ -935,7 +936,7 @@ private struct VendorDrawer: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Divider().padding(.bottom, 3)
-            Text(summary).font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(summary).font(.system(size: 11)).foregroundStyle(Ink.secondary)
             HStack(spacing: 6) {
                 OpenButton(terminals: data.terminals) { terminal in
                     actions.openSession(profile: profile.name, vendor: vendor.id, terminal: terminal)
@@ -1031,7 +1032,7 @@ private struct DrawerRow<Trailing: View>: View {
             HStack {
                 Text(title).font(.system(size: 11.5))
                 Spacer()
-                trailing.font(.system(size: 11)).foregroundStyle(.secondary)
+                trailing.font(.system(size: 11)).foregroundStyle(Ink.secondary)
             }
             .padding(.horizontal, 5)
             .frame(height: 24)
@@ -1071,12 +1072,12 @@ private struct SessionsSection: View {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(s.cwd.map { ($0 as NSString).lastPathComponent } ?? "—")
                                 .font(.system(size: 12.5))
-                            Text(s.snippet).font(.system(size: 11)).foregroundStyle(.secondary)
+                            Text(s.snippet).font(.system(size: 11)).foregroundStyle(Ink.secondary)
                         }
                         .lineLimit(1)
                         Spacer(minLength: 6)
                         Text("\(data.snapshot.vendor(s.vendor)?.label ?? s.vendor) · \(Self.age.string(from: s.mtime, to: Date()) ?? "")")
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                            .font(.system(size: 11)).foregroundStyle(Ink.secondary)
                     }
                     .padding(.horizontal, 8)
                     .frame(height: 40)
@@ -1098,11 +1099,11 @@ private struct FirstRun: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            Image(systemName: "asterisk").font(.system(size: 28, weight: .light)).foregroundStyle(.secondary)
+            Image(systemName: "asterisk").font(.system(size: 28, weight: .light)).foregroundStyle(Ink.secondary)
             Text("No profiles yet").font(.system(size: 13, weight: .semibold))
             Text("A profile is one identity holding a slot per lab — they all move together when you switch.")
                 .font(.system(size: 11.5))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Ink.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             Button("New Profile…") { actions.newProfile() }
@@ -1110,7 +1111,7 @@ private struct FirstRun: View {
                 .padding(.top, 4)
             Text("Your current logins stay put as “Default”.")
                 .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Ink.secondary)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 24)
@@ -1159,6 +1160,9 @@ private struct HoverBackground<Content: View>: View {
         content
             .background(RoundedRectangle(cornerRadius: radius)
                 .fill(Color.primary.opacity(pressed ? 0.16 : hovering ? 0.09 : resting)))
+            // Rows that stand alone (bordered, or resting with a fill) sit on
+            // the card surface; rows inside a card already have it.
+            .background(RoundedRectangle(cornerRadius: radius).fill(border || resting > 0 ? Ink.surface : Color.clear))
             .overlay(RoundedRectangle(cornerRadius: radius)
                 .strokeBorder(Color.primary.opacity(border ? 0.12 : 0)))
             .onHover { hovering = $0 }

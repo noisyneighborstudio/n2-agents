@@ -284,7 +284,7 @@ private struct PickStep: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Set up “\(model.profile)”").font(.system(size: 13, weight: .semibold))
                     Text("Pick the labs this identity holds. You’ll sign in to each one next — this window stays with you until you do.")
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .font(.system(size: 11)).foregroundStyle(Ink.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -292,10 +292,10 @@ private struct PickStep: View {
                 ForEach(model.vendors, id: \.id) { v in row(v) }
             }
             Text("Each gets its own config dir under ~/.n2-agents/\(model.profile)/ — separate logins, side by side with your others.")
-                .font(.system(size: 10.5)).foregroundStyle(.secondary)
+                .font(.system(size: 10.5)).foregroundStyle(Ink.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if let error = model.error {
-                Text(error).font(.system(size: 10.5)).foregroundStyle(Color(nsColor: .systemRed))
+                Text(error).font(.system(size: 10.5)).foregroundStyle(Ink.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
@@ -324,7 +324,7 @@ private struct PickStep: View {
                 .labelsHidden()
                 .disabled(!enabled)
             Monogram(text: v.monogram).opacity(v.installed ? 1 : 0.4)
-            Text(v.label).font(.system(size: 12.5)).foregroundStyle(v.installed ? .primary : .secondary)
+            Text(v.label).font(.system(size: 12.5)).foregroundStyle(v.installed ? Color.primary : Ink.secondary)
             Spacer()
             Group {
                 if already {
@@ -334,7 +334,7 @@ private struct PickStep: View {
                 }
             }
             .font(.system(size: 10.5))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Ink.secondary)
         }
         .frame(height: 32)
     }
@@ -349,7 +349,7 @@ private struct SignInStep: View {
             HStack {
                 Text("Setting up “\(model.profile)”").font(.system(size: 13, weight: .semibold))
                 Spacer()
-                Text("\(model.done) of \(model.counted) signed in").font(.system(size: 11)).foregroundStyle(.secondary)
+                Text("\(model.done) of \(model.counted) signed in").font(.system(size: 11)).foregroundStyle(Ink.secondary)
             }
             .padding(.horizontal, 20)
             .padding(.top, 20)
@@ -357,7 +357,7 @@ private struct SignInStep: View {
             GeometryReader { g in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.primary.opacity(0.14))
-                    Capsule().fill(Color(nsColor: .systemGreen))
+                    Capsule().fill(Ink.green)
                         .frame(width: model.counted == 0 ? 0 : g.size.width * CGFloat(model.done) / CGFloat(model.counted))
                 }
             }
@@ -373,7 +373,7 @@ private struct SignInStep: View {
 
             if model.current != nil {
                 Text("Leave this open. It watches each config dir and ticks the row the moment the token lands — you don’t come back and tell it.")
-                    .font(.system(size: 10.5)).foregroundStyle(.secondary)
+                    .font(.system(size: 10.5)).foregroundStyle(Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(12)
                     .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.06)))
@@ -384,7 +384,7 @@ private struct SignInStep: View {
             HStack {
                 Button("Finish later") { actions.finishLater() }
                     .buttonStyle(.plain)
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(Ink.link)
                     .font(.system(size: 11.5))
                 Spacer()
                 if let failed = model.failed, let v = model.vendor(failed) {
@@ -414,7 +414,7 @@ private struct LabRow: View {
             Monogram(text: model.vendor(lab)?.monogram ?? "").padding(.top, 0.5)
             VStack(alignment: .leading, spacing: 4) {
                 Text(verbatim: label).font(.system(size: 13, weight: .medium))
-                Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(detail).font(.system(size: 11)).foregroundStyle(Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if state == .failed {
                     HStack(spacing: 6) {
@@ -441,7 +441,7 @@ private struct LabRow: View {
     private var tint: Color {
         switch state {
         case .signingIn: return .accentColor
-        case .failed: return Color(nsColor: .systemOrange)
+        case .failed: return Ink.amber
         default: return .clear
         }
     }
@@ -493,7 +493,7 @@ private struct StateIcon: View {
                 }
             case .failed:
                 Image(systemName: "exclamationmark.triangle").font(.system(size: 11))
-                    .foregroundStyle(Color(nsColor: .systemOrange))
+                    .foregroundStyle(Ink.amber)
             case .waiting, .skipped:
                 if reduceMotion || state == .skipped {
                     Circle().strokeBorder(Color.primary.opacity(0.28))
@@ -532,11 +532,11 @@ private struct ReadyStep: View {
         VStack(spacing: 10) {
             Image(systemName: "checkmark.circle")
                 .font(.system(size: 34, weight: .light))
-                .foregroundStyle(Color(nsColor: .systemGreen))
+                .foregroundStyle(Ink.green)
                 .padding(.top, 6)
             Text("“\(model.profile)” is ready").font(.system(size: 13, weight: .semibold))
             Text("\(count) signed in and pinned to this identity. Switching the profile moves them all at once.")
-                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .font(.system(size: 11)).foregroundStyle(Ink.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 5) {
@@ -565,7 +565,7 @@ private struct ReadyStep: View {
             .controlSize(.large)
             Button("Close") { actions.finishLater() }
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Ink.secondary)
                 .font(.system(size: 11.5))
                 .padding(.top, 2)
         }
