@@ -22,8 +22,14 @@ Pull requests run the build only, so a broken Worker is caught before merge
 rather than after.
 
 That needs one repository secret, `CLOUDFLARE_API_TOKEN`, with Account /
-Workers Scripts: Edit and Zone / DNS: Edit on noisyneighbor.studio. Without it
-the deploy stops with that message instead of failing somewhere confusing.
+Workers Scripts: Edit. Without it the deploy stops with that message instead of
+failing somewhere confusing.
+
+CI ships code only (`versions upload` then `versions deploy`), never triggers,
+so it doesn't need zone permissions. If you change `routes` in `wrangler.jsonc`,
+apply them once by hand with a login that can edit the zone:
+
+    npx wrangler triggers deploy
 
 To push a build by hand:
 
