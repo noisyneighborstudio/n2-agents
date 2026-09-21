@@ -194,8 +194,15 @@ private struct PanelFooter: View {
     @ObservedObject var model: PanelModel
     let actions: PanelActions
 
+    private var fullVersion: String {
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0.0.0"
+    }
+
+    // "1.2.0 (16)": the channel already says "continuous", and a prerelease
+    // counter resets with every stable release; the build number always climbs.
     private var versionLine: LocalizedStringKey {
-        let version = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0.0.0"
+        let build = (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String) ?? "0"
+        let version = "\(fullVersion.prefix { $0 != "-" }) (\(build))"
         let channel = UpdateChannel.selected().rawValue.capitalized
         switch model.updateStatus {
         case .upToDate: return "\(version) · \(channel) · up to date"
@@ -207,7 +214,7 @@ private struct PanelFooter: View {
 
     private var updateHelp: String {
         if case .failed(let reason)? = model.updateStatus { return "Update check failed: \(reason) Click to retry." }
-        return "Check for updates"
+        return "N2 Agents \(fullVersion) — check for updates"
     }
 
     var body: some View {
