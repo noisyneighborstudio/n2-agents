@@ -604,7 +604,7 @@ private struct SlotRow: View {
         VStack(alignment: .leading, spacing: 0) {
             Button { toggle() } label: {
                 HStack(spacing: 7) {
-                    Monogram(text: vendor.monogram)
+                    LabMark(vendor: vendor)
                         .foregroundStyle(Color.primary.opacity(0.82))
                         .frame(width: 18, height: 18)
                         .background(RoundedRectangle(cornerRadius: 4).fill(Color.primary.opacity(0.12)))
@@ -964,17 +964,6 @@ private struct InlineStatus: View {
 // The lab's two-letter mark, as ProfileSetup already draws it. Fixed width is
 // the whole point: seven labs fit one row with no overflow control, where word
 // chips wrapped and needed a +N to hide the rest.
-private struct Monogram: View {
-    let text: String
-
-    var body: some View {
-        Text(verbatim: text)
-            .font(.system(size: 8.5, weight: .semibold))
-            .tracking(0.2)
-            .lineLimit(1)
-    }
-}
-
 // One lab at depth 1: its mark over its headroom. Four pictures that never look
 // alike — a reading, no quota API at all (dashed), signed out (amber), and a
 // reading still on its way (sweep).
@@ -991,7 +980,7 @@ private struct CapacitySegment: View {
 
     var body: some View {
         VStack(spacing: 3) {
-            Monogram(text: vendor.monogram)
+            LabMark(vendor: vendor)
                 .foregroundStyle(maxed ? maxedRed : signedOut ? Ink.amber : Ink.secondary)
                 .opacity(vendor.hasUsageAPI ? 1 : 0.5)
                 .matchedGeometryEffect(id: SlotID.mono(profile, vendor.id), in: namespace)

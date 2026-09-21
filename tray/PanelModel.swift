@@ -189,7 +189,8 @@ final class PanelModel: ObservableObject {
         let back = out.compactMap(\.maxedUntil).min()
         let signedOut = slotted.filter { !signedIn($0) }
 
-        if !slotted.isEmpty, signedOut.count == slotted.count { return (.notSignedIn, nil) }
+        // No labs at all is nothing to run, not "Ready".
+        if signedOut.count == slotted.count { return (.notSignedIn, nil) }
         if !live.isEmpty, live.allSatisfy({ row($0) == nil }) { return (.checking, nil) }
         if !live.isEmpty, out.count == live.count {
             // A lab with no quota API can still be opened, so it keeps the
