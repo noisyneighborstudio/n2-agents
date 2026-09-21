@@ -52,9 +52,7 @@ final class SetupModel: ObservableObject {
         vendors = snapshot.vendors
         slotDirs = snapshot.slotDirs[profile] ?? [:]
         existing = Set(snapshot.profiles.first { $0.name == profile }?.slots.keys.map { $0 } ?? [])
-        // Per-process labs start ticked; a swap lab moves every profile, so
-        // it is opt-in.
-        picked = Set(snapshot.installedVendors.filter { $0.isolation != "swap" }.map(\.id)).union(existing)
+        picked = Set(snapshot.installedVendors.map(\.id)).union(existing)
         step = resume == nil ? .pick : .signIn
         if let resume { labs = resume }
     }
@@ -333,9 +331,6 @@ private struct PickStep: View {
                     Text("already in profile")
                 } else if !v.installed {
                     Text("not installed")
-                } else if v.isolation == "swap" {
-                    Label("switches every profile", systemImage: "arrow.left.arrow.right")
-                        .foregroundStyle(Color(nsColor: .systemOrange))
                 }
             }
             .font(.system(size: 10.5))

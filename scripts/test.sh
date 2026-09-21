@@ -15,7 +15,7 @@ export SWIFT_MODULECACHE_PATH="$test_root/cache/swift"
 # from touching a real login.
 fake_bin="$test_root/fake-bin"
 mkdir -p "$fake_bin"
-for v in claude codex grok gemini cursor-agent opencode muse; do
+for v in claude codex grok cursor-agent opencode muse; do
   cat > "$fake_bin/$v" <<'FAKE'
 #!/bin/sh
 echo "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-} CODEX_HOME=${CODEX_HOME:-} GROK_HOME=${GROK_HOME:-} CURSOR_CONFIG_DIR=${CURSOR_CONFIG_DIR:-} XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-}"
@@ -48,20 +48,17 @@ swiftc tray/ShellPath.swift tests/ShellPathTests.swift -o "$path_test"
 "$path_test"
 
 # --- vendor adapter table --------------------------------------------------
-# The isolation tier is the single most load-bearing fact in the app: an `env`
-# vendor can be pinned per process, a `swap` vendor can only be switched
-# globally. Assert the tier for each lab so a bad edit to vendors.sh is caught
-# here rather than by silently running an agent as the wrong account.
-adapter=$(sh -c '. ./vendors.sh; for v in $N2_VENDORS; do echo "$v $(vendor_isolation "$v") $(vendor_env "$v")"; done')
-print -r -- "$adapter" | grep -qx 'claude env CLAUDE_CONFIG_DIR'
-print -r -- "$adapter" | grep -qx 'codex env CODEX_HOME'
-print -r -- "$adapter" | grep -qx 'grok env GROK_HOME'
-print -r -- "$adapter" | grep -qx 'cursor env CURSOR_CONFIG_DIR'
-print -r -- "$adapter" | grep -qx 'opencode env XDG_CONFIG_HOME'
-print -r -- "$adapter" | grep -qx 'muse env XDG_CONFIG_HOME'
-# Gemini reads GEMINI_DIR as a source constant (".gemini"), never from the
-# environment — so it must stay swap-only until that changes upstream.
-print -r -- "$adapter" | grep -qx 'gemini swap '
+# The config-dir env var is the single most load-bearing fact in the app: it
+# is how a process gets pinned to a profile. Assert it for each lab so a bad
+# edit to vendors.sh is caught here rather than by silently running an agent as
+# the wrong account — and so no lab lacks one.
+adapter=$(sh -c '. ./vendors.sh; for v in $N2_VENDORS; do echo "$v $(vendor_env "$v")"; done')
+test "$adapter" = "claude CLAUDE_CONFIG_DIR
+codex CODEX_HOME
+grok GROK_HOME
+cursor CURSOR_CONFIG_DIR
+opencode XDG_CONFIG_HOME
+muse XDG_CONFIG_HOME"
 
 # opencode and muse are the vendors whose env var names the PARENT of their config dir.
 slot=$(sh -c '. ./vendors.sh; vendor_slot_name opencode')
@@ -76,11 +73,11 @@ home="$test_root/home"
 mkdir -p "$home"
 run_agents() { HOME="$home" PATH="$fake_path" ./agents "$@" }
 
-run_agents new Work --vendors claude,codex,grok,gemini --cli-only >/dev/null
-for v in claude codex grok gemini; do test -d "$home/.n2-agents/Work/$v"; done
+run_agents new Work --vendors claude,codex,grok,muse --cli-only >/dev/null
+for v in claude codex grok; do test -d "$home/.n2-agents/Work/$v"; done
 # The last entry of a comma list must survive the parse — `read` drops a final
 # line with no trailing newline, which silently lost one vendor once.
-test -d "$home/.n2-agents/Work/gemini"
+test -d "$home/.n2-agents/Work/muse/muse"
 
 run_agents profiles | grep -qx Work
 
@@ -93,20 +90,10 @@ out=$(run_agents run Work --vendor codex)
 out=$(run_agents run Work --vendor grok)
 [[ $out == *"GROK_HOME=$home/.n2-agents/Work/grok"* ]]
 
-# A swap-only vendor must refuse to run as a non-active profile without
-# --switch, because there is no way to pin it per process. The slot exists, so
-# this can only be the isolation guard talking.
-if run_agents run Work --vendor gemini >/dev/null 2>&1; then
-  echo "swap-only vendor ran without --switch" >&2
-  exit 1
-fi
-run_agents run Work --vendor gemini --switch >/dev/null
-test "$(run_agents active --vendor gemini)" = Work
-
 # `use` moves every installed vendor at once.
 run_agents use Work >/dev/null
 test "$(run_agents active)" = Work
-for v in claude codex grok gemini; do
+for v in claude codex grok; do
   test "$(readlink "$home/.$v")" = "$home/.n2-agents/Work/$v"
 done
 
@@ -116,7 +103,7 @@ test "$(run_agents active)" = Default
 test -d "$home/.n2-agents/Default/claude"
 # A dot dir must never point at itself: switching to Default for a vendor that
 # had no config dir once produced ~/.claude -> ~/.claude.
-for v in claude codex grok gemini; do
+for v in claude codex grok; do
   test "$(readlink "$home/.$v")" != "$home/.$v"
   test -d "$home/.$v"
 done
@@ -127,7 +114,7 @@ test "$(run_agents active)" = mixed
 
 # --- porcelain contract (the tray parses this) -----------------------------
 porcelain=$(run_agents porcelain)
-print -r -- "$porcelain" | grep -q '^V	claude	1	env	clone	oauth	Claude Code	projects	CC	Claude Desktop	com.anthropic.claudefordesktop$'
+print -r -- "$porcelain" | grep -q '^V	claude	1	clone	oauth	Claude Code	projects	CC	Claude Desktop	com.anthropic.claudefordesktop$'
 print -r -- "$porcelain" | grep -q '^P	Work	'
 print -r -- "$porcelain" | grep -q '^A	'
 # One S row per slot: its directory (the tray watches it during a sign-in)
@@ -208,16 +195,6 @@ echo '{}' > "$home/.n2-agents/Work/codex/auth.json"
 out=$(run_agents login Work --vendor codex 2>&1)
 test "$(print -r -- "$out" | grep -c "CODEX_HOME=$home/.n2-agents/Work/codex")" = 3
 rm "$home/.n2-agents/Work/codex/auth.json"
-# A swap lab without its own logout clears the saved credentials instead — and
-# like `run`, only once the profile is allowed to become the active one.
-echo creds > "$home/.n2-agents/Work/gemini/oauth_creds.json"
-if run_agents login Work --vendor gemini >/dev/null 2>&1; then
-  echo "login switched a swap vendor without --switch" >&2
-  exit 1
-fi
-test -f "$home/.n2-agents/Work/gemini/oauth_creds.json"
-run_agents login Work --vendor gemini --switch >/dev/null 2>&1
-test ! -e "$home/.n2-agents/Work/gemini/oauth_creds.json"
 
 # --- next best: no lab is anyone's default -------------------------------
 # Cursor and opencode keep their logins out of sight, so a slot of theirs can
@@ -326,6 +303,17 @@ test "$(readlink "$shim_bin/claude-client")" = "$test_root/foreign/agent-as"
 ln -sf "/Applications/N2Agents.app/Contents/Resources/agent-as" "$shim_bin/claude-expo"
 HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" ./agents shims >/dev/null
 test "$(readlink "$shim_bin/claude-expo")" = "$PWD/shell/agent-as"
+
+# A retired lab (Gemini) leaves nothing of ours behind: its shims go, and its
+# dot dir stops being a symlink into a profile slot but keeps the contents.
+mkdir -p "$shim_home/.n2-agents/Expo/gemini"
+echo keep > "$shim_home/.n2-agents/Expo/gemini/settings.json"
+ln -s "$shim_home/.n2-agents/Expo/gemini" "$shim_home/.gemini"
+ln -s "$PWD/shell/agent-as" "$shim_bin/gemini-expo"
+HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" ./agents shims >/dev/null
+test ! -e "$shim_bin/gemini-expo"
+test ! -L "$shim_home/.gemini"
+test "$(cat "$shim_home/.gemini/settings.json")" = keep
 
 # Concurrent syncs must not leave the lock behind.
 HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" TMPDIR="$test_root/one" ./agents shims >/dev/null &

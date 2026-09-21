@@ -734,23 +734,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         return (task.terminationStatus, out.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
-    // Switching a swap vendor rewrites its one global config dir, so it is
-    // confirmed first — the same rule the CLI enforces with --switch.
     func setActive(profile name: String, vendor: String?) {
         var args = ["use", name]
-        if let id = vendor {
-            args += ["--vendor", id]
-            if let v = model.data?.snapshot.vendor(id), v.isolation == "swap" {
-                dismissPanel()
-                let confirm = NSAlert()
-                confirm.messageText = "Switch \(v.label) to “\(name)”?"
-                confirm.informativeText = "\(v.label) has no per-process pinning, so this changes its login everywhere, including sessions started from other profiles."
-                confirm.addButton(withTitle: "Switch")
-                confirm.addButton(withTitle: "Cancel")
-                NSApp.activate(ignoringOtherApps: true)
-                guard confirm.runModal() == .alertFirstButtonReturn else { return }
-            }
-        }
+        if let id = vendor { args += ["--vendor", id] }
         let r = runCLI(args)
         if r.status != 0 {
             dismissPanel()
@@ -760,13 +746,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     }
 
     // Always go through the CLI rather than composing an env-var prefix here:
-    // it alone knows how each vendor is pinned, and a swap-only vendor (no
-    // config-dir env var) needs --switch, which is a global side effect the
-    // user should see spelled out in the command.
+    // it alone knows how each vendor is pinned.
     private func sessionCommand(profile: String, vendor: Vendor) -> String {
-        var cmd = "\"\(cliPath)\" run \(profile) --vendor \(vendor.id)"
-        if vendor.isolation == "swap" { cmd += " --switch" }
-        return cmd
+        "\"\(cliPath)\" run \(profile) --vendor \(vendor.id)"
     }
 
     // terminal nil = the preferred one.
@@ -788,16 +770,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
             ask.messageText = "Sign \(v.label) in “\(profile)” out and back in?"
             let current = model.data?.snapshot.account(profile, id).map { " (\($0))" } ?? ""
             ask.informativeText = "The current \(v.label) login for this profile\(current) is removed, then a terminal opens so you can sign in with the right account. The browser uses whichever account it's already signed in to — switch it there first if needed."
-                + (v.isolation == "swap" ? " \(v.label) has one global login, so this also makes “\(profile)” its active profile." : "")
             ask.addButton(withTitle: "Sign Out and Sign In")
             ask.addButton(withTitle: "Cancel")
             NSApp.activate(ignoringOtherApps: true)
             guard ask.runModal() == .alertFirstButtonReturn else { return }
         }
-        var cmd = "\"\(cliPath)\" login \(profile) --vendor \(id)"
-        if v.isolation == "swap" { cmd += " --switch" }
         // Whatever the outcome, tell the panel to re-read when it's over.
-        cmd += "; open -g 'n2agents://refresh'"
+        let cmd = loginCommand(profile: profile, vendor: id) + "; open -g 'n2agents://refresh'"
         launchSession(cmd, slug: "\(profile)-\(id)-login", in: preferredTerminal)
     }
 
@@ -863,9 +842,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     }
 
     private func loginCommand(profile: String, vendor: String) -> String {
-        var cmd = "\"\(cliPath)\" login \(profile) --vendor \(vendor)"
-        if model.data?.snapshot.vendor(vendor)?.isolation == "swap" { cmd += " --switch" }
-        return cmd
+        "\"\(cliPath)\" login \(profile) --vendor \(vendor)"
     }
 
     func setupStartLogin(profile: String, vendor: String) {

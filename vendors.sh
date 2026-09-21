@@ -9,11 +9,8 @@
 #
 #   cli         binary name on PATH; also how we detect "installed"
 #   dot         the config dir the CLI uses when nothing overrides it
-#   env         env var that relocates that dir, or "" if the vendor has none
-#   isolation   derived from `env`:
-#                 env   — profiles run CONCURRENTLY, each pinned per-process
-#                 swap  — no env var exists, so only the symlink swap works and
-#                         exactly one profile can be active at a time
+#   env         env var that relocates that dir, so profiles run CONCURRENTLY,
+#               each pinned per process. A lab without one can't be supported.
 #   desktop     clone  — a macOS bundle we copy per profile (Claude)
 #               launch — the CLI opens its own desktop app (Codex)
 #               none
@@ -26,7 +23,14 @@
 
 # Order matters: it's the display order everywhere, and the first installed
 # vendor is the default when a command needs one and the user didn't say.
-N2_VENDORS="claude codex grok gemini cursor opencode muse"
+N2_VENDORS="claude codex grok cursor opencode muse"
+
+# Labs we used to manage. Only cleanup reads this: stale shims get pruned and
+# the dot dir symlink turned back into a real dir.
+#   gemini  Gemini CLI stopped serving personal accounts (2026-06-18); its
+#           successor, Antigravity CLI, keeps its login in the Keychain, out
+#           of any dir we could swap
+N2_RETIRED_VENDORS="gemini"
 
 vendor_known() {
   for v in $N2_VENDORS; do [ "$v" = "$1" ] && return 0; done
@@ -38,7 +42,6 @@ vendor_label() {
     claude)   echo "Claude Code" ;;
     codex)    echo "Codex" ;;
     grok)     echo "Grok" ;;
-    gemini)   echo "Gemini" ;;
     cursor)   echo "Cursor" ;;
     opencode) echo "opencode" ;;
     muse)     echo "Muse" ;;
@@ -60,15 +63,13 @@ vendor_dot() {
     claude)   echo "$HOME/.claude" ;;
     codex)    echo "$HOME/.codex" ;;
     grok)     echo "$HOME/.grok" ;;
-    gemini)   echo "$HOME/.gemini" ;;
     cursor)   echo "$HOME/.cursor" ;;
     opencode) echo "$HOME/.config/opencode" ;;
     muse)     echo "$HOME/.config/muse" ;;
   esac
 }
 
-# Env var that repoints the config dir for a single invocation. Empty means the
-# vendor hard-codes its path and can only be switched globally via the symlink.
+# Env var that repoints the config dir for a single invocation.
 #
 # Verified against the shipped binaries, not documentation:
 #   claude    CLAUDE_CONFIG_DIR   read by the CLI
@@ -79,8 +80,6 @@ vendor_dot() {
 #                                 and opencode appends /opencode itself
 #   muse      XDG_CONFIG_HOME     same as opencode: auth.json lives in
 #                                 $XDG_CONFIG_HOME/muse (no MUSE_HOME exists)
-#   gemini    (none)              GEMINI_DIR is a source constant equal to
-#                                 ".gemini", never read from the environment
 vendor_env() {
   case $1 in
     claude)   echo "CLAUDE_CONFIG_DIR" ;;
@@ -88,12 +87,7 @@ vendor_env() {
     grok)     echo "GROK_HOME" ;;
     cursor)   echo "CURSOR_CONFIG_DIR" ;;
     opencode|muse) echo "XDG_CONFIG_HOME" ;;
-    gemini)   echo "" ;;
   esac
-}
-
-vendor_isolation() {
-  if [ -n "$(vendor_env "$1")" ]; then echo env; else echo swap; fi
 }
 
 # opencode and muse read $XDG_CONFIG_HOME/<name>, so the env var must point one
@@ -157,8 +151,7 @@ vendor_sessions() {
 }
 
 # Sign-out / sign-in subcommands, run with the slot pinned. Empty means the
-# CLI has none: `agents login` then deletes vendor_cred_files from the slot and
-# starts the CLI plainly, which asks for a login on its own.
+# CLI has none: `agents login` then starts it plainly, and it asks on its own.
 vendor_logout() {
   case $1 in
     claude|opencode)    echo "auth logout" ;;
@@ -198,7 +191,6 @@ vendor_authed() {  # vendor, slot dir, profile
       fi
       [ -s "$2/.credentials.json" ] ;;
     codex|grok|muse) [ -s "$2/auth.json" ] ;;
-    gemini)     [ -s "$2/oauth_creds.json" ] ;;
     *)          return 2 ;;
   esac
 }
@@ -209,7 +201,6 @@ vendor_monogram() {
     claude)   echo CC ;;
     codex)    echo CX ;;
     grok)     echo GK ;;
-    gemini)   echo GM ;;
     cursor)   echo CU ;;
     opencode) echo OC ;;
     muse)     echo MU ;;
@@ -229,13 +220,6 @@ vendor_whoami() {
   esac
 }
 
-vendor_cred_files() {
-  case $1 in
-    gemini) echo "oauth_creds.json google_accounts.json" ;;
-    *)      echo "" ;;
-  esac
-}
-
 vendor_installed() {
   command -v "$(vendor_cli "$1")" >/dev/null 2>&1
 }
@@ -245,7 +229,6 @@ vendor_install_hint() {
     claude)   echo "npm install -g @anthropic-ai/claude-code" ;;
     codex)    echo "npm install -g @openai/codex" ;;
     grok)     echo "https://docs.x.ai/docs/grok-cli" ;;
-    gemini)   echo "npm install -g @google/gemini-cli" ;;
     cursor)   echo "curl https://cursor.com/install -fsS | bash" ;;
     opencode) echo "curl -fsSL https://opencode.ai/install | bash" ;;
     muse)     echo "curl -fsSL https://dev.meta.ai/install.sh | bash" ;;

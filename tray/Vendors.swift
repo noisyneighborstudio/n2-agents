@@ -3,7 +3,7 @@ import Foundation
 // The tray's view of the world, parsed from `agents porcelain`.
 //
 // Deliberately dumb: every rule about what a profile is, which vendors exist,
-// how each one isolates and which is active lives in vendors.sh + agents. The
+// and which is active lives in vendors.sh + agents. The
 // menu renders whatever the CLI reports, so the two can never drift — the old
 // single-vendor app duplicated that discovery in Swift and had to be kept in
 // step by hand.
@@ -11,7 +11,6 @@ import Foundation
 struct Vendor {
     let id: String
     let installed: Bool
-    let isolation: String   // "env" — concurrent, pinned per process; "swap" — one at a time
     let desktop: String     // "clone" | "launch" | "none"
     let usage: String       // "oauth" | "none"
     let label: String
@@ -69,13 +68,13 @@ struct Snapshot {
         for line in text.split(separator: "\n") {
             let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
             switch f.first {
-            case "V" where f.count >= 7:
-                vendors.append(Vendor(id: f[1], installed: f[2] == "1", isolation: f[3],
-                                      desktop: f[4], usage: f[5], label: f[6],
-                                      sessions: f.count > 7 ? f[7] : "none",
-                                      monogram: f.count > 8 ? f[8] : String(f[1].prefix(2)).uppercased(),
-                                      desktopName: f.count > 9 ? f[9] : "",
-                                      desktopBundle: f.count > 10 ? f[10] : ""))
+            case "V" where f.count >= 6:
+                vendors.append(Vendor(id: f[1], installed: f[2] == "1",
+                                      desktop: f[3], usage: f[4], label: f[5],
+                                      sessions: f.count > 6 ? f[6] : "none",
+                                      monogram: f.count > 7 ? f[7] : String(f[1].prefix(2)).uppercased(),
+                                      desktopName: f.count > 8 ? f[8] : "",
+                                      desktopBundle: f.count > 9 ? f[9] : ""))
             case "P" where f.count >= 4:
                 var slots: [String: String] = [:]
                 if f[3] != "-" {

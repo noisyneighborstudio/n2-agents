@@ -812,9 +812,8 @@ private struct VendorChip: View {
     let account: String?
     let action: () -> Void
 
-    // Filled accent = active for this lab, outlined = holds a slot, dashed =
-    // a swap lab, where switching is a global side effect. The open drawer's
-    // chip carries an accent ring.
+    // Filled accent = active for this lab, outlined = holds a slot. The open
+    // drawer's chip carries an accent ring.
     var body: some View {
         Button(action: action) {
             chip.contentShape(Rectangle())
@@ -850,7 +849,6 @@ private struct VendorChip: View {
                 Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 8))
                     .foregroundStyle(active ? Color.white : Color(nsColor: .systemOrange))
             }
-            if vendor.isolation == "swap" { Image(systemName: "arrow.left.arrow.right").font(.system(size: 8)) }
             Text(vendor.label).opacity(maxed ? 0.55 : 1)
         }
         .font(.system(size: 10.5))
@@ -869,9 +867,8 @@ private struct VendorChip: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .overlay(RoundedRectangle(cornerRadius: 4)
-            .strokeBorder(maxed ? maxedRed.opacity(0.7)
-                          : active ? Color.white.opacity(vendor.isolation == "swap" ? 0.6 : 0) : Color.primary.opacity(0.25),
-                          style: StrokeStyle(lineWidth: 1, dash: vendor.isolation == "swap" ? [2.5, 2] : [])))
+            .strokeBorder(maxed ? maxedRed.opacity(0.7) : active ? Color.clear : Color.primary.opacity(0.25),
+                          lineWidth: 1))
         .overlay(RoundedRectangle(cornerRadius: 5.5)
             .strokeBorder(Color.accentColor, lineWidth: 1.5)
             .padding(-2)
@@ -932,8 +929,7 @@ private struct VendorDrawer: View {
 
     private var summary: String {
         // Capacity is on the card; the drawer says how the lab runs.
-        [vendor.label, vendor.isolation == "swap" ? "one profile at a time" : "pinned per process"]
-            .joined(separator: " · ")
+        "\(vendor.label) · pinned per process"
     }
 
     var body: some View {
@@ -956,17 +952,13 @@ private struct VendorDrawer: View {
                     Button("Log In…") { actions.signIn(profile: profile.name, vendor: vendor.id, confirm: false) }
                         .buttonStyle(PillButtonStyle(height: 22))
                 }
-                // Make this profile the lab's default. A swap lab has one
-                // global login, so it "switches"; an env lab only changes what
-                // new sessions use.
+                // Make this profile the lab's default: what new sessions use.
                 if !profile.isActive(for: vendor.id) {
-                    Button(vendor.isolation == "swap" ? "Switch to" : "Use") {
+                    Button("Use") {
                         actions.setActive(profile: profile.name, vendor: vendor.id)
                     }
                     .buttonStyle(PillButtonStyle(height: 22))
-                    .help(vendor.isolation == "swap"
-                          ? "Switch \(vendor.label)'s one login to \(profile.name)"
-                          : "Use \(profile.name) for new \(vendor.label) sessions")
+                    .help("Use \(profile.name) for new \(vendor.label) sessions")
                 }
             }
             .padding(.vertical, 2)
