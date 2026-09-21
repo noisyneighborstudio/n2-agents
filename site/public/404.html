@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Wrong door · N2 Agents</title>
+<meta name="robots" content="noindex">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="N2 Agents">
+<meta property="og:title" content="Wrong door · N2 Agents">
+<meta property="og:description" content="That page isn't in this building. Try one floor down, or run agents list.">
+<meta property="og:image" content="https://agents.noisyneighbor.studio/og.png?v=1&amp;p=client&amp;label=404%20%C2%B7%20nobody%20home&amp;t=Wrong%7Cdoor.&amp;s=That%20page%20isn%27t%20in%20this%20building.%20Try%20one%20floor%20down%2C%20or%20run%20agents%20list.">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:wght@400;700&display=swap">
+<style>
+:root{
+  color-scheme:dark;
+  --charcoal:#0D0D0D; --bone:#EDEDE6; --concrete:#7A7A74; --yellow:#FFEA00;
+  --border:rgba(237,237,230,.12);
+  --tape:repeating-linear-gradient(-45deg,var(--yellow) 0 14px,var(--charcoal) 14px 28px);
+}
+*,*::before,*::after{box-sizing:border-box}
+html{background:var(--charcoal)}
+body{
+  margin:0;min-height:100svh;background:var(--charcoal);color:#B8B7B0;
+  font-family:'Space Mono',ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9375rem;line-height:1.6;
+  display:flex;flex-direction:column;-webkit-font-smoothing:antialiased;
+}
+.tape{block-size:8px;background:var(--tape);flex-shrink:0}
+main{flex:1;display:flex;flex-direction:column;justify-content:center;gap:24px;
+  max-inline-size:640px;margin-inline:auto;padding-inline:clamp(20px,5vw,96px);padding-block:64px}
+.label{font-size:.75rem;letter-spacing:.18em;text-transform:uppercase;color:var(--concrete);display:flex;align-items:center;gap:10px}
+.label .bulb{width:9px;height:9px;border-radius:50%;background:var(--yellow);box-shadow:0 0 12px rgba(255,234,0,.35);animation:flicker 5.5s steps(1,end) infinite}
+h1{margin:0;font-family:'Bebas Neue','Arial Narrow',Impact,sans-serif;font-weight:400;
+  font-size:clamp(3.5rem,13vw,7rem);line-height:.9;letter-spacing:.02em;color:var(--bone)}
+h1 em{font-style:normal;color:var(--yellow)}
+p{margin:0;max-width:52ch}
+code{color:var(--bone);background:rgba(237,237,230,.07);padding:.1em .34em;border-radius:2px;font-size:.92em}
+a.button{
+  align-self:flex-start;display:inline-flex;align-items:center;min-block-size:44px;padding:14px 32px 10px;
+  border-radius:3px;background:var(--yellow);color:var(--charcoal);text-decoration:none;
+  font-family:'Bebas Neue','Arial Narrow',Impact,sans-serif;font-size:1.25rem;letter-spacing:.08em;line-height:1;
+  transition:transform .28s cubic-bezier(.16,.84,.44,1),box-shadow .28s cubic-bezier(.16,.84,.44,1);
+}
+a.button:hover{transform:translateY(-3px);box-shadow:0 0 24px rgba(255,234,0,.35)}
+footer{border-block-start:1px solid var(--border);padding:22px clamp(20px,5vw,96px);
+  font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;color:var(--concrete);
+  display:flex;flex-wrap:wrap;gap:10px 28px}
+footer a{color:#B8B7B0;text-decoration:none}
+footer a:hover{color:var(--bone)}
+@keyframes flicker{0%,42%,48%,71%,76%,100%{opacity:1}45%{opacity:.25}73%{opacity:.4}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<span class="tape" aria-hidden="true"></span>
+<main>
+  <p class="label"><span class="bulb"></span>404 · nobody home</p>
+  <h1>Wrong<br><em>door.</em></h1>
+  <p>That page isn't in this building. Try one floor down, or run <code>agents list</code>.</p>
+  <a class="button" href="/">Back to N2 Agents</a>
+</main>
+<footer>
+  <span>N2 Agents · MIT</span>
+  <a href="https://github.com/noisyneighborstudio/n2-agents">Source</a>
+  <a href="https://noisyneighbor.studio">Noisy Neighbor Studio</a>
+</footer>
+</body>
+</html>

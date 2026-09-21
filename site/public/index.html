@@ -1,0 +1,909 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="One identity, every lab. Each N2 Agents profile holds its own Claude, Codex, Grok, Gemini, Cursor and opencode login. Switch them together, or pin one at a time. A macOS menu bar app and a small CLI. A Noisy Neighbor Studio unit.">
+<meta name="theme-color" content="#0D0D0D">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27%3E%3Crect width=%2724%27 height=%2724%27 rx=%272%27 fill=%27%23161615%27/%3E%3Ccircle cx=%2712%27 cy=%275.4%27 r=%272%27 fill=%27%2318E4CC%27/%3E%3Ccircle cx=%2717.7%27 cy=%278.7%27 r=%272%27 fill=%27%237848C0%27/%3E%3Ccircle cx=%2717.7%27 cy=%2715.3%27 r=%272%27 fill=%27%23F09C24%27/%3E%3Ccircle cx=%2712%27 cy=%2718.6%27 r=%272%27 fill=%27%230CB490%27/%3E%3Ccircle cx=%276.3%27 cy=%2715.3%27 r=%272%27 fill=%27%231884E4%27/%3E%3Ccircle cx=%276.3%27 cy=%278.7%27 r=%272%27 fill=%27%23FC6054%27/%3E%3Ccircle cx=%2712%27 cy=%2712%27 r=%272.6%27 fill=%27%23FFEA00%27/%3E%3C/svg%3E">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://agents.noisyneighbor.studio/">
+<meta property="og:title" content="N2 Agents · one identity, every lab">
+<meta property="og:description" content="Each profile holds its own Claude, Codex, Grok, Gemini, Cursor and opencode login. A macOS menu bar app and a small CLI.">
+<meta property="og:site_name" content="N2 Agents">
+<meta property="og:image" content="https://agents.noisyneighbor.studio/og.png?v=1">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="N2 Agents: one identity, every lab. Each profile holds its own Claude, Codex, Grok, Gemini, Cursor and opencode login.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://agents.noisyneighbor.studio/og.png?v=1">
+<title>N2 Agents · one identity, every lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:wght@400;700&display=swap">
+<style>
+/* N2 Agents. Built on the Noisy Neighbor Studio design system.
+   Tokens lifted verbatim from noisyneighbor.studio/css/nn.css */
+:root{
+  color-scheme:dark;
+
+  --nn-charcoal:#0D0D0D;
+  --nn-ink:#0A0A0A;
+  --nn-panel:#161615;
+  --nn-raised:#1F1F1D;
+  --nn-etch:#2A2A27;
+  --nn-bone:#EDEDE6;
+  --nn-bone-dim:#B8B7B0;
+  --nn-concrete:#7A7A74;
+  --nn-safety-yellow:#FFEA00;
+  --nn-toxic-orange:#FF3D00;
+
+  --surface-page:var(--nn-charcoal);
+  --surface-sunk:var(--nn-ink);
+  --surface-card:var(--nn-panel);
+  --surface-raised:var(--nn-raised);
+
+  --text-heading:var(--nn-bone);
+  --text-body:var(--nn-bone-dim);
+  --text-muted:var(--nn-concrete);
+  --text-on-accent:var(--nn-charcoal);
+
+  --border:rgba(237,237,230,0.12);
+  --border-strong:rgba(237,237,230,0.28);
+  --border-dashed:rgba(237,237,230,0.20);
+
+  --accent:var(--nn-safety-yellow);
+  --accent-hot:var(--nn-toxic-orange);
+  --accent-glow:rgba(255,234,0,0.35);
+  --accent-wash:rgba(255,234,0,0.10);
+
+  --font-display:'Bebas Neue','Arial Narrow',Impact,sans-serif;
+  --font-mono:'Space Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+
+  --fs-display-1:clamp(3.5rem,9vw,9.75rem);
+  --fs-display-2:clamp(2.75rem,6.6vw,5.25rem);
+  --fs-display-3:clamp(3.25rem,9.4vw,7.5rem);
+  --fs-subhead:clamp(1.5rem,2.2vw,2rem);
+  --fs-marquee:clamp(1.25rem,2.4vw,1.625rem);
+  --lh-display:0.9;
+  --ls-display:0.02em;
+  --fs-label:0.75rem; --ls-label:0.18em;
+  --fs-meta:0.8125rem; --ls-meta:0.04em;
+  --ls-caps:0.16em;
+  --fs-body:0.9375rem; --fs-body-lg:1.0625rem; --lh-body:1.6;
+
+  --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;
+  --space-5:24px;--space-6:32px;--space-7:48px;--space-8:64px;
+  --space-9:96px;--space-10:128px;
+
+  --gutter:clamp(20px,5vw,96px);
+  --maxw:1600px;
+  --section-y:clamp(64px,8vw,120px);
+
+  --radius-1:2px;--radius-2:3px;--radius-3:4px;
+
+  --ease-out:cubic-bezier(0.16,0.84,0.44,1);
+  --dur-fast:.15s; --dur:.28s;
+
+  --tape:repeating-linear-gradient(-45deg,var(--accent) 0 14px,var(--nn-charcoal) 14px 28px);
+  --glow:0 0 24px var(--accent-glow);
+
+  /* the three profiles, re-keyed onto the studio's own hooks */
+  --profile:var(--nn-safety-yellow);
+
+  /* the six labs: the product's own mark, the one place colour carries data */
+  --lab-claude:#18E4CC; --lab-codex:#7848C0; --lab-grok:#F09C24;
+  --lab-gemini:#0CB490; --lab-cursor:#1884E4; --lab-open:#FC6054;
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html{scroll-behavior:smooth;background:var(--surface-page)}
+body{
+  margin:0;background:var(--surface-page);color:var(--text-body);
+  font-family:var(--font-mono);font-size:var(--fs-body);line-height:var(--lh-body);
+  -webkit-font-smoothing:antialiased;overflow-x:hidden;
+}
+h1,h2,h3,p{margin:0}
+ul{margin:0;padding:0;list-style:none}
+img,svg{display:block;max-inline-size:100%}
+
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline;text-underline-offset:3px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+
+.shell{max-inline-size:var(--maxw);margin-inline:auto;padding-inline:var(--gutter)}
+.section{padding-block:var(--section-y)}
+
+.display{font-family:var(--font-display);line-height:var(--lh-display);letter-spacing:var(--ls-display);color:var(--text-heading);font-weight:400}
+h1.display{font-size:var(--fs-display-1)}
+h2.display{font-size:var(--fs-display-2);line-height:.94}
+.label{font-size:var(--fs-label);letter-spacing:var(--ls-label);text-transform:uppercase;color:var(--text-muted)}
+.label-accent{color:var(--accent)}
+.body-lg{font-size:var(--fs-body-lg);line-height:var(--lh-body);max-width:56ch}
+.meta{font-size:var(--fs-meta);letter-spacing:var(--ls-meta);color:var(--text-muted)}
+.accent{color:var(--accent)}
+code{font-family:var(--font-mono);font-size:.92em;color:var(--text-heading);background:rgba(237,237,230,.07);padding:.1em .34em;border-radius:var(--radius-1)}
+
+.sec-head{display:flex;flex-direction:column;gap:var(--space-4);margin-block-end:var(--space-7)}
+.sec-head .body-lg{margin-block-start:var(--space-2)}
+
+/* ── buttons ─────────────────────────── */
+.button{
+  display:inline-flex;align-items:center;justify-content:center;gap:10px;
+  min-block-size:44px;max-inline-size:100%;padding:14px var(--space-6) 10px;
+  border:1px solid transparent;border-radius:var(--radius-2);
+  font-family:var(--font-display);font-size:1.25rem;letter-spacing:.08em;line-height:1;
+  cursor:pointer;background:none;
+  transition:transform var(--dur) var(--ease-out),box-shadow var(--dur) var(--ease-out),border-color var(--dur) var(--ease-out),color var(--dur) var(--ease-out);
+}
+.button:hover{transform:translateY(-3px);text-decoration:none}
+.button:active{transform:translateY(0)}
+.button-primary{background:var(--accent);color:var(--text-on-accent)}
+.button-primary:hover{color:var(--text-on-accent);box-shadow:var(--glow)}
+.button-ghost{border-color:var(--border-strong);color:var(--text-heading)}
+.button-ghost:hover{border-color:var(--text-heading);color:var(--text-heading)}
+.button-sm{font-size:1.125rem;padding:9px 18px 6px;min-block-size:36px}
+.button-lg{font-size:clamp(1.05rem,4.4vw,1.375rem);padding:16px var(--space-6) 12px}
+
+.tag{font-size:var(--fs-label);letter-spacing:.12em;color:var(--text-muted);border:1px solid var(--border);border-radius:var(--radius-1);padding:6px 10px;text-transform:uppercase}
+.stencil{font-family:var(--font-display);font-size:1.25rem;line-height:1;color:var(--text-on-accent);background:var(--accent);padding:5px 9px 2px;border-radius:var(--radius-1)}
+.stencil-bone{background:var(--nn-bone)}
+.stencil-hot{background:var(--accent-hot);color:var(--nn-bone)}
+.tape-edge{block-size:8px;background:var(--tape)}
+.panel{border:1px solid var(--border);background:var(--surface-card);border-radius:var(--radius-3);padding:var(--space-5)}
+.rule-dashed{border:0;border-block-start:1px dashed var(--border-dashed);margin-block:var(--space-4) 0}
+
+/* ── header ──────────────────────────── */
+.nav{position:sticky;top:env(safe-area-inset-top,0px);z-index:50;background:rgba(13,13,13,.92);backdrop-filter:blur(12px);border-block-end:1px solid var(--border)}
+.nav-in{display:flex;align-items:center;gap:var(--space-5);min-height:72px;padding-block:12px}
+.lockup{display:flex;align-items:center;gap:12px;color:var(--text-heading)}
+.lockup:hover{text-decoration:none}
+.lockup .wm{display:flex;flex-direction:column;line-height:1}
+.lockup .wm b{font-family:var(--font-display);font-size:1.6rem;letter-spacing:.05em;font-weight:400}
+.lockup .wm span{font-size:.5rem;letter-spacing:.2em;color:var(--text-muted);margin-block-start:3px}
+.nav-sp{flex:1}
+.nav .nl{font-size:var(--fs-label);letter-spacing:var(--ls-label);text-transform:uppercase;color:var(--text-muted)}
+.nav .nl:hover{color:var(--text-heading);text-decoration:none}
+@media (max-width:820px){.nav .nl{display:none}}
+
+/* ── hero ────────────────────────────── */
+.hero{padding-block:clamp(40px,5vw,72px) clamp(36px,4.5vw,64px);display:flex;flex-direction:column;gap:clamp(32px,4vw,56px)}
+.hero-copy{display:flex;flex-direction:column;gap:var(--space-5);align-items:flex-start}
+.hero h1{max-width:12ch}
+.hero h1 em{font-style:normal;color:var(--accent)}
+.status{display:inline-flex;align-items:center;gap:10px}
+.status .bulb{width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 12px var(--accent-glow);animation:nn-flicker 5.5s steps(1,end) infinite}
+.eq{display:inline-flex;align-items:flex-end;gap:2px;height:11px;margin-inline-start:2px}
+.eq i{width:2px;height:11px;background:var(--accent);display:block;transform-origin:bottom;animation:nn-eq 1.15s ease-in-out infinite}
+.eq i:nth-child(2){animation-delay:.18s}.eq i:nth-child(3){animation-delay:.36s}.eq i:nth-child(4){animation-delay:.09s}
+.cta-row{display:flex;flex-wrap:wrap;gap:var(--space-3)}
+
+.install{display:flex;align-items:stretch;gap:0;width:100%;max-width:640px;border:1px solid var(--border);border-radius:var(--radius-3);background:var(--surface-sunk);overflow:hidden}
+.install code{background:none;border-radius:0;padding:12px 14px;text-align:left;font-size:.78rem;line-height:1.55;color:var(--text-body);word-break:break-all;flex:1;min-width:0}
+.install code b{color:var(--accent);font-weight:700}
+.install .copy{flex-shrink:0;border:0;border-inline-start:1px solid var(--border);border-radius:0;background:transparent;color:var(--text-heading);font-family:var(--font-display);font-size:1.05rem;letter-spacing:.08em;padding:0 18px 0;cursor:pointer;transition:background var(--dur) var(--ease-out),color var(--dur) var(--ease-out)}
+.install .copy:hover{background:var(--accent);color:var(--text-on-accent)}
+@media (max-width:560px){.install{flex-direction:column}.install .copy{border-inline-start:0;border-block-start:1px solid var(--border);padding:12px 0 9px}}
+
+/* ── the switchboard ─────────────────── */
+.board{border:1px solid var(--border);border-radius:var(--radius-3);background:var(--surface-sunk);overflow:hidden;margin:0}
+.board-head{display:flex;align-items:flex-start;gap:var(--space-5);flex-wrap:wrap;padding:var(--space-5) var(--space-5) var(--space-4)}
+.board-head .who{display:flex;flex-direction:column;gap:4px;min-width:0}
+.board-head .who b{font-family:var(--font-display);font-size:1.5rem;letter-spacing:.16em;color:var(--text-heading);font-weight:400;line-height:1}
+.board-head .who span{font-size:var(--fs-meta);color:var(--text-muted)}
+.board-head .sp{flex:1;min-width:0}
+.board-head .creed{border-inline-start:1px solid var(--border);padding-inline-start:var(--space-4);font-size:var(--fs-label);letter-spacing:.16em;text-transform:uppercase;color:var(--text-muted);line-height:1.7;text-align:left}
+.board-head .creed i{display:block;width:26px;height:1px;background:var(--border-strong);margin-block-start:6px}
+@media (max-width:760px){.board-head .creed{display:none}}
+
+.switcher{display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap}
+.pill{
+  height:38px;padding:0 16px;border-radius:var(--radius-2);border:1px solid var(--border-strong);
+  background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:.75rem;letter-spacing:.14em;
+  text-transform:uppercase;cursor:pointer;display:inline-flex;align-items:center;gap:9px;
+  transition:color var(--dur) var(--ease-out),border-color var(--dur) var(--ease-out),background var(--dur) var(--ease-out);
+}
+.pill .dot{width:8px;height:8px;border-radius:50%;background:currentColor;opacity:.55}
+.pill:hover{color:var(--text-heading);border-color:var(--text-heading)}
+.pill[aria-pressed="true"]{color:var(--text-on-accent);background:var(--pc);border-color:var(--pc)}
+.pill[aria-pressed="true"] .dot{background:var(--text-on-accent);opacity:1}
+.pill[data-p="2"][aria-pressed="true"]{color:var(--nn-bone)}
+.pill[data-p="2"][aria-pressed="true"] .dot{background:var(--nn-bone)}
+
+/* the stage */
+.stage{position:relative;width:100%;max-width:1180px;margin-inline:auto;aspect-ratio:1340/820}
+.wires{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.orbit{fill:none;stroke:var(--border-dashed);stroke-width:1;stroke-dasharray:2 7;opacity:.55}
+.spoke{stroke-width:1.5;fill:none;transition:stroke .4s ease,opacity .4s ease}
+.spoke[data-state="on"]{stroke-dasharray:none;opacity:.9}
+.spoke[data-state="pinned"]{stroke-dasharray:9 7;opacity:.9}
+.spoke[data-state="shared"]{stroke-dasharray:9 7;opacity:.42}
+.spoke[data-state="avail"]{stroke-dasharray:1.5 6;opacity:.42}
+.spoke[data-state="none"]{stroke-dasharray:1 8;opacity:.2}
+.pulse{stroke-width:2.4;stroke-linecap:round;stroke-dasharray:20 900;opacity:0}
+.lit .pulse{animation:travel 3.6s linear infinite both}
+.fired .pulse{animation:travel 1s cubic-bezier(.3,0,.2,1) both}
+@keyframes travel{0%{stroke-dashoffset:920;opacity:0}8%{opacity:.95}92%{opacity:.95}100%{stroke-dashoffset:-20;opacity:0}}
+
+.node{position:absolute;width:0;height:0}
+.badge{
+  position:absolute;left:-25px;top:-25px;width:50px;height:50px;border-radius:50%;
+  border:1.5px solid currentColor;background:#0A0A0A;display:flex;align-items:center;justify-content:center;
+  transition:box-shadow .4s ease,opacity .4s ease;
+}
+.badge svg{width:20px;height:20px;display:block}
+.node[data-state="on"] .badge,.node[data-state="pinned"] .badge{box-shadow:0 0 18px -2px currentColor,inset 0 0 12px -6px currentColor}
+.node[data-state="shared"] .badge{opacity:.72}
+.node[data-state="avail"] .badge{opacity:.46}
+.node[data-state="none"] .badge{opacity:.28}
+
+.nlabel{position:absolute;width:212px;display:flex;flex-direction:column;gap:3px}
+.node[data-side="left"] .nlabel{right:38px;top:-40px;text-align:right;align-items:flex-end}
+.node[data-side="right"] .nlabel{left:38px;top:-40px;text-align:left;align-items:flex-start}
+.node[data-side="top"] .nlabel{left:-106px;bottom:40px;text-align:center;align-items:center}
+.node[data-side="bottom"] .nlabel{left:-106px;top:40px;text-align:center;align-items:center}
+.nname{font-family:var(--font-display);font-size:1.18rem;letter-spacing:.11em;color:var(--text-heading);line-height:1}
+.nenv{font-size:.62rem;letter-spacing:.11em;color:var(--text-muted);line-height:1.3}
+.npath{font-size:.66rem;color:var(--text-muted);opacity:.78;line-height:1.35;word-break:break-all}
+.nchip{
+  margin-block-start:3px;font-size:.58rem;letter-spacing:.14em;text-transform:uppercase;line-height:1;
+  padding:5px 8px 4px;border-radius:var(--radius-1);border:1px solid currentColor;
+  background:color-mix(in srgb,currentColor 12%,transparent);white-space:nowrap;
+}
+.node[data-state="avail"] .nchip,.node[data-state="none"] .nchip{color:var(--text-muted);background:transparent}
+.node[data-state="avail"] .nname,.node[data-state="none"] .nname{color:var(--text-body);opacity:.7}
+
+.core{
+  position:absolute;left:50%;top:48.78%;translate:-50% -50%;
+  width:186px;height:186px;border-radius:50%;
+  background:radial-gradient(circle at 50% 42%,#1A1A19 0%,#0C0C0B 68%);
+  border:1px solid var(--border);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;
+  box-shadow:0 0 0 14px rgba(237,237,230,.022),0 0 56px -22px var(--profile);
+  transition:box-shadow .5s ease;
+}
+.core::before{content:"";position:absolute;inset:16px;border-radius:50%;border:1.5px solid var(--profile);opacity:.85;transition:border-color .5s ease}
+.core .pic{color:var(--text-heading);opacity:.85}
+.core .pic svg{width:19px;height:19px;display:block}
+.core b{font-family:var(--font-display);font-size:1.3rem;letter-spacing:.14em;color:var(--text-heading);font-weight:400;line-height:1}
+.core span{font-size:.63rem;color:var(--text-muted);letter-spacing:.02em}
+.core i{width:22px;height:1px;background:var(--border-strong);display:block}
+
+.board-foot{display:flex;flex-wrap:wrap;gap:var(--space-4) var(--space-5);align-items:flex-end;padding:var(--space-4) var(--space-5) var(--space-5)}
+.legend{display:flex;flex-direction:column;gap:7px;border:1px solid var(--border);border-radius:var(--radius-3);padding:var(--space-4);min-width:212px}
+.legend div{display:flex;align-items:center;gap:12px;font-size:.68rem;color:var(--text-muted)}
+.legend svg{width:56px;height:6px;flex-shrink:0;overflow:visible}
+.legend line{stroke:var(--text-body);stroke-width:1.5}
+.board-foot .sp{flex:1;min-width:0}
+.sharecard{display:flex;align-items:flex-start;gap:var(--space-4);border:1px solid var(--border);border-radius:var(--radius-3);padding:var(--space-4);max-width:430px;background:var(--surface-card)}
+.sharecard .ic{width:46px;height:46px;border-radius:var(--radius-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;flex-shrink:0;color:var(--text-body)}
+.sharecard .ic svg{width:21px;height:21px}
+.sharecard h3{font-family:var(--font-display);font-size:1.1rem;letter-spacing:.11em;color:var(--text-heading);font-weight:400;line-height:1;margin-block-end:7px}
+.sharecard p{font-size:var(--fs-meta);color:var(--text-muted);line-height:1.5}
+.sharecard a{font-size:var(--fs-meta);display:inline-block;margin-block-start:7px}
+
+.statusbar{display:flex;flex-wrap:wrap;gap:var(--space-3) var(--space-5);align-items:center;border-block-start:1px solid var(--border);padding:12px var(--space-5);background:rgba(237,237,230,.015)}
+.cmdline{font-size:.78rem;color:var(--text-heading);min-width:0;word-break:break-word}
+.cmdline .pr{color:var(--text-muted)}
+.statusbar .sp{flex:1;min-width:0}
+.statline{font-size:.66rem;letter-spacing:.14em;text-transform:uppercase;color:var(--text-muted);display:inline-flex;align-items:center;gap:10px;white-space:nowrap}
+.statline .dot{width:7px;height:7px;border-radius:50%;background:var(--profile);box-shadow:0 0 9px var(--profile);transition:background .5s ease,box-shadow .5s ease}
+.statline b{color:var(--text-heading);font-weight:400}
+.statline i{color:var(--border-strong);font-style:normal}
+.caret{display:inline-block;width:7px;height:13px;background:var(--accent);vertical-align:-2px;animation:blink 1.1s steps(1) infinite}
+@keyframes blink{0%,50%{opacity:1}51%,100%{opacity:0}}
+
+/* stacked: the ring becomes a list */
+@media (max-width:960px){
+  .stage{aspect-ratio:auto;display:flex;flex-direction:column;gap:10px;max-width:none;padding:0 var(--space-5) var(--space-2)}
+  .wires{display:none}
+  .core{position:static;translate:none;width:100%;height:auto;border-radius:var(--radius-3);flex-direction:row;justify-content:flex-start;gap:12px;padding:14px var(--space-4);box-shadow:none;margin-block-end:6px}
+  .core::before{display:none}
+  .core i{display:none}
+  .node{position:static;width:auto;height:auto;display:flex;align-items:center;gap:14px;border:1px solid var(--border);border-radius:var(--radius-3);padding:12px var(--space-4)}
+  .badge{position:static;width:42px;height:42px;flex-shrink:0}
+  .nlabel{position:static;width:auto;inset:auto;text-align:left!important;align-items:flex-start!important;flex:1;min-width:0}
+}
+
+/* ── marquee ─────────────────────────── */
+.marquee{overflow:hidden;border-block:1px solid var(--border);background:var(--surface-page)}
+.marquee-track{display:flex;inline-size:max-content;padding-block:var(--space-4);will-change:transform;animation:nn-tape 40s linear infinite}
+.marquee-group{display:flex;gap:44px;padding-inline-end:44px;font-family:var(--font-display);font-size:var(--fs-marquee);letter-spacing:.1em;white-space:nowrap;color:var(--text-heading)}
+.marquee-group span:nth-child(even){color:var(--accent)}
+
+/* ── units / model ───────────────────── */
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:clamp(24px,4vw,56px);align-items:start}
+@media (max-width:880px){.two{grid-template-columns:minmax(0,1fr)}}
+
+.tree{font-family:var(--font-mono);font-size:.8rem;line-height:2;color:var(--text-muted);white-space:pre;overflow-x:auto;margin:0}
+.tree .dir{color:var(--text-body)}
+.tree .act{color:var(--text-heading);font-weight:700}
+.tree .act::after{content:"  ← ACTIVE";color:var(--profile);font-weight:400;transition:color .45s ease}
+
+.facts{display:flex;flex-direction:column;gap:var(--space-5)}
+.fact{display:flex;gap:var(--space-4);align-items:flex-start}
+.fact .n{flex-shrink:0}
+.fact h3{font-family:var(--font-display);font-size:var(--fs-subhead);line-height:1;letter-spacing:.03em;color:var(--text-heading);font-weight:400;margin-block-end:8px}
+.fact p{font-size:var(--fs-body);color:var(--text-body)}
+
+/* ── tiers ───────────────────────────── */
+.tier-top{display:flex;align-items:center;gap:var(--space-3);margin-block-end:var(--space-4)}
+.tier-tag{font-family:var(--font-display);font-size:1.15rem;letter-spacing:.1em;padding:4px 10px 1px;border-radius:var(--radius-1)}
+.tier-env{background:var(--nn-bone);color:var(--nn-charcoal)}
+.tier-swap{background:var(--accent-hot);color:var(--nn-bone)}
+.tier h3{font-family:var(--font-display);font-size:var(--fs-subhead);line-height:1;letter-spacing:.03em;color:var(--text-heading);font-weight:400;margin-block-end:var(--space-3)}
+.tier p{font-size:var(--fs-body);color:var(--text-body)}
+.tier .demo{margin-block:var(--space-5)}
+.mini{display:flex;gap:var(--space-2)}
+.mini .win{flex:1;min-width:0;background:var(--surface-sunk);border:1px solid var(--border);border-radius:var(--radius-2);padding:10px 12px;font-size:.7rem;line-height:1.7;color:var(--text-muted)}
+.mini .win b{display:block;font-weight:700;color:var(--text-heading)}
+.mini .win .live{display:inline-flex;align-items:center;gap:6px;color:var(--accent)}
+.mini .win .live i{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:nn-flicker 4s steps(1,end) infinite}
+.baton{position:relative;height:34px;border-radius:var(--radius-2);background:var(--surface-sunk);border:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 14px;font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted);overflow:hidden}
+.baton .slide{position:absolute;top:3px;left:3px;width:calc(50% - 4.5px);height:calc(100% - 6px);border-radius:var(--radius-1);background:rgba(255,61,0,.22);border:1px solid rgba(255,61,0,.55);animation:slide 4.6s cubic-bezier(.6,0,.35,1) infinite}
+@keyframes slide{0%,42%{transform:translateX(0)}50%,92%{transform:translateX(calc(100% + 3px))}100%{transform:translateX(0)}}
+.baton span{position:relative;z-index:1}
+.labchips{display:flex;flex-wrap:wrap;gap:var(--space-2)}
+.labchip{display:inline-flex;align-items:center;gap:8px;height:28px;padding:0 11px;border-radius:var(--radius-1);border:1px solid var(--border);font-size:.7rem;letter-spacing:.08em;text-transform:uppercase;color:var(--text-body)}
+.labchip i{width:7px;height:7px;border-radius:50%;display:block}
+
+/* ── menu bar shot ───────────────────── */
+.shot-wrap{display:flex;justify-content:center}
+.shot{width:340px;max-width:100%;background:#1C1C1E;border:1px solid rgba(255,255,255,.1);border-radius:12px;box-shadow:0 34px 80px -28px rgba(0,0,0,.95);overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',Helvetica,sans-serif;font-size:13px;line-height:1.4;color:#ECECEE}
+.shot-h{display:flex;align-items:center;gap:8px;height:42px;padding:0 12px;border-bottom:1px solid rgba(255,255,255,.07)}
+.shot-h .t{font-size:12.5px;font-weight:600}
+.shot-h .r{margin-left:auto;font-size:10.5px;font-family:var(--font-mono);color:#8A8A90}
+.pcard{padding:9px 11px;border-bottom:1px solid rgba(255,255,255,.055);display:flex;flex-direction:column;gap:7px}
+.pcard.on{background:rgba(255,255,255,.035)}
+.pcard-h{display:flex;align-items:center;gap:8px}
+.pcard-h .bar{width:3px;height:17px;border-radius:1px;flex-shrink:0}
+.pcard-h .nm{font-size:13px;font-weight:500;flex:1;min-width:0}
+.pcard-h .st{font-size:10px;color:#8A8A90;font-family:var(--font-mono);flex-shrink:0}
+.meters{display:flex;flex-direction:column;gap:5px}
+.meter{display:flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:9.5px;color:#8A8A90}
+.meter .k{width:16px;flex-shrink:0}
+.meter .tr{flex:1;height:4px;border-radius:1px;background:rgba(255,255,255,.1);overflow:hidden}
+.meter .fl{display:block;height:100%;border-radius:1px;transform-origin:left center;animation:fill .9s var(--ease-out) both}
+@keyframes fill{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+.meter .v{width:28px;text-align:right;flex-shrink:0;color:#C7C7CC;font-variant-numeric:tabular-nums}
+.meter .rs{width:82px;text-align:right;flex-shrink:0;font-size:9px;white-space:nowrap}
+.chips{display:flex;gap:5px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:5px;height:18px;padding:0 6px;border-radius:3px;background:rgba(255,255,255,.08);font-family:var(--font-mono);font-size:9px;color:#C7C7CC}
+.chip i{width:5px;height:5px;border-radius:50%;display:block}
+.chip .g{width:16px;height:3px;border-radius:1px;background:rgba(255,255,255,.14);overflow:hidden}
+.chip .g s{display:block;height:100%;text-decoration:none}
+.chip.maxed{background:rgba(255,61,0,.2);border:1px solid rgba(255,61,0,.5);color:rgba(255,255,255,.62)}
+.shot-f{display:flex;align-items:center;height:32px;padding:0 12px;font-size:11.5px;color:#8A8A90}
+.shot-f .k{margin-left:auto;font-family:var(--font-mono);font-size:10.5px}
+
+/* ── cli ─────────────────────────────── */
+.cmds{border:1px solid var(--border);border-radius:var(--radius-3);overflow:hidden;background:var(--surface-sunk)}
+.cmdrow{display:grid;grid-template-columns:minmax(0,320px) minmax(0,1fr);gap:var(--space-5);padding:12px var(--space-5);border-block-end:1px solid var(--border);align-items:baseline;transition:background var(--dur) var(--ease-out)}
+.cmdrow:last-child{border-block-end:0}
+.cmdrow:hover{background:var(--surface-card)}
+.cmdrow .c{font-size:.8rem;color:var(--text-heading);word-break:break-word}
+.cmdrow .c u{text-decoration:none;color:var(--accent)}
+.cmdrow .d{font-size:var(--fs-meta);color:var(--text-muted)}
+@media (max-width:720px){.cmdrow{grid-template-columns:minmax(0,1fr);gap:4px}}
+
+/* ── table ───────────────────────────── */
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:var(--radius-3);background:var(--surface-sunk)}
+table{border-collapse:collapse;width:100%;min-width:720px;font-size:var(--fs-meta)}
+th{text-align:left;font-size:var(--fs-label);letter-spacing:var(--ls-label);text-transform:uppercase;color:var(--text-muted);font-weight:400;padding:13px var(--space-4);border-block-end:1px solid var(--border);white-space:nowrap}
+td{padding:12px var(--space-4);border-block-end:1px solid var(--border);color:var(--text-body);white-space:nowrap}
+tr:last-child td{border-block-end:0}
+td.lab{color:var(--text-heading);font-family:var(--font-display);font-size:1.15rem;letter-spacing:.06em}
+td.lab i{width:9px;height:9px;border-radius:50%;display:inline-block;margin-inline-end:10px;vertical-align:1px}
+td .yes{color:var(--accent)}
+td .no{color:var(--text-muted)}
+.t-pill{font-family:var(--font-display);font-size:1rem;letter-spacing:.1em;padding:3px 8px 0;border-radius:var(--radius-1)}
+
+/* ── close ───────────────────────────── */
+.close{display:flex;flex-direction:column;align-items:center;gap:var(--space-5);text-align:center}
+.close h2{max-width:14ch}
+footer{border-block-start:1px solid var(--border);padding-block:var(--space-6)}
+.foot{display:flex;flex-wrap:wrap;gap:var(--space-3) var(--space-6);align-items:center;font-size:var(--fs-label);letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted)}
+.foot .sp{flex:1}
+
+/* Motion primitives, lifted from noisyneighbor.studio/css/nn.css.
+   nn-tape assumes .marquee-track holds exactly two identical groups,
+   so -50% lands on a seam. nn-eq needs transform-origin:bottom. */
+@keyframes nn-tape{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+@keyframes nn-eq{0%,100%{transform:scaleY(.18)}50%{transform:scaleY(1)}}
+@keyframes nn-flicker{0%,42%,48%,71%,76%,100%{opacity:1}45%{opacity:.25}73%{opacity:.4}}
+
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+  .button:hover{transform:none}
+}
+</style>
+
+<style>
+:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+</style>
+</head>
+<body>
+<nav class="nav">
+  <div class="shell nav-in">
+    <a class="lockup" href="#top">
+      <svg width="30" height="30" viewBox="0 0 24 24" aria-hidden="true">
+        <rect width="24" height="24" rx="2" fill="#161615"></rect>
+        <g stroke="rgba(237,237,230,.3)" stroke-width=".9"><path d="M12 12 12 5.4M12 12 17.7 8.7M12 12 17.7 15.3M12 12 12 18.6M12 12 6.3 15.3M12 12 6.3 8.7"></path></g>
+        <circle cx="12" cy="5.4" r="1.9" fill="#18E4CC"></circle><circle cx="17.7" cy="8.7" r="1.9" fill="#7848C0"></circle>
+        <circle cx="17.7" cy="15.3" r="1.9" fill="#F09C24"></circle><circle cx="12" cy="18.6" r="1.9" fill="#0CB490"></circle>
+        <circle cx="6.3" cy="15.3" r="1.9" fill="#1884E4"></circle><circle cx="6.3" cy="8.7" r="1.9" fill="#FC6054"></circle>
+        <circle cx="12" cy="12" r="2.5" fill="#FFEA00"></circle>
+      </svg>
+      <span class="wm"><b>N2 AGENTS</b><span>A Noisy Neighbor Studio unit</span></span>
+    </a>
+    <div class="nav-sp"></div>
+    <a class="nl" href="#model">The model</a>
+    <a class="nl" href="#tiers">Isolation</a>
+    <a class="nl" href="#menubar">Menu bar</a>
+    <a class="nl" href="#cli">CLI</a>
+    <a class="button button-primary button-sm" href="#install">Install</a>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="shell hero-copy">
+    <p class="status label"><span class="bulb"></span>Six tenants, one lease<span class="eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span></p>
+    <h1 class="display">One identity.<br><em>Every lab.</em></h1>
+    <p class="body-lg">Work, personal, client. Each profile holds its own Claude, Codex, Grok, Gemini, Cursor and opencode login. Switch them together, or pin one at a time. A macOS menu bar app and a small CLI.</p>
+    <div class="cta-row">
+      <a class="button button-primary" href="#install">Install it</a>
+      <a class="button button-ghost" href="https://github.com/noisyneighborstudio/n2-agents">Read the source</a>
+    </div>
+    <p class="meta">MIT · Apple silicon + Intel · Sparkle self-updates</p>
+  </div>
+
+  <div class="shell">
+  <figure class="board">
+    <div class="board-head">
+      <div class="who">
+        <b>Profile</b>
+        <span>Pick a profile. See which labs it holds, and how.</span>
+      </div>
+      <div class="switcher" role="group" aria-label="Active profile">
+        <button class="pill" type="button" data-p="0" style="--pc:#FFEA00" aria-pressed="true"><span class="dot"></span>Work</button>
+        <button class="pill" type="button" data-p="1" style="--pc:#EDEDE6" aria-pressed="false"><span class="dot"></span>Personal</button>
+        <button class="pill" type="button" data-p="2" style="--pc:#FF3D00" aria-pressed="false"><span class="dot"></span>Client</button>
+      </div>
+      <div class="sp"></div>
+      <p class="creed">One profile<br>Six labs<br>One switch<i></i></p>
+    </div>
+
+    <div class="stage lit" id="stage">
+      <svg class="wires" id="wires" viewBox="0 0 1340 820" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+        <ellipse class="orbit" cx="670" cy="400" rx="150" ry="118"></ellipse>
+        <ellipse class="orbit" cx="670" cy="400" rx="195" ry="153"></ellipse>
+        <line class="spoke" data-lab="claude" data-state="on"    x1="670" y1="400" x2="670"   y2="165"   stroke="#18E4CC"></line>
+        <line class="spoke" data-lab="codex"  data-state="on"    x1="670" y1="400" x2="929.8" y2="282.5" stroke="#7848C0"></line>
+        <line class="spoke" data-lab="grok"   data-state="on"    x1="670" y1="400" x2="929.8" y2="517.5" stroke="#F09C24"></line>
+        <line class="spoke" data-lab="gemini" data-state="pinned" x1="670" y1="400" x2="670"  y2="635"   stroke="#0CB490"></line>
+        <line class="spoke" data-lab="cursor" data-state="on"    x1="670" y1="400" x2="410.2" y2="517.5" stroke="#1884E4"></line>
+        <line class="spoke" data-lab="open"   data-state="avail" x1="670" y1="400" x2="410.2" y2="282.5" stroke="#FC6054"></line>
+
+        <line class="pulse" data-lab="claude" x1="670" y1="400" x2="670"   y2="165"   stroke="#18E4CC" style="animation-delay:0s"></line>
+        <line class="pulse" data-lab="codex"  x1="670" y1="400" x2="929.8" y2="282.5" stroke="#7848C0" style="animation-delay:.3s"></line>
+        <line class="pulse" data-lab="grok"   x1="670" y1="400" x2="929.8" y2="517.5" stroke="#F09C24" style="animation-delay:.6s"></line>
+        <line class="pulse" data-lab="gemini" x1="670" y1="400" x2="670"   y2="635"   stroke="#0CB490" style="animation-delay:.9s"></line>
+        <line class="pulse" data-lab="cursor" x1="670" y1="400" x2="410.2" y2="517.5" stroke="#1884E4" style="animation-delay:1.2s"></line>
+        <line class="pulse" data-lab="open"   x1="670" y1="400" x2="410.2" y2="282.5" stroke="#FC6054" style="animation-delay:1.5s"></line>
+      </svg>
+
+      <div class="core" id="core">
+        <span class="pic"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="7.1" r="3.1"></circle><path d="M4 16.6c.9-2.8 3.2-4.3 6-4.3s5.1 1.5 6 4.3"></path></svg></span>
+        <b id="coreName">Work</b>
+        <span id="corePath">~/.n2-agents/Work</span>
+        <i></i>
+      </div>
+
+      <div class="node" data-lab="claude" data-side="top" data-state="on" style="left:50%;top:20.12%;color:#18E4CC">
+        <span class="badge"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6.5 8.5 10l-4 3.5"></path><path d="M10.5 13.5h5"></path></svg></span>
+        <span class="nlabel"><span class="nname">Claude Code</span><span class="nenv">CLAUDE_CONFIG_DIR</span><span class="npath">~/.n2-agents/Work/claude</span><span class="nchip">Connected</span></span>
+      </div>
+      <div class="node" data-lab="codex" data-side="right" data-state="on" style="left:69.39%;top:34.45%;color:#7848C0">
+        <span class="badge"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3.2 16.4 6.6v6.8L10 16.8 3.6 13.4V6.6z"></path><path d="M3.6 6.6 10 10l6.4-3.4M10 10v6.8"></path></svg></span>
+        <span class="nlabel"><span class="nname">Codex</span><span class="nenv">CODEX_HOME</span><span class="npath">~/.n2-agents/Work/codex</span><span class="nchip">Connected</span></span>
+      </div>
+      <div class="node" data-lab="grok" data-side="right" data-state="on" style="left:69.39%;top:63.11%;color:#F09C24">
+        <span class="badge"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="10" r="6.2"></circle><path d="M14.8 5.6 5.2 14.4"></path></svg></span>
+        <span class="nlabel"><span class="nname">Grok</span><span class="nenv">GROK_HOME</span><span class="npath">~/.n2-agents/Work/grok</span><span class="nchip">Connected</span></span>
+      </div>
+      <div class="node" data-lab="gemini" data-side="bottom" data-state="pinned" style="left:50%;top:77.44%;color:#0CB490">
+        <span class="badge"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.4 11.6a3.2 3.2 0 0 0 4.6 0l2.2-2.2a3.2 3.2 0 0 0-4.6-4.6l-1 1"></path><path d="M11.6 8.4a3.2 3.2 0 0 0-4.6 0l-2.2 2.2a3.2 3.2 0 0 0 4.6 4.6l1-1"></path></svg></span>
+        <span class="nlabel"><span class="nname">Gemini</span><span class="nenv">no variable · swap</span><span class="npath">~/.gemini → Work</span><span class="nchip">Pinned here</span></span>
+      </div>
+      <div class="node" data-lab="cursor" data-side="left" data-state="on" style="left:30.61%;top:63.11%;color:#1884E4">
+        <span class="badge"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.4 3.6 15 10.2l-4.1.7 2.3 4.4-1.9 1-2.3-4.4-2.9 3z"></path></svg></span>
+        <span class="nlabel"><span class="nname">Cursor</span><span class="nenv">CURSOR_CONFIG_DIR</span><span class="npath">~/.n2-agents/Work/cursor</span><span class="nchip">Connected</span></span>
+      </div>
+      <div class="node" data-lab="open" data-side="left" data-state="avail" style="left:30.61%;top:34.45%;color:#FC6054">
+        <span class="badge"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.6 6.4 3.6 10l4 3.6"></path><path d="M12.4 6.4 16.4 10l-4 3.6"></path></svg></span>
+        <span class="nlabel"><span class="nname">opencode</span><span class="nenv">XDG_CONFIG_HOME</span><span class="npath">no slot in this profile</span><span class="nchip">Available</span></span>
+      </div>
+    </div>
+
+    <figcaption class="board-foot">
+      <div class="legend">
+        <div><svg viewBox="0 0 56 6" aria-hidden="true"><line x1="0" y1="3" x2="56" y2="3"></line></svg>Connected</div>
+        <div><svg viewBox="0 0 56 6" aria-hidden="true"><line x1="0" y1="3" x2="56" y2="3" stroke-dasharray="9 7"></line></svg>Shared</div>
+        <div><svg viewBox="0 0 56 6" aria-hidden="true"><line x1="0" y1="3" x2="56" y2="3" stroke-dasharray="1.5 6"></line></svg>Available</div>
+        <div><svg viewBox="0 0 56 6" aria-hidden="true"><line x1="0" y1="3" x2="56" y2="3" stroke-dasharray="1 8" opacity=".4"></line></svg>Not installed</div>
+      </div>
+      <div class="sp"></div>
+      <div class="sharecard">
+        <span class="ic"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.6" cy="7.2" r="2.7"></circle><path d="M2.6 16c.8-2.5 2.7-3.8 5-3.8s4.2 1.3 5 3.8"></path><path d="M13.4 5.1a2.7 2.7 0 0 1 0 4.9M14.6 12.6c1.5.5 2.5 1.7 2.9 3.4"></path></svg></span>
+        <div>
+          <h3>Shared environment</h3>
+          <p id="shareText">Gemini is pinned to Work right now. Every other profile sees this one.</p>
+          <a href="#tiers">Why Gemini is different →</a>
+        </div>
+      </div>
+    </figcaption>
+
+    <div class="statusbar">
+      <p class="cmdline"><span class="pr">$</span> <span class="tcmd" id="typed">agents use Work</span><span class="caret" id="caret" hidden></span></p>
+      <span class="sp"></span>
+      <p class="statline"><span class="dot"></span><b id="statName">Work</b> active <i>/</i> <span id="statCount">5</span> labs wired <i>/</i> v0.3.0</p>
+    </div>
+  </figure>
+  </div>
+</header>
+
+<div class="marquee" aria-hidden="true">
+  <div class="marquee-track">
+    <div class="marquee-group">
+      <span>⚠ One key · six doors</span><span>agents use Work</span><span>⚠ env × 5 · swap × 1</span><span>Two profiles, one lab, both signed in</span><span>⚠ Quiet hours: never</span><span>One switch moves the lot</span>
+    </div>
+    <div class="marquee-group">
+      <span>⚠ One key · six doors</span><span>agents use Work</span><span>⚠ env × 5 · swap × 1</span><span>Two profiles, one lab, both signed in</span><span>⚠ Quiet hours: never</span><span>One switch moves the lot</span>
+    </div>
+  </div>
+</div>
+
+<section id="model">
+  <div class="shell section">
+    <div class="sec-head">
+      <p class="label">01 · The model</p>
+      <h2 class="display">One folder per identity.<br>One slot per lab.</h2>
+      <p class="body-lg"><code>agents use Work</code> moves Claude, Codex and Grok in one step. Doing it by hand is six separate logins and a memory test you'll eventually fail.</p>
+    </div>
+    <div class="two">
+      <pre class="tree"><span class="dir">~/.n2-agents/</span>
+  <span class="act" id="t0">Work/</span>
+    claude/        <span>→ CLAUDE_CONFIG_DIR</span>
+    codex/         <span>→ CODEX_HOME</span>
+    grok/          <span>→ GROK_HOME</span>
+  <span id="t1">Personal/</span>
+    claude/
+    codex/
+  <span id="t2">Client/</span>
+    claude/
+    codex/
+    grok/</pre>
+      <div class="facts">
+        <div class="fact"><span class="n stencil">01</span><div><h3>Separate logins, side by side</h3><p>Each slot is a real config directory, so two profiles can be signed in to the same lab at once.</p></div></div>
+        <div class="fact"><span class="n stencil">02</span><div><h3>Real commands on your PATH</h3><p><code>claude-work</code>, <code>codex-personal</code> and <code>grok-client</code> are executables on your PATH, so editors, GUI apps and scripts can call them. Shell functions can't do that.</p></div></div>
+        <div class="fact"><span class="n stencil">03</span><div><h3>Adopt what you already have</h3><p><code>agents adopt</code> symlinks your existing <code>claudes</code> profiles into place. Nothing is copied, so nothing has to log in again.</p></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="tape-edge" aria-hidden="true"></div>
+
+<section id="tiers">
+  <div class="shell section">
+    <div class="sec-head">
+      <p class="label">02 · Isolation</p>
+      <h2 class="display">Two tiers.<br>The lab decides which.</h2>
+      <p class="body-lg">A lab's tier comes from what its CLI supports. We read that off the shipped binary, because the docs and the binary don't always agree.</p>
+    </div>
+    <div class="two">
+      <div class="panel tier">
+        <div class="tier-top"><span class="tier-tag tier-env">ENV</span><span class="label">5 of 6 labs</span></div>
+        <h3>Pinned per process</h3>
+        <p>The CLI reads a config-dir environment variable, so two profiles run side by side. A running session keeps its profile no matter what you switch to later.</p>
+        <div class="demo mini">
+          <div class="win"><b>claude-work</b><span class="live"><i></i>running</span></div>
+          <div class="win"><b>claude-personal</b><span class="live"><i></i>running</span></div>
+        </div>
+        <div class="labchips">
+          <span class="labchip"><i style="background:#18E4CC"></i>Claude</span>
+          <span class="labchip"><i style="background:#7848C0"></i>Codex</span>
+          <span class="labchip"><i style="background:#F09C24"></i>Grok</span>
+          <span class="labchip"><i style="background:#1884E4"></i>Cursor</span>
+          <span class="labchip"><i style="background:#FC6054"></i>opencode</span>
+        </div>
+      </div>
+
+      <div class="panel tier">
+        <div class="tier-top"><span class="tier-tag tier-swap">SWAP</span><span class="label">1 of 6 labs</span></div>
+        <h3>One at a time, and global</h3>
+        <p>No such variable exists, so the only move is swapping the dot-dir symlink. <code>agents run</code> won't start a <code>swap</code> lab under a non-active profile unless you pass <code>--switch</code>, because that swap lands on every other profile too.</p>
+        <div class="demo baton" aria-hidden="true"><span class="slide"></span><span>Work</span><span>Personal</span></div>
+        <div class="labchips"><span class="labchip"><i style="background:#0CB490"></i>Gemini</span></div>
+      </div>
+    </div>
+    <hr class="rule-dashed">
+    <p class="meta" style="margin-block-start:var(--space-4);max-width:78ch">Gemini's <code>GEMINI_DIR</code> looks like an environment variable. In the shipped source it's a constant set to <code>".gemini"</code>. That one line is why Gemini is the only <code>swap</code> lab, and why <code>agents vendors</code> reads the table off your machine at runtime.</p>
+  </div>
+</section>
+
+<section id="menubar">
+  <div class="shell section">
+    <div class="sec-head">
+      <p class="label">03 · The menu bar</p>
+      <h2 class="display">How much is left,<br>across every profile.</h2>
+    </div>
+    <div class="two" style="align-items:center">
+      <div class="shot-wrap">
+        <div class="shot">
+          <div class="shot-h">
+            <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
+              <g stroke="rgba(255,255,255,.28)" stroke-width="1"><path d="M12 12 12 5.4M12 12 17.7 8.7M12 12 17.7 15.3M12 12 12 18.6M12 12 6.3 15.3M12 12 6.3 8.7"></path></g>
+              <circle cx="12" cy="5.4" r="1.9" fill="#18E4CC"></circle><circle cx="17.7" cy="8.7" r="1.9" fill="#7848C0"></circle>
+              <circle cx="17.7" cy="15.3" r="1.9" fill="#F09C24"></circle><circle cx="12" cy="18.6" r="1.9" fill="#0CB490"></circle>
+              <circle cx="6.3" cy="15.3" r="1.9" fill="#1884E4"></circle><circle cx="6.3" cy="8.7" r="1.9" fill="#FC6054"></circle>
+              <circle cx="12" cy="12" r="2.4" fill="#FDFEFF"></circle>
+            </svg>
+            <span class="t">N2 Agents</span><span class="r">6 labs · 3 profiles</span>
+          </div>
+
+          <div class="pcard on">
+            <div class="pcard-h"><span class="bar" style="background:#FFEA00"></span><span class="nm">Work</span><span class="st">active</span></div>
+            <div class="meters">
+              <div class="meter"><span class="k">5h</span><span class="tr"><s class="fl" style="width:48%;background:#EDEDE6"></s></span><span class="v">48%</span><span class="rs">resets 2:14 PM</span></div>
+              <div class="meter"><span class="k">7d</span><span class="tr"><s class="fl" style="width:62%;background:#FFEA00;animation-delay:.08s"></s></span><span class="v">62%</span><span class="rs">Mon 09:00</span></div>
+            </div>
+            <div class="chips">
+              <span class="chip"><i style="background:#18E4CC"></i>CC<span class="g"><s style="width:48%;background:#EDEDE6"></s></span></span>
+              <span class="chip"><i style="background:#7848C0"></i>CX</span>
+              <span class="chip"><i style="background:#F09C24"></i>GK</span>
+              <span class="chip"><i style="background:#1884E4"></i>CU</span>
+            </div>
+          </div>
+
+          <div class="pcard">
+            <div class="pcard-h"><span class="bar" style="background:#EDEDE6"></span><span class="nm">Personal</span><span class="st">4% of 5h</span></div>
+            <div class="meters">
+              <div class="meter"><span class="k">5h</span><span class="tr"><s class="fl" style="width:4%;background:#EDEDE6;animation-delay:.14s"></s></span><span class="v">4%</span><span class="rs">resets 2:14 PM</span></div>
+              <div class="meter"><span class="k">7d</span><span class="tr"><s class="fl" style="width:19%;background:#EDEDE6;animation-delay:.2s"></s></span><span class="v">19%</span><span class="rs">Mon 09:00</span></div>
+            </div>
+            <div class="chips">
+              <span class="chip"><i style="background:#18E4CC"></i>CC<span class="g"><s style="width:4%;background:#EDEDE6"></s></span></span>
+              <span class="chip"><i style="background:#7848C0"></i>CX</span>
+              <span class="chip"><i style="background:#0CB490"></i>GM</span>
+            </div>
+          </div>
+
+          <div class="pcard" style="background:rgba(255,61,0,.07)">
+            <div class="pcard-h"><span class="bar" style="background:#FF3D00"></span><span class="nm">Client</span><span class="st" style="color:#FF7A4D">maxed until 2:14 PM</span></div>
+            <div class="meters">
+              <div class="meter"><span class="k">5h</span><span class="tr"><s class="fl" style="width:100%;background:#FF3D00;animation-delay:.26s"></s></span><span class="v">100%</span><span class="rs">resets 2:14 PM</span></div>
+              <div class="meter"><span class="k">7d</span><span class="tr"><s class="fl" style="width:88%;background:#FF6B3D;animation-delay:.32s"></s></span><span class="v">88%</span><span class="rs">Mon 09:00</span></div>
+            </div>
+            <div class="chips">
+              <span class="chip maxed"><i style="background:#FF3D00"></i>CC<span class="g"><s style="width:100%;background:#FF3D00"></s></span></span>
+              <span class="chip"><i style="background:#7848C0"></i>CX</span>
+              <span class="chip"><i style="background:#FC6054"></i>OC</span>
+            </div>
+          </div>
+
+          <div class="shot-f"><span>New Profile…</span><span class="k">⌘N</span></div>
+        </div>
+      </div>
+
+      <div class="facts">
+        <div class="fact"><span class="n stencil">01</span><div><h3>Open the profile with room left</h3><p><code>agents run --best</code> opens whichever profile has the most Claude quota left. The numbers come from the same OAuth endpoint Claude Code's own <code>/usage</code> screen reads.</p></div></div>
+        <div class="fact"><span class="n stencil">02</span><div><h3>Opens in your terminal</h3><p>Terminal, iTerm2, Warp, Ghostty, kitty, Alacritty or WezTerm.</p></div></div>
+        <div class="fact"><span class="n stencil">03</span><div><h3>Claude Desktop, cloned per profile</h3><p>Re-patched on its own each time Claude ships an update.</p></div></div>
+        <div class="fact"><span class="n stencil">04</span><div><h3>Move a session between identities</h3><p>Transfer a Claude or Codex transcript to another profile and pick it straight back up.</p></div></div>
+        <div class="fact"><span class="n stencil">05</span><div><h3>The menu is a client of the CLI</h3><p>The app parses <code>agents porcelain</code> and shells back out for anything with side effects, so the menu and the CLI can't drift apart.</p></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="tape-edge" aria-hidden="true"></div>
+
+<section id="cli">
+  <div class="shell section">
+    <div class="sec-head">
+      <p class="label">04 · The CLI</p>
+      <h2 class="display">The whole app,<br>minus the menu.</h2>
+      <p class="body-lg"><code>agents</code> does the work. The menu bar just reads it. Tab completion ships for zsh, bash and fish.</p>
+    </div>
+    <div class="cmds">
+      <div class="cmdrow"><span class="c">agents <u>list</u></span><span class="d">Profiles × labs, and which is active</span></div>
+      <div class="cmdrow"><span class="c">agents <u>use</u> Work [--vendor codex]</span><span class="d">Switch every lab at once, or just one</span></div>
+      <div class="cmdrow"><span class="c">agents <u>run</u> --best [--vendor claude]</span><span class="d">Open whichever profile has the most quota left</span></div>
+      <div class="cmdrow"><span class="c">agents <u>best</u></span><span class="d">Per-profile usage across the 5h and 7d windows</span></div>
+      <div class="cmdrow"><span class="c">agents <u>vendors</u></span><span class="d">Labs found on this machine, and how each isolates</span></div>
+      <div class="cmdrow"><span class="c">agents <u>new</u> Client --vendors codex,grok</span><span class="d">Create a profile, or add labs to one</span></div>
+      <div class="cmdrow"><span class="c">agents <u>sessions</u> Work --vendor codex</span><span class="d">List Claude and Codex transcripts</span></div>
+      <div class="cmdrow"><span class="c">agents <u>transfer</u> &lt;id&gt; --to Personal</span><span class="d">Move a session to another identity</span></div>
+      <div class="cmdrow"><span class="c">agents <u>adopt</u></span><span class="d">Import existing claudes profiles by symlink</span></div>
+      <div class="cmdrow"><span class="c">agents <u>shims</u></span><span class="d">Sync the &lt;lab&gt;-&lt;profile&gt; commands on your PATH</span></div>
+    </div>
+    <p class="meta" style="margin-block-start:var(--space-5);max-width:78ch">Adding a lab means adding one <code>case</code> arm to each accessor in <code>vendors.sh</code>. Nothing in <code>agents</code> or the menu bar app has to change.</p>
+  </div>
+</section>
+
+<section id="labs">
+  <div class="shell section">
+    <div class="sec-head">
+      <p class="label">05 · Supported labs</p>
+      <h2 class="display">Six labs,<br>and what each one gives you.</h2>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Lab</th><th>CLI</th><th>Config home</th><th>Isolation</th><th>Desktop app</th><th>Usage API</th><th>Sessions</th></tr></thead>
+        <tbody>
+          <tr><td class="lab"><i style="background:#18E4CC"></i>Claude</td><td>claude</td><td>~/.claude</td><td><span class="t-pill tier-env">ENV</span></td><td>cloned per profile</td><td><span class="yes">YES</span></td><td><span class="yes">YES</span></td></tr>
+          <tr><td class="lab"><i style="background:#7848C0"></i>Codex</td><td>codex</td><td>~/.codex</td><td><span class="t-pill tier-env">ENV</span></td><td>codex app</td><td><span class="no">—</span></td><td><span class="yes">YES</span></td></tr>
+          <tr><td class="lab"><i style="background:#F09C24"></i>Grok</td><td>grok</td><td>~/.grok</td><td><span class="t-pill tier-env">ENV</span></td><td><span class="no">—</span></td><td><span class="no">—</span></td><td><span class="no">—</span></td></tr>
+          <tr><td class="lab"><i style="background:#1884E4"></i>Cursor</td><td>cursor-agent</td><td>~/.cursor</td><td><span class="t-pill tier-env">ENV</span></td><td><span class="no">—</span></td><td><span class="no">—</span></td><td><span class="no">—</span></td></tr>
+          <tr><td class="lab"><i style="background:#FC6054"></i>opencode</td><td>opencode</td><td>~/.config/opencode</td><td><span class="t-pill tier-env">ENV</span></td><td><span class="no">—</span></td><td><span class="no">—</span></td><td><span class="no">—</span></td></tr>
+          <tr><td class="lab"><i style="background:#0CB490"></i>Gemini</td><td>gemini</td><td>~/.gemini</td><td><span class="t-pill tier-swap">SWAP</span></td><td><span class="no">—</span></td><td><span class="no">—</span></td><td><span class="no">—</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="meta" style="margin-block-start:var(--space-5);max-width:78ch">Only Claude exposes a server-side quota endpoint today, so <code>agents best</code> ranks Claude and tells you the others have nothing to rank.</p>
+  </div>
+</section>
+
+<div class="tape-edge" aria-hidden="true"></div>
+
+<section id="install">
+  <div class="shell section close">
+    <p class="label label-accent">06 · Move in</p>
+    <h2 class="display">Stop switching<br>six things by hand.</h2>
+    <div class="install">
+      <code>curl -fsSL <b>https://raw.githubusercontent.com/noisyneighborstudio/n2-agents/main/install.sh</b> | zsh</code>
+      <button class="copy" id="copy" type="button">Copy</button>
+    </div>
+    <p class="meta" style="max-width:66ch">The installer prefers the signed release and falls back to building from source. It puts <code>agents</code> and the per-profile commands on your PATH, and adds tab completion for whichever shells you have.</p>
+    <a class="button button-primary button-lg" href="https://github.com/noisyneighborstudio/n2-agents/releases/latest">Download the latest release</a>
+  </div>
+</section>
+
+<footer>
+  <div class="shell foot">
+    <span>N2 Agents · MIT</span>
+    <span class="sp"></span>
+    <a href="https://github.com/noisyneighborstudio/n2-agents">Source</a>
+    <a href="https://github.com/noisyneighborstudio/claudes">claudes</a>
+    <a href="https://noisyneighbor.studio">Noisy Neighbor Studio</a>
+    <span>agents.noisyneighbor.studio</span>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* Which labs a profile actually holds, and how. Mirrors `agents porcelain`:
+     on = a real config dir in this profile · pinned/shared = Gemini, the one
+     swap lab, whose single dot dir belongs to whoever holds it right now ·
+     avail = the CLI is installed but this profile has no slot for it. */
+  var CHIP = {on:'Connected', pinned:'Pinned here', shared:'Shared with Work', avail:'Available', none:'Not installed'};
+  var DIR  = {claude:'claude', codex:'codex', grok:'grok', gemini:'gemini', cursor:'cursor', open:'opencode'};
+
+  var PROFILES = [
+    {name:'Work', color:'#FFEA00',
+     slots:{claude:'on', codex:'on', grok:'on', cursor:'on', gemini:'pinned', open:'avail'},
+     share:'Gemini is pinned to Work right now. Every other profile sees this one.'},
+    {name:'Personal', color:'#EDEDE6',
+     slots:{claude:'on', codex:'on', grok:'avail', cursor:'on', gemini:'shared', open:'avail'},
+     share:'Gemini shares a wall with Work. Running it here switches it for everyone.'},
+    {name:'Client', color:'#FF3D00',
+     slots:{claude:'on', codex:'on', grok:'avail', cursor:'avail', gemini:'shared', open:'on'},
+     share:'Gemini shares a wall with Work. Running it here switches it for everyone.'}
+  ];
+
+  var pills   = [].slice.call(document.querySelectorAll('.pill'));
+  var nodes   = [].slice.call(document.querySelectorAll('.node'));
+  var spokes  = [].slice.call(document.querySelectorAll('.spoke'));
+  var stage   = document.getElementById('stage');
+  var wires   = document.getElementById('wires');
+  var coreName= document.getElementById('coreName');
+  var corePath= document.getElementById('corePath');
+  var shareText=document.getElementById('shareText');
+  var statName= document.getElementById('statName');
+  var statCount=document.getElementById('statCount');
+  var typed   = document.getElementById('typed');
+  var caret   = document.getElementById('caret');
+  var current = 0, timer = null, typing = null, touched = false;
+
+  function paint(i){
+    var p = PROFILES[i], wired = 0;
+
+    document.documentElement.style.setProperty('--profile', p.color);
+    coreName.textContent = p.name;
+    corePath.textContent = '~/.n2-agents/' + p.name;
+    shareText.textContent = p.share;
+    statName.textContent = p.name;
+
+    nodes.forEach(function(n){
+      var id = n.dataset.lab, st = p.slots[id];
+      n.dataset.state = st;
+      if (st === 'on' || st === 'pinned') wired++;
+      n.querySelector('.nchip').textContent = CHIP[st];
+      var path = n.querySelector('.npath');
+      if (id === 'gemini') path.textContent = st === 'pinned' ? '~/.gemini → ' + p.name : '~/.gemini → Work';
+      else if (st === 'on') path.textContent = '~/.n2-agents/' + p.name + '/' + DIR[id];
+      else path.textContent = 'no slot in this profile';
+    });
+    spokes.forEach(function(s){ s.dataset.state = p.slots[s.dataset.lab]; });
+
+    statCount.textContent = wired;
+    pills.forEach(function(b, k){ b.setAttribute('aria-pressed', k === i ? 'true' : 'false'); });
+    ['t0','t1','t2'].forEach(function(id, k){
+      var el = document.getElementById(id);
+      if (el) el.className = (k === i ? 'act' : '');
+    });
+  }
+
+  function fire(i){
+    if (i === current) return;
+    current = i;
+    var p = PROFILES[i];
+    paint(i);
+
+    if (!reduce){
+      /* every spoke fires at once: that is the whole product in one gesture */
+      stage.classList.remove('lit');
+      stage.classList.remove('fired');
+      void wires.getBoundingClientRect();
+      stage.classList.add('fired');
+      setTimeout(function(){
+        stage.classList.remove('fired');
+        stage.classList.add('lit');
+      }, 1050);
+    }
+
+    clearInterval(typing);
+    var full = 'agents use ' + p.name, j = 0;
+    if (reduce){ typed.textContent = full; return; }
+    typed.textContent = ''; caret.hidden = false;
+    typing = setInterval(function(){
+      j++; typed.textContent = full.slice(0, j);
+      if (j >= full.length){ clearInterval(typing); caret.hidden = true; }
+    }, 34);
+  }
+
+  pills.forEach(function(b){
+    b.addEventListener('click', function(){
+      touched = true; clearInterval(timer);
+      fire(parseInt(b.dataset.p, 10));
+    });
+  });
+
+  if (!reduce){
+    timer = setInterval(function(){
+      if (touched){ clearInterval(timer); return; }
+      fire((current + 1) % PROFILES.length);
+    }, 6800);
+  }
+
+  var CMD = 'curl -fsSL https://raw.githubusercontent.com/noisyneighborstudio/n2-agents/main/install.sh | zsh';
+  var b = document.getElementById('copy');
+  if (b) b.addEventListener('click', function(){
+    var back = function(){ b.textContent = 'Copied'; setTimeout(function(){ b.textContent = 'Copy'; }, 1400); };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(CMD).then(back, function(){ b.textContent = '⌘C'; });
+      } else { b.textContent = '⌘C'; }
+    } catch(e){ b.textContent = '⌘C'; }
+  });
+
+  paint(0);
+})();
+</script>
+
+</body>
+</html>
