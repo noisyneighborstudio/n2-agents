@@ -38,7 +38,7 @@ _n2agents_cli() {
 
 if (( $+functions[compdef] )); then
   compdef _n2agents_cli agents
-  for _n2agents_v in claude codex grok gemini cursor opencode; do
+  for _n2agents_v in claude codex grok gemini cursor opencode muse; do
     compdef _n2agents_profiles "$_n2agents_v-as" 2>/dev/null
   done
   unset _n2agents_v

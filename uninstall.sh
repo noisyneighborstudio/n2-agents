@@ -45,11 +45,12 @@ vendor_dots=(
   gemini   "$HOME/.gemini"
   cursor   "$HOME/.cursor"
   opencode "$HOME/.config/opencode"
+  muse     "$HOME/.config/muse"
 )
 for vendor dot in ${(kv)vendor_dots}; do
   [[ -L $dot ]] || continue
   slot="$HOME/.n2-agents/Default/$vendor"
-  [[ $vendor == opencode ]] && slot="$HOME/.n2-agents/Default/opencode/opencode"
+  [[ $vendor == (opencode|muse) ]] && slot="$HOME/.n2-agents/Default/$vendor/$vendor"
   rm "$dot"
   if [[ -L $slot ]]; then
     echo "✓ Removed $dot symlink (Default was adopted from another tool; left its dir alone)"

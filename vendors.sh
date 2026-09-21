@@ -26,7 +26,7 @@
 
 # Order matters: it's the display order everywhere, and the first installed
 # vendor is the default when a command needs one and the user didn't say.
-N2_VENDORS="claude codex grok gemini cursor opencode"
+N2_VENDORS="claude codex grok gemini cursor opencode muse"
 
 vendor_known() {
   for v in $N2_VENDORS; do [ "$v" = "$1" ] && return 0; done
@@ -41,6 +41,7 @@ vendor_label() {
     gemini)   echo "Gemini" ;;
     cursor)   echo "Cursor" ;;
     opencode) echo "opencode" ;;
+    muse)     echo "Muse" ;;
     *)        echo "$1" ;;
   esac
 }
@@ -62,6 +63,7 @@ vendor_dot() {
     gemini)   echo "$HOME/.gemini" ;;
     cursor)   echo "$HOME/.cursor" ;;
     opencode) echo "$HOME/.config/opencode" ;;
+    muse)     echo "$HOME/.config/muse" ;;
   esac
 }
 
@@ -75,6 +77,8 @@ vendor_dot() {
 #   cursor    CURSOR_CONFIG_DIR   present in the bundled JS
 #   opencode  XDG_CONFIG_HOME     standard XDG lookup; we point at the PARENT,
 #                                 and opencode appends /opencode itself
+#   muse      XDG_CONFIG_HOME     same as opencode: auth.json lives in
+#                                 $XDG_CONFIG_HOME/muse (no MUSE_HOME exists)
 #   gemini    (none)              GEMINI_DIR is a source constant equal to
 #                                 ".gemini", never read from the environment
 vendor_env() {
@@ -83,7 +87,7 @@ vendor_env() {
     codex)    echo "CODEX_HOME" ;;
     grok)     echo "GROK_HOME" ;;
     cursor)   echo "CURSOR_CONFIG_DIR" ;;
-    opencode) echo "XDG_CONFIG_HOME" ;;
+    opencode|muse) echo "XDG_CONFIG_HOME" ;;
     gemini)   echo "" ;;
   esac
 }
@@ -92,20 +96,20 @@ vendor_isolation() {
   if [ -n "$(vendor_env "$1")" ]; then echo env; else echo swap; fi
 }
 
-# opencode reads $XDG_CONFIG_HOME/opencode, so the env var must point one level
-# above the slot. Every other vendor's env var names the config dir itself.
+# opencode and muse read $XDG_CONFIG_HOME/<name>, so the env var must point one
+# level above the slot. Every other vendor's env var names the config dir itself.
 vendor_env_value() {  # vendor, slot-dir -> value for vendor_env's variable
   case $1 in
-    opencode) dirname "$2" ;;
+    opencode|muse) dirname "$2" ;;
     *)        echo "$2" ;;
   esac
 }
 
-# Where the slot for opencode has to live, given the env var points at its
-# parent: the directory must literally be named "opencode".
+# Where the slot for an XDG lab has to live, given the env var points at its
+# parent: the directory must literally be named after the lab.
 vendor_slot_name() {
   case $1 in
-    opencode) echo "opencode/opencode" ;;
+    opencode|muse) echo "$1/$1" ;;
     *)        echo "$1" ;;
   esac
 }
@@ -158,7 +162,7 @@ vendor_sessions() {
 vendor_logout() {
   case $1 in
     claude|opencode)    echo "auth logout" ;;
-    codex|grok|cursor)  echo "logout" ;;
+    codex|grok|cursor|muse)  echo "logout" ;;
     *)                  echo "" ;;
   esac
 }
@@ -166,7 +170,7 @@ vendor_logout() {
 vendor_login() {
   case $1 in
     claude|opencode)    echo "auth login" ;;
-    codex|grok|cursor)  echo "login" ;;
+    codex|grok|cursor|muse)  echo "login" ;;
     *)                  echo "" ;;
   esac
 }
@@ -193,7 +197,7 @@ vendor_authed() {  # vendor, slot dir, profile
         security find-generic-password -s "Claude Code-credentials" >/dev/null 2>&1 && return 0
       fi
       [ -s "$2/.credentials.json" ] ;;
-    codex|grok) [ -s "$2/auth.json" ] ;;
+    codex|grok|muse) [ -s "$2/auth.json" ] ;;
     gemini)     [ -s "$2/oauth_creds.json" ] ;;
     *)          return 2 ;;
   esac
@@ -208,6 +212,7 @@ vendor_monogram() {
     gemini)   echo GM ;;
     cursor)   echo CU ;;
     opencode) echo OC ;;
+    muse)     echo MU ;;
     *)        printf '%s' "$1" | cut -c1-2 | tr '[:lower:]' '[:upper:]' ;;
   esac
 }
@@ -243,6 +248,7 @@ vendor_install_hint() {
     gemini)   echo "npm install -g @google/gemini-cli" ;;
     cursor)   echo "curl https://cursor.com/install -fsS | bash" ;;
     opencode) echo "curl -fsSL https://opencode.ai/install | bash" ;;
+    muse)     echo "curl -fsSL https://dev.meta.ai/install.sh | bash" ;;
   esac
 }
 
