@@ -1692,7 +1692,7 @@ check "ssh-isolation: bootstrap hop keeps the pin exclusive"  "KnownHostsCommand
 # N2_FLEET_SUITES=transport runs the transport sections alone.
 case "${N2_FLEET_SUITES:-all}" in
   transport)
-    printf '\nnote: scripts/test-sync.sh, scripts/test-exec.sh skipped (N2_FLEET_SUITES=transport)\n' ;;
+    printf '\nnote: scripts/test-sync.sh, scripts/test-exec.sh, scripts/test-native-ui.sh skipped (N2_FLEET_SUITES=transport)\n' ;;
   *)
     printf '\n=== scripts/test-sync.sh ===\n'
     if sh "$repo/scripts/test-sync.sh"; then
@@ -1706,6 +1706,15 @@ case "${N2_FLEET_SUITES:-all}" in
       printf '=== scripts/test-exec.sh: passed ===\n'
     else
       printf '=== scripts/test-exec.sh: FAILED ===\n'
+      fail=$((fail+1))
+    fi
+    # The native panel parses this CLI's output, so its parser contract is a
+    # fleet test too: it re-captures live CLI bytes and fails on either drift.
+    printf '\n=== scripts/test-native-ui.sh ===\n'
+    if sh "$repo/scripts/test-native-ui.sh"; then
+      printf '=== scripts/test-native-ui.sh: passed ===\n'
+    else
+      printf '=== scripts/test-native-ui.sh: FAILED ===\n'
       fail=$((fail+1))
     fi ;;
 esac

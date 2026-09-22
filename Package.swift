@@ -20,6 +20,7 @@ let package = Package(
             // bare `swift build` after a packaging run ever saw this.
             exclude: ["build"],
             sources: ["main.swift", "UpdateChannel.swift", "Vendors.swift", "ProfileColor.swift", "ProfileSetup.swift", "GlassWindow.swift",
+                      "FleetModel.swift", "FleetView.swift", "FleetControl.swift",
                       "PanelModel.swift", "PanelView.swift"],
             // Sparkle.framework ships in Contents/Frameworks; without this rpath
             // dyld cannot find it and the app dies before main().

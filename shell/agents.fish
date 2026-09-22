@@ -18,9 +18,10 @@ end
 
 complete -c agents -f -n __fish_use_subcommand \
     -a 'list vendors active use run best new delete repatch adopt sessions transfer fleet desktop shims porcelain profiles version help'
-complete -c agents -f -n '__fish_seen_subcommand_from fleet; and not __fish_seen_subcommand_from sync tools' -a 'init id invite join pair pending approve deny revoke discover reconcile rehost route roster peers ping status sync tools send serve help'
+complete -c agents -f -n '__fish_seen_subcommand_from fleet; and not __fish_seen_subcommand_from sync tools task' -a 'init id invite join pair pending approve deny revoke discover reconcile rehost route roster peers ping status sync tools task send serve help'
 complete -c agents -f -n '__fish_seen_subcommand_from fleet; and __fish_seen_subcommand_from sync' -a 'now tick auto service status scope conflicts show resolve except auth'
 complete -c agents -f -n '__fish_seen_subcommand_from fleet; and __fish_seen_subcommand_from tools' -a 'list add rm status apply install deferred'
+complete -c agents -f -n '__fish_seen_subcommand_from fleet; and __fish_seen_subcommand_from task' -a 'run preferences list show reconcile retry fetch distribute notices help'
 complete -c agents -f -n 'not __fish_use_subcommand; and not __fish_seen_subcommand_from fleet' \
     -a '(agents profiles 2>/dev/null) --next --best'
 complete -c agents -f -l vendor -a '(__n2agents_vendors)'

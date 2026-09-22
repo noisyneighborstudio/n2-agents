@@ -131,6 +131,10 @@ final class PanelModel: ObservableObject {
     @Published var updateStatus: UpdateStatus?
     /// Profiles whose setup was left unfinished: profile -> the labs it set up.
     @Published var pendingSetups: [String: [String]] = [:]
+    /// The fleet half of one refresh. Nil until the first read lands; a read
+    /// that found no identity publishes `initialized == false`, which is a
+    /// different thing from "not read yet" and draws a different panel.
+    @Published var fleet: FleetData?
 
     /// The CLI's next_best, run over what's already read, so the button names
     /// its pick before anything starts: every slot in one rotation (profiles
