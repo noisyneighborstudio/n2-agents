@@ -1160,6 +1160,37 @@ private struct SessionsSection: View {
     let data: PanelData
     let actions: PanelActions
 
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button { actions.showAllSessions() } label: {
+                HStack(spacing: 5) {
+                    SectionLabel(title: "Recent sessions", detail: "", symbol: "clock.arrow.circlepath")
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Ink.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Open all sessions")
+            ForEach(data.sessions.prefix(2), id: \.id) { s in
+                SessionRow(session: s, data: data, actions: actions)
+            }
+        }
+        .padding(.horizontal, Metrics.side)
+        .padding(.vertical, 12)
+    }
+}
+
+// Where it was and what it was doing are two different questions, so they get
+// two lines. The tags ride with the folder; the summary — the line you
+// actually recognise a session by — gets the full width instead of the scraps
+// left over beside them.
+private struct SessionRow: View {
+    let session: SessionInfo
+    let data: PanelData
+    let actions: PanelActions
+
     private static let age: DateComponentsFormatter = {
         let f = DateComponentsFormatter()
         f.unitsStyle = .abbreviated
@@ -1169,53 +1200,99 @@ private struct SessionsSection: View {
     }()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            SectionLabel(title: "Recent sessions", detail: "", symbol: "clock.arrow.circlepath")
-            ForEach(data.sessions.prefix(2), id: \.id) { s in
-                Button { actions.resumeSession(s) } label: {
-                    // Where it was and what it was doing are two different
-                    // questions, so they get two lines. The tags ride with the
-                    // folder; the summary — the line you actually recognise a
-                    // session by — gets the full width instead of the scraps
-                    // left over beside them.
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 5) {
-                            Text(s.cwd.map { ($0 as NSString).lastPathComponent } ?? "—")
-                                .font(.system(size: 12.5))
-                                .lineLimit(1).truncationMode(.middle)
-                            Spacer(minLength: 6)
-                            Chip(text: s.profile, symbol: "person.crop.circle",
-                                 tint: profileColor(s.profile))
-                            // The logo is the lab's name; spelling it out again
-                            // was costing the summary its width.
-                            if let v = data.snapshot.vendor(s.vendor) {
-                                Chip(vendor: v, tint: Ink.secondary)
-                            }
-                            Text(Self.age.string(from: s.mtime, to: Date()) ?? "")
-                                .font(.system(size: 11)).monospacedDigit()
-                                .foregroundStyle(Ink.secondary)
-                                .frame(minWidth: 22, alignment: .trailing)
-                        }
-                        // Two lines: only two sessions show here, so the
-                        // vertical room is free, and the prompt is the thing
-                        // you recognise a session by.
-                        Text(s.snippet)
-                            .font(.system(size: 11)).foregroundStyle(Ink.secondary)
-                            .lineLimit(2).truncationMode(.tail)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+        Button { actions.resumeSession(session) } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 5) {
+                    Text(session.cwd.map { ($0 as NSString).lastPathComponent } ?? "—")
+                        .font(.system(size: 12.5))
+                        .lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 6)
+                    Chip(text: session.profile, symbol: "person.crop.circle",
+                         tint: profileColor(session.profile))
+                    // The logo is the lab's name; spelling it out again was
+                    // costing the summary its width.
+                    if let v = data.snapshot.vendor(session.vendor) {
+                        Chip(vendor: v, tint: Ink.secondary)
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 7)
-                    .frame(minHeight: 56, alignment: .top)
-                    .contentShape(Rectangle())
+                    Text(Self.age.string(from: session.mtime, to: Date()) ?? "")
+                        .font(.system(size: 11)).monospacedDigit()
+                        .foregroundStyle(Ink.secondary)
+                        .frame(minWidth: 22, alignment: .trailing)
                 }
-                .buttonStyle(RowButtonStyle(radius: 7, resting: 0.05))
-                .help("Resume in \(s.profile)")
+                Text(session.snippet)
+                    .font(.system(size: 11)).foregroundStyle(Ink.secondary)
+                    .lineLimit(2).truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .frame(minHeight: 56, alignment: .top)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(RowButtonStyle(radius: 7, resting: 0.05))
+        .help("Resume in \(session.profile)")
+    }
+}
+
+// The panel keeps two sessions. This is the rest of the list, in a window of
+// its own: same rows, wide enough that the prompt can actually be read.
+struct SessionsWindowView: View {
+    @ObservedObject var model: PanelModel
+    let actions: PanelActions
+
+    private static let width: CGFloat = 560
+    private static var listLimit: CGFloat {
+        ((NSScreen.main?.visibleFrame.height ?? 800) - 44 - 48) * 0.72
+    }
+
+    private var rows: [SessionInfo] {
+        model.allSessions.isEmpty ? (model.data?.sessions ?? []) : model.allSessions
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Ink.secondary)
+                Text("Recent sessions").font(.system(size: 13, weight: .semibold))
+                Spacer()
+                if !rows.isEmpty {
+                    Text("\(rows.count)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Ink.secondary)
+                }
+                Button { actions.closeSessions() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 24, height: 24)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.08)))
+                }
+                .buttonStyle(.plain)
+                .help("Close")
+            }
+            .padding(.horizontal, Metrics.side)
+            .frame(height: 44)
+            Divider()
+            if let data = model.data, !rows.isEmpty {
+                FittingScroll(maxHeight: Self.listLimit, focus: nil) {
+                    VStack(spacing: 6) {
+                        ForEach(rows, id: \.id) { s in
+                            SessionRow(session: s, data: data, actions: actions)
+                        }
+                    }
+                    .padding(Metrics.side)
+                }
+            } else {
+                Text("No sessions yet")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Ink.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 28)
             }
         }
-        .padding(.horizontal, Metrics.side)
-        .padding(.vertical, 12)
+        .frame(width: Self.width)
     }
 }
 

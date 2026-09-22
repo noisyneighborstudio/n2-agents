@@ -88,6 +88,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     // Built on first open: it anchors to the status item's button.
     private lazy var panel = GlassWindow(rootView: PanelView(model: model, actions: self),
                                          behavior: .transient(anchor: statusItem.button!))
+    /// Recent sessions, opened out of the panel into its own window.
+    private var sessionsWindow: GlassWindow?
     private let fm = FileManager.default
     private let home = NSHomeDirectory()
     private var configRoot: String { home + "/.n2-agents" }
@@ -1086,7 +1088,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 
     func resumeSession(_ s: SessionInfo) {
         dismissPanel()
+        sessionsWindow?.dismiss()
         launchSession(resumeCommand(s, in: s.profile), slug: "\(s.profile)-\(s.vendor)", in: preferredTerminal)
+    }
+
+    // The panel shows two. The rest live in a window of their own, same rows,
+    // wide enough that the prompt is the line you read.
+    func showAllSessions() {
+        dismissPanel()
+        model.allSessions = model.data?.sessions ?? []
+        if sessionsWindow == nil {
+            sessionsWindow = GlassWindow(rootView: SessionsWindowView(model: model, actions: self),
+                                         behavior: .floating)
+        }
+        sessionsWindow?.present()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let r = self.runCLI(["sessions", "--porcelain", "--limit", "50"])
+            let parsed = r.status == 0 ? SessionInfo.parse(r.output) : []
+            DispatchQueue.main.async { self.model.allSessions = parsed }
+        }
+    }
+
+    func closeSessions() {
+        sessionsWindow?.dismiss()
     }
 
     private func sessionRowLabel(_ s: SessionInfo) -> String {
