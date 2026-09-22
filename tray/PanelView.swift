@@ -181,34 +181,37 @@ private struct PanelHeader: View {
 
     private func popUpActiveMenu(_ data: PanelData) {
         popUp(data.profiles.map { p in
-            ClosureItem(p.name, checked: p.name == data.snapshot.active) {
+            ClosureItem(p.name, symbol: "person.crop.circle", checked: p.name == data.snapshot.active) {
                 actions.setActive(profile: p.name, vendor: nil)
             }
         })
     }
 
     private func popUpSettingsMenu() {
-        var items: [NSMenuItem] = [ClosureItem("New Profile…") { actions.newProfile() }, .separator()]
+        var items: [NSMenuItem] = [ClosureItem("New Profile…", symbol: "person.badge.plus") { actions.newProfile() },
+                                   .separator()]
         if let terms = model.data?.terminals, terms.count > 1 {
-            items.append(submenu("Open Sessions In", terms.enumerated().map { i, name in
-                ClosureItem(name, checked: i == 0) { actions.setPreferredTerminal(name) }
+            items.append(submenu("Open Sessions In", symbol: "terminal", terms.enumerated().map { i, name in
+                ClosureItem(name, symbol: "terminal", checked: i == 0) { actions.setPreferredTerminal(name) }
             }))
         }
         let channel = UpdateChannel.selected()
-        items.append(submenu("Update Channel", UpdateChannel.allCases.map { c in
-            ClosureItem(c.rawValue.capitalized, checked: c == channel) { actions.setUpdateChannel(c) }
+        items.append(submenu("Update Channel", symbol: "dial.medium", UpdateChannel.allCases.map { c in
+            ClosureItem(c.rawValue.capitalized, symbol: "shippingbox", checked: c == channel) { actions.setUpdateChannel(c) }
         }))
         if let clone = model.data?.cloneVendor {
             if model.data?.desktopInstalled == true {
-                items.append(ClosureItem("Auto-repatch \(clone.desktopName) Clones", checked: actions.autoRepatch) {
+                items.append(ClosureItem("Auto-repatch \(clone.desktopName) Clones",
+                                         symbol: "arrow.triangle.2.circlepath",
+                                         checked: actions.autoRepatch) {
                     actions.setAutoRepatch(!actions.autoRepatch)
                 })
-                items.append(ClosureItem("Re-patch All Clones Now") { actions.repatchAll() })
+                items.append(ClosureItem("Re-patch All Clones Now", symbol: "hammer") { actions.repatchAll() })
             }
-            items.append(ClosureItem("Locate \(clone.desktopName)…") { actions.locateClaude() })
+            items.append(ClosureItem("Locate \(clone.desktopName)…", symbol: "folder.badge.questionmark") { actions.locateClaude() })
         }
         items.append(.separator())
-        items.append(ClosureItem("Check for Updates…") { actions.checkForUpdates() })
+        items.append(ClosureItem("Check for Updates…", symbol: "arrow.down.circle") { actions.checkForUpdates() })
         popUp(items)
     }
 }
@@ -247,8 +250,12 @@ private struct PanelFooter: View {
                 .help(updateHelp)
                 .foregroundStyle(model.updateStatus == .available ? Ink.link : Ink.secondary)
             Spacer()
-            Button("Report a Bug") { actions.reportBug() }.buttonStyle(.plain).foregroundStyle(Ink.link)
-            Button("Quit") { actions.quit() }.buttonStyle(.plain).foregroundStyle(Ink.link)
+            Button { actions.reportBug() } label: {
+                Label("Report a Bug", systemImage: "ladybug")
+            }.buttonStyle(.plain).foregroundStyle(Ink.link)
+            Button { actions.quit() } label: {
+                Label("Quit", systemImage: "power")
+            }.buttonStyle(.plain).foregroundStyle(Ink.link)
         }
         .font(.system(size: 11))
         .padding(.horizontal, Metrics.side)
@@ -266,8 +273,12 @@ private struct Banners: View {
     var body: some View {
         if !data.desktopInstalled, let clone = data.cloneVendor {
             Banner(icon: "exclamationmark.triangle", text: "\(clone.desktopName) not found — CLI profiles still work") {
-                Button("Locate…") { actions.locateClaude() }
-                Button("Download…") { actions.downloadClaude() }
+                Button { actions.locateClaude() } label: {
+                    Label("Locate…", systemImage: "folder.badge.questionmark")
+                }
+                Button { actions.downloadClaude() } label: {
+                    Label("Download…", systemImage: "arrow.down.circle")
+                }
             }
         }
         let clones = Set(data.staleClones.keys).union(model.repatching)
@@ -276,7 +287,9 @@ private struct Banners: View {
                    text: model.repatching.isEmpty
                        ? "\(clone.desktopName) \(version) — \(clones.count) clone(s) behind"
                        : "\(clone.desktopName) \(version) — rebuilding \(model.repatching.count) of \(clones.count) clones") {
-                Button("Details") { actions.showCloneDetails() }
+                Button { actions.showCloneDetails() } label: {
+                    Label("Details", systemImage: "list.bullet")
+                }
             }
         }
     }
@@ -311,9 +324,11 @@ private struct Banner<Buttons: View>: View {
 private struct SectionLabel: View {
     let title: LocalizedStringKey
     let detail: String
+    var symbol: String? = nil
 
     var body: some View {
-        HStack {
+        HStack(spacing: 5) {
+            if let symbol { Image(systemName: symbol).font(.system(size: 9, weight: .semibold)) }
             Text(title)
                 .textCase(.uppercase)
                 .font(.system(size: 11, weight: .semibold))
@@ -334,7 +349,7 @@ private struct ProfilesSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionLabel(title: "Profiles", detail: "\(data.profiles.count)")
+            SectionLabel(title: "Profiles", detail: "\(data.profiles.count)", symbol: "person.2")
             ForEach(data.profiles, id: \.name) { p in
                 ProfileCard(profile: p, data: data, model: model, actions: actions, namespace: namespace)
                     .id(p.name)
@@ -371,7 +386,7 @@ private struct NextBestButton: View {
             Button {
                 popUp(data.profiles.flatMap { p in
                     data.snapshot.installedVendors.filter { p.slots[$0.id] != nil }.map { v in
-                        ClosureItem("Open \(v.label) in “\(p.name)” anyway") {
+                        ClosureItem("Open \(v.label) in “\(p.name)” anyway", symbol: "terminal") {
                             actions.openSession(profile: p.name, vendor: v.id, terminal: nil)
                         }
                     }
@@ -482,14 +497,26 @@ private struct ProfileCard: View {
             .strokeBorder(allOut ? maxedRed.opacity(0.5)
                           : isActive ? Color.accentColor.opacity(0.55) : Color.primary.opacity(0.08)))
         .contextMenu {
-            if !isActive { Button("Make Active for All Labs") { actions.setActive(profile: profile.name, vendor: nil) } }
-            if addable { Button("Add Lab…") { actions.addVendor(profile: profile.name) } }
+            if !isActive {
+                Button { actions.setActive(profile: profile.name, vendor: nil) } label: {
+                    Label("Make Active for All Labs", systemImage: "checkmark.circle")
+                }
+            }
+            if addable {
+                Button { actions.addVendor(profile: profile.name) } label: {
+                    Label("Add Lab…", systemImage: "plus")
+                }
+            }
             if profile.hasApp, let clone = data.cloneVendor {
-                Button("Reveal \(clone.desktopName) Data") { actions.revealData(profile: profile.name) }
+                Button { actions.revealData(profile: profile.name) } label: {
+                    Label("Reveal \(clone.desktopName) Data", systemImage: "folder")
+                }
             }
             if !profile.isDefault {
                 Divider()
-                Button("Delete Profile…") { actions.deleteProfile(profile.name) }
+                Button(role: .destructive) { actions.deleteProfile(profile.name) } label: {
+                    Label("Delete Profile…", systemImage: "trash")
+                }
             }
         }
     }
@@ -568,7 +595,7 @@ private struct ProfileCard: View {
         if let setup = pendingSetup {
             let names = setup.missing.compactMap { data.snapshot.vendor($0)?.label }
             InlineStatus(text: "\(names.joined(separator: ", ")) never finished signing in",
-                         button: "Finish setup") { actions.finishSetup(profile: profile.name) }
+                         button: "Finish setup", symbol: "key") { actions.finishSetup(profile: profile.name) }
                 .padding(.top, 7)
         } else if repatching {
             ProgressView().progressViewStyle(.linear).controlSize(.small).tint(Ink.amber)
@@ -576,7 +603,7 @@ private struct ProfileCard: View {
         } else if stale {
             InlineStatus(text: profile.running ? "Waiting — clone is in use"
                                                : actions.autoRepatch ? "Queued for rebuild" : "Auto-repatch is off",
-                         button: "Rebuild Now") { actions.rebuildClone(profile.name) }
+                         button: "Rebuild Now", symbol: "hammer") { actions.rebuildClone(profile.name) }
                 .padding(.top, 7)
         }
     }
@@ -919,7 +946,7 @@ private struct Pulse: View {
 private struct ColdStart: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionLabel(title: "Profiles", detail: "")
+            SectionLabel(title: "Profiles", detail: "", symbol: "person.2")
             ForEach(0..<2, id: \.self) { _ in
                 VStack(alignment: .leading, spacing: 9) {
                     HStack(spacing: 7) {
@@ -948,13 +975,15 @@ private struct ColdStart: View {
 private struct InlineStatus: View {
     let text: LocalizedStringKey
     let button: LocalizedStringKey
+    var symbol: String = "wrench.adjustable"
     let action: () -> Void
 
     var body: some View {
         HStack {
             Text(text).font(.system(size: 11)).foregroundStyle(Ink.secondary)
             Spacer(minLength: 6)
-            Button(button, action: action).buttonStyle(PillButtonStyle())
+            Button(action: action) { Label(button, systemImage: symbol) }
+                .buttonStyle(PillButtonStyle())
         }
     }
 }
@@ -1083,7 +1112,7 @@ private struct OpenButton: View {
             if terminals.count > 1 {
                 Divider().frame(height: 14)
                 Button {
-                    popUp(terminals.map { name in ClosureItem(name) { open(name) } })
+                    popUp(terminals.map { name in ClosureItem(name, symbol: "terminal") { open(name) } })
                 } label: {
                     Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
                         .frame(width: 24, height: 22)
@@ -1099,9 +1128,66 @@ private struct OpenButton: View {
     }
 }
 
+// A small tag. Takes a monogram when the thing has one, a symbol otherwise —
+// never bare text, so a row can be scanned rather than read.
+private struct Chip: View {
+    var text: String? = nil
+    var vendor: Vendor? = nil
+    var symbol: String? = nil
+    var tint: Color = .primary
+
+    var body: some View {
+        HStack(spacing: 3) {
+            if let vendor {
+                LabMark(vendor: vendor, size: 9)
+            } else if let symbol {
+                Image(systemName: symbol).font(.system(size: 8, weight: .semibold))
+            }
+            if let text { Text(text).font(.system(size: 10)) }
+        }
+        .padding(.horizontal, text == nil ? 3.5 : 5)
+        .frame(height: 16)
+        .foregroundStyle(tint)
+        .background(Capsule().fill(tint.opacity(0.12)))
+        .overlay(Capsule().strokeBorder(tint.opacity(0.28)))
+        .fixedSize()
+    }
+}
+
 // MARK: - Sessions
 
 private struct SessionsSection: View {
+    let data: PanelData
+    let actions: PanelActions
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button { actions.showAllSessions() } label: {
+                HStack(spacing: 5) {
+                    SectionLabel(title: "Recent sessions", detail: "", symbol: "clock.arrow.circlepath")
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Ink.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Open all sessions")
+            ForEach(data.sessions.prefix(2), id: \.id) { s in
+                SessionRow(session: s, data: data, actions: actions)
+            }
+        }
+        .padding(.horizontal, Metrics.side)
+        .padding(.vertical, 12)
+    }
+}
+
+// Where it was and what it was doing are two different questions, so they get
+// two lines. The tags ride with the folder; the summary — the line you
+// actually recognise a session by — gets the full width instead of the scraps
+// left over beside them.
+private struct SessionRow: View {
+    let session: SessionInfo
     let data: PanelData
     let actions: PanelActions
 
@@ -1114,32 +1200,99 @@ private struct SessionsSection: View {
     }()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            SectionLabel(title: "Recent sessions", detail: "")
-            ForEach(data.sessions.prefix(2), id: \.id) { s in
-                Button { actions.resumeSession(s) } label: {
-                    HStack(alignment: .top, spacing: 8) {
-                        Circle().fill(profileColor(s.profile)).frame(width: 6, height: 6).padding(.top, 5)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(s.cwd.map { ($0 as NSString).lastPathComponent } ?? "—")
-                                .font(.system(size: 12.5))
-                            Text(s.snippet).font(.system(size: 11)).foregroundStyle(Ink.secondary)
-                        }
-                        .lineLimit(1)
-                        Spacer(minLength: 6)
-                        Text("\(data.snapshot.vendor(s.vendor)?.label ?? s.vendor) · \(Self.age.string(from: s.mtime, to: Date()) ?? "")")
-                            .font(.system(size: 11)).foregroundStyle(Ink.secondary)
+        Button { actions.resumeSession(session) } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 5) {
+                    Text(session.cwd.map { ($0 as NSString).lastPathComponent } ?? "—")
+                        .font(.system(size: 12.5))
+                        .lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 6)
+                    Chip(text: session.profile, symbol: "person.crop.circle",
+                         tint: profileColor(session.profile))
+                    // The logo is the lab's name; spelling it out again was
+                    // costing the summary its width.
+                    if let v = data.snapshot.vendor(session.vendor) {
+                        Chip(vendor: v, tint: Ink.secondary)
                     }
-                    .padding(.horizontal, 8)
-                    .frame(height: 40)
-                    .contentShape(Rectangle())
+                    Text(Self.age.string(from: session.mtime, to: Date()) ?? "")
+                        .font(.system(size: 11)).monospacedDigit()
+                        .foregroundStyle(Ink.secondary)
+                        .frame(minWidth: 22, alignment: .trailing)
                 }
-                .buttonStyle(RowButtonStyle(radius: 7, resting: 0.05))
-                .help("Resume in \(s.profile)")
+                Text(session.snippet)
+                    .font(.system(size: 11)).foregroundStyle(Ink.secondary)
+                    .lineLimit(2).truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .frame(minHeight: 56, alignment: .top)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(RowButtonStyle(radius: 7, resting: 0.05))
+        .help("Resume in \(session.profile)")
+    }
+}
+
+// The panel keeps two sessions. This is the rest of the list, in a window of
+// its own: same rows, wide enough that the prompt can actually be read.
+struct SessionsWindowView: View {
+    @ObservedObject var model: PanelModel
+    let actions: PanelActions
+
+    private static let width: CGFloat = 560
+    private static var listLimit: CGFloat {
+        ((NSScreen.main?.visibleFrame.height ?? 800) - 44 - 48) * 0.72
+    }
+
+    private var rows: [SessionInfo] {
+        model.allSessions.isEmpty ? (model.data?.sessions ?? []) : model.allSessions
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Ink.secondary)
+                Text("Recent sessions").font(.system(size: 13, weight: .semibold))
+                Spacer()
+                if !rows.isEmpty {
+                    Text("\(rows.count)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Ink.secondary)
+                }
+                Button { actions.closeSessions() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 24, height: 24)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.08)))
+                }
+                .buttonStyle(.plain)
+                .help("Close")
+            }
+            .padding(.horizontal, Metrics.side)
+            .frame(height: 44)
+            Divider()
+            if let data = model.data, !rows.isEmpty {
+                FittingScroll(maxHeight: Self.listLimit, focus: nil) {
+                    VStack(spacing: 6) {
+                        ForEach(rows, id: \.id) { s in
+                            SessionRow(session: s, data: data, actions: actions)
+                        }
+                    }
+                    .padding(Metrics.side)
+                }
+            } else {
+                Text("No sessions yet")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Ink.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 28)
             }
         }
-        .padding(.horizontal, Metrics.side)
-        .padding(.vertical, 12)
+        .frame(width: Self.width)
     }
 }
 
@@ -1157,7 +1310,9 @@ private struct FirstRun: View {
                 .foregroundStyle(Ink.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("New Profile…") { actions.newProfile() }
+            Button { actions.newProfile() } label: {
+                Label("New Profile…", systemImage: "person.badge.plus")
+            }
                 .buttonStyle(.borderedProminent)
                 .padding(.top, 4)
             Text("Your current logins stay put as “Default”.")
@@ -1227,11 +1382,13 @@ private struct HoverBackground<Content: View>: View {
 final class ClosureItem: NSMenuItem {
     private let handler: () -> Void
 
-    init(_ title: String, checked: Bool = false, handler: @escaping () -> Void) {
+    init(_ title: String, symbol: String? = nil, checked: Bool = false,
+         handler: @escaping () -> Void) {
         self.handler = handler
         super.init(title: title, action: #selector(fire), keyEquivalent: "")
         target = self
         state = checked ? .on : .off
+        if let symbol { image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) }
     }
 
     required init(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -1239,8 +1396,9 @@ final class ClosureItem: NSMenuItem {
     @objc private func fire() { handler() }
 }
 
-private func submenu(_ title: String, _ items: [NSMenuItem]) -> NSMenuItem {
+private func submenu(_ title: String, symbol: String? = nil, _ items: [NSMenuItem]) -> NSMenuItem {
     let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+    if let symbol { item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) }
     let menu = NSMenu()
     items.forEach(menu.addItem)
     item.submenu = menu

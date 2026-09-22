@@ -1084,7 +1084,13 @@ session_meta() {  # path -> cwd \t snippet
     | grep -v -e '^\(\\n\| \)*<' -e '^\(\\n\| \)*# AGENTS.md instructions' \
              -e '^\(\\n\| \)*# Files mentioned by the user' -e '^\[Request interrupted' | head -1 || true)
   # Escapes out, and a markdown link reads as its text ([$skill](/path) -> $skill).
-  snippet=$(printf '%s' "$snippet" | sed 's/\\[nt]/ /g; s/\\"/"/g; s/\[\([^]]*\)\]([^)]*)/\1/g' | cut -c1-70)
+  # Cut generously: this is one tab-separated field, and the panel decides how
+  # much of it fits. Trimming to a line's worth here meant the tray could never
+  # show more than a fragment however wide its row got.
+  # Squeeze the runs the escape-stripping leaves behind, then trim whatever the
+  # cut lands mid-token on — a dangling backslash reads as a rendering bug.
+  snippet=$(printf '%s' "$snippet" | sed 's/\\[nt]/ /g; s/\\"/"/g; s/\[\([^]]*\)\]([^)]*)/\1/g' \
+    | tr -s ' ' | cut -c1-240 | sed 's/[\\ ]*$//')
   printf '%s\t%s\n' "$cwd" "${snippet:-(no prompt)}"
 }
 
