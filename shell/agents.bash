@@ -24,7 +24,14 @@ _n2agents_complete() {
   if [ "$COMP_CWORD" -eq 1 ]; then
     words="list vendors active use run best new delete repatch adopt sessions transfer fleet desktop shims porcelain profiles version help"
   elif [ "${COMP_WORDS[1]}" = "fleet" ]; then
-    [ "$COMP_CWORD" -eq 2 ] && words="init id invite join pair pending approve deny revoke discover reconcile rehost route roster peers ping status send serve help"
+    if [ "$COMP_CWORD" -eq 2 ]; then
+      words="init id invite join pair pending approve deny revoke discover reconcile rehost route roster peers ping status sync tools send serve help"
+    elif [ "$COMP_CWORD" -eq 3 ]; then
+      case ${COMP_WORDS[2]} in
+        sync) words="now tick auto service status scope conflicts show resolve except auth" ;;
+        tools) words="list add rm status apply install deferred" ;;
+      esac
+    fi
   elif [ "$prev" = "--vendor" ] || [ "$prev" = "--vendors" ]; then
     words="$(_n2agents_vendors)"
   else

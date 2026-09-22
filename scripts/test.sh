@@ -33,7 +33,7 @@ fake_path="$fake_bin:/usr/bin:/bin"
 unset CLAUDE_CONFIG_DIR CODEX_HOME GROK_HOME CURSOR_CONFIG_DIR XDG_CONFIG_HOME GEMINI_DIR
 
 # --- syntax ----------------------------------------------------------------
-sh -n agents vendors.sh fleet.sh shell/agent-as scripts/test-fleet.sh
+sh -n agents vendors.sh fleet.sh fleet-sync.sh shell/agent-as scripts/test-fleet.sh scripts/test-sync.sh
 zsh -n install.sh uninstall.sh make-claude-profile.sh repatch-claude-profiles.sh tray/build.sh \
   scripts/release-build.sh scripts/make-appcast.sh scripts/release-prepare.sh \
   scripts/publish-appcast.sh shell/agents.zsh

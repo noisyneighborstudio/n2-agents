@@ -58,6 +58,10 @@ lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 # The fleet layer — identity, enrollment, peer transport (docs/fleet-design.md).
 . "$scripts_dir/fleet.sh"
 
+# Shared profile replication, conflict handling and managed utilities. Sourced
+# after fleet.sh because it extends the peer protocol with sync verbs.
+. "$scripts_dir/fleet-sync.sh"
+
 # --- vendor selection ------------------------------------------------------
 
 # Parse a --vendor value: one id, a comma list, or "all". Validates every entry

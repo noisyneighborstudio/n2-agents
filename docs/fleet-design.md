@@ -600,6 +600,56 @@ unrelated providers' refresh state; per-key merge is required, and a
 machine-specific exception must be expressible at the provider key, not only at
 the file.
 
+**Correction, from the shipped binary (2026-09-21).** opencode was labelled
+`supported` on the strength of "it keeps one auth.json". That label was wrong,
+and the wrongness is not cosmetic. `strings` on the installed binary shows the
+resolver:
+
+```js
+function Y7(){ let $=QV.homedir(), Z=process.env.XDG_DATA_HOME;
+  if(Z) return c8.join(Z,"opencode","auth.json");
+  return c8.join($,".local","share","opencode","auth.json") }
+```
+
+The credential is resolved from `XDG_DATA_HOME`. N2 profile isolation repoints
+`XDG_CONFIG_HOME` (`vendors.sh:vendor_env`) and nothing else, so **opencode's
+credentials are machine-wide and shared by every profile**, and they sit
+entirely outside the slot the sync walks. Two consequences, both now encoded:
+
+1. `sync_auth_support opencode` returns `unsupported` — not `partial`, which
+   asserts that replication is implemented — and `sync_auth_reason` names the
+   data path and the config-only isolation, so `fleet sync auth list` says where
+   the token actually lives instead of implying replication happens.
+   `fleet sync auth enable opencode` is **refused** with that reason and exits
+   non-zero. An accepted opt-in that carried nothing would be a false
+   affordance: indistinguishable, from the operator's side, from a sync that is
+   quietly broken. The refusal also means `sync_secret_shareable opencode` is
+   false even if an opt-in line were planted by hand.
+2. Replicating that file would be *worse* than not replicating it: because the
+   path is not profile-isolated, one machine's Work credential would land on
+   the other machine's every profile. Carrying opencode auth safely requires
+   isolating `XDG_DATA_HOME` first, which is a change to the isolation tier and
+   therefore out of this task's remit. Recorded as an open item, not done.
+
+Verified by test: `scripts/test-sync.sh` section 23 asserts the matrix prints
+neither `opencode	supported` nor `opencode	partial`, does print
+`opencode	unsupported`, that the opt-in is refused non-zero with the reason,
+that a refused opt-in is not recorded, and names both
+`.local/share/opencode/auth.json` and `XDG_CONFIG_HOME`.
+
+### State writes are locked
+
+`sync/state` holds the per-peer agreed base and is updated by read-modify-write.
+A pass against peer B runs concurrently with a pass against peer A — which is
+exactly what a reconnect looks like — and the second writer used to rebuild from
+a snapshot predating the first, silently dropping its rows. A lost base is not a
+lost optimisation: the next pass reads the address as never-agreed, i.e. a
+tombstone, which surfaces as a spurious pull or a spurious conflict. `sync_base_set`
+now takes an `mkdir` lock (the only atomic test-and-set POSIX sh can rely on),
+breaking a stale lock by age rather than by pid because the previous writer may
+be on the far side of a crash. Covered by section 24, which runs two passes at
+once and asserts both peers' rows survive and the follow-up pass is quiet.
+
 ### grok, cursor
 
 Env-isolated config dirs; auth material lives inside the dir. Not inspected in
@@ -645,3 +695,1046 @@ A third item from the same review was a test defect, not a product one:
 the "impersonator is not in the server roster" assertion compared against an
 empty expected substring, which every string contains, so it could never fail.
 It is now an explicit `grep -qF` on the roster.
+
+---
+
+# Profile replication and managed utilities (the `sync` task)
+
+Decisions recorded before implementation, in the same spirit as the transport
+section: the contract first, so `execution` and `native-ui` can build against
+it. This section is written by the `sync` task; the transport interfaces it
+consumes (`fleet_call`, `fleet_broadcast`, `fleet_verb_handler`, `fleet_event`)
+are unchanged.
+
+## What a syncable thing is
+
+The unit is a **resource**, addressed by four fields and never by absolute path:
+
+    <class>|<profile>|<vendor>|<relpath>
+
+* `class` — `settings`, `skills`, `mcp`, `auth`, `tools`, or `profile`. The class decides
+  policy (what merges, what may be excepted, what is a secret), so it is part
+  of the address rather than inferred from the path.
+* `profile` — a profile name as `agents` already resolves it (`Default`
+  included). Profiles are the existing product concept; the fleet does not
+  invent a second one.
+* `vendor` — one of `$N2_VENDORS`, or `-` for resources that are not
+  vendor-scoped.
+* `relpath` — path **relative to the vendor's slot dir** as returned by
+  `config_dir <profile> <vendor>`. Relative addressing is what lets a resource
+  created on a machine whose slot is an adopted symlink into
+  `~/.claude-profiles/<Name>` land correctly on a machine where the same slot
+  is an ordinary directory.
+
+Absolute paths never cross the wire. A received `relpath` that is absolute,
+contains a `..` component, or resolves outside the destination slot is refused
+before anything is written, and the refusal is journaled.
+
+### A profile is a resource in its own right
+
+The manifest originally spoke only about files, which made a profile invisible
+as a thing: a profile with no files in scope yet had no address at all and
+could not replicate, and deleting a synced profile read as "no files changed",
+so the directory — and the profile in `agents list` — stayed on every receiver.
+
+A profile therefore carries an **existence record**: class `profile`, vendor
+`-`, relpath `.n2-profile`, a fixed body. The body is fixed so the record is
+byte-identical on every machine and can never itself become a conflict; only
+its presence or absence carries meaning. `sync_profile_marker` writes it lazily
+when a manifest is built, so a profile made before the fleet existed, or by any
+other path, gets one without profile creation having to know sync exists.
+
+A tombstone for the record means "this profile is gone from the fleet", and it
+removes the profile's vendor slots with it. That is the only place sync removes
+a tree, so it is fenced on both sides (`sync_profile_addressable`, then
+`sync_profile_remove`):
+
+* `Default` is never addressed. It exists on every machine by definition, so
+  replicating it is inert and a tombstone for it could only be wrong.
+* `fleet` is never addressed. This machine's own fleet state — its identity,
+  roster and grants — lives under the profile root and therefore turns up in
+  `all_profiles`. Advertising it would hand one machine's identity to every
+  peer, and its tombstone would delete the receiver's fleet state.
+* The name must pass `valid_profile_name`, so a traversal cannot arrive dressed
+  as a profile.
+* A profile that is **active** for any vendor on the receiver is not deleted
+  out from under a running agent. The local CLI refuses the same deletion; sync
+  reports the failure rather than converging on a lie.
+* A real directory is removed only if it resolves (`cd .. && pwd -P`) to
+  exactly `<realpath of profile root>/<name>`.
+* An **adopted** profile directory is a symlink into `~/.claude-profiles/`.
+  The link is this machine's local decision about where the contents live, so
+  only the link is removed; the adopted target is left alone.
+
+The receiver's gate is what matters, because `fleet send --verb sync-put` lets
+any approved peer put a hand-built envelope on the wire. Section 54 of
+`scripts/test-sync.sh` sends exactly that: signed tombstones naming `fleet`,
+`Default`, `..`, `x/..` and `.n2-agents`, each refused, with the receiver's
+fleet state and profile root intact afterwards — and a positive control in the
+same shape with a real profile name, which is accepted, so the refusals are
+about the name and not about the path being closed.
+
+## What syncs, and what deliberately does not
+
+Replicating a whole config dir would replicate session transcripts, caches and
+machine-local history — large, private, and meaningless on another machine. The
+included set is an allowlist per class, not an exclude list:
+
+| class | included | excluded and why |
+| --- | --- | --- |
+| `settings` | the vendor's own settings/config files (`settings.json`, `config.toml`, …) and agent settings | `projects/`, `history*`, `statsig/`, `*.log`, caches — machine-local churn |
+| `skills` | `skills/**` under the slot | — |
+| `mcp` | the vendor's MCP server config | credentials referenced by it, which are class `auth` |
+| `auth` | only providers the operator opted in per the matrix below | everything not opted in |
+| `tools` | the fleet-managed utility manifest, not the binaries | arbitrary software on the machine |
+
+`sessions/` and transcript layouts stay local: `agents transfer` already exists
+for moving a session deliberately, and the `execution` task owns handoff.
+
+## Versioning: a base digest, not a clock, and never last-writer-wins
+
+Each machine keeps, per resource, the digest it last **agreed** with the fleet
+(`base`) alongside the digest it currently has (`local`). On sync with a peer
+holding `remote`:
+
+| local vs base | remote vs base | outcome |
+| --- | --- | --- |
+| same | same | nothing to do |
+| same | changed | fast-forward: apply remote, base := remote |
+| changed | same | push: peer applies, base := local |
+| changed | changed, equal digests | converged independently; base := local, no conflict |
+| changed | changed, different | **conflict** — neither side applied |
+
+That table is the whole merge rule, and it is deliberately incapable of
+expressing "newest timestamp wins" or "the primary machine wins". Both are
+forbidden by the issue. Timestamps are recorded for display only; no code
+branches on them.
+
+A deletion is a resource whose digest is the tombstone `-`. Delete-versus-edit
+therefore lands in the "changed / changed / different" row and is a conflict,
+which is the intended behavior: a deletion is never allowed to silently eat a
+concurrent edit, and an edit is never allowed to silently resurrect a deletion.
+
+Conflicts are durable and visible: both candidate payloads are preserved under
+`$fleet_root/sync/conflicts/<id>/{local,remote,meta}`, `fleet status` and
+`agents fleet sync` report the count, and the resource is **pinned** — further
+sync passes neither apply nor re-report it until the operator runs
+`agents fleet resolve <id> --take-local|--take-remote`. Pinning is what makes
+repeated sync idempotent in the presence of an unresolved conflict; without it
+every pass would re-copy and re-conflict.
+
+### A candidate that could not be fetched is not a deletion
+
+Pinning both payloads is only safe if the stored payload is honest about what
+it is. The remote side of a conflict record therefore carries an explicit
+disposition, written by the code that knows it rather than inferred later from
+a missing file:
+
+| `remote_state` | meaning | on disk |
+| --- | --- | --- |
+| `present` | the peer's bytes were fetched and hashed to the digest it advertised | `conflicts/<id>/remote` |
+| `deleted` | the peer's manifest advertised the tombstone `-` | `conflicts/<id>/remote.deleted` |
+| `unavailable` | the peer advertised content, but the fetch failed or did not match the advertised digest | `conflicts/<id>/remote.unavailable` |
+
+The distinction is not cosmetic. Before it existed, a dropped `sync-get` was
+recorded as a tombstone, and `resolve --take-remote` then *deleted* the local
+file to honour a deletion the peer had never announced — the exact data loss
+the conflict machinery exists to prevent. `resolve --take-remote` now refuses
+(non-zero, pin kept, local file untouched) while the candidate is
+`unavailable`, and the pin self-heals: a later pass that can reach the peer
+re-fetches the candidate and upgrades it to `present`, after which the same
+command lands the peer's real bytes. `fleet sync conflicts` prints the state in
+an appended `remote:<state>` column, so an operator is never asked to choose
+between two sides when only one of them is actually in hand.
+
+`sync_fetch_candidate` is the single place that fetches a candidate, and it
+believes what came back only if it hashes to the advertised digest. That also
+removes an emptiness bug: a legitimately zero-byte remote used to read as
+"nothing came back" through a `-s` test, so choosing the remote side deleted
+the file instead of emptying it.
+
+### A pin belongs to the peer that raised it
+
+A conflict is a disagreement between *two named machines*, not a property of
+the address. The record therefore stores the peer whose divergence produced it
+(`conflicts/<id>/peer`), and that identity is load-bearing in two places:
+
+- `sync_conflict_record` refuses to overwrite an existing pin that was raised
+  by a different peer. A pin is a decision the operator has been asked to make
+  about specific bytes; another machine's later pass may not substitute its own
+  bytes into that question.
+- `sync_pass_peer` does not refresh — or even fetch — a candidate for a pin it
+  does not own. A non-owning peer's pass reports `pinned` and moves on.
+
+Without that ownership, a third machine that had never diverged would replace
+the stored candidate on its next pass simply by being visited: after alpha and
+beta conflicted, syncing alpha with an unchanged gamma overwrote beta's
+preserved edit with gamma's copy of the *pre-divergence* bytes, and
+`resolve --take-remote` then landed those stale bytes as though they were the
+peer's change. Anchored by "pin4: --remote lands the edit of the peer that
+raised the conflict".
+
+A fleet can of course be three ways apart, and that fact must not be hidden by
+the pin. A diverging non-owner is recorded beside the decision rather than in
+place of it — `sync_conflict_note_other` appends to `conflicts/<id>/others`,
+deduplicated by peer — and `fleet sync show` prints one
+`also_diverged=<peer>\t<digest>\t<state>` line per such machine. The operator
+learns the third machine exists and still resolves the two-sided question that
+was actually raised. Anchored by "pin4: gamma's divergence is reported beside
+the pin, not as the candidate".
+
+## Machine-specific exceptions
+
+`$fleet_root/sync/exceptions` holds `class|profile|vendor|relpath-glob` lines
+and is **machine-local by design** — an exception is a statement about *this*
+machine, so it neither syncs nor changes the shared setup for anyone else.
+An excepted resource is reported as `excepted`, never as `ok` and never as
+`failed`, because the issue explicitly asks that an intentional difference be
+distinguishable from a failed synchronization.
+
+### A removal verb reports only what it removed
+
+`fleet sync except rm <n>` and `fleet tools rm <name>` both rewrote their file
+with `awk` and then printed success unconditionally, so a removal that matched
+nothing still said `removed` / `unmanaged` and exited 0. Both failures point the
+operator at the wrong belief, and in the more dangerous direction:
+
+- A failed `except rm` leaves the exception standing while the operator believes
+  the resource is back in sync scope — including when they are following the
+  `resolve --local ... or remove the exception first` advice above.
+- A failed `tools rm` leaves the tool fleet-managed while the operator believes
+  they withdrew install authority; the manifest keeps installing it on every
+  tick. Reachability is never authorization, and neither is a typo.
+
+`except rm` now refuses anything that is not an existing line number from
+`except list` (non-numeric, zero, and out-of-range are all hard refusals that
+rewrite nothing), and `tools rm` refuses a name that no record carries. Tool
+matching is on the record's first field alone, not on record validity, so an
+invalid manifest line can still be withdrawn rather than becoming unremovable.
+
+The boundary check exposed a third instance of a trap this document already
+records for `sync_conflict_count`: `grep -c` prints `0` **and** exits 1 when it
+matches nothing, so `$(grep -c . "$f" || echo 0)` yields two lines. Four sites
+still carried it — `resources`, `agreed`, `exceptions` and `tools-retry` — and
+each injected a bare, unlabelled `0` record into `fleet sync status` whenever
+its file existed and counted zero. That is output the tray and `--porcelain`
+consumers parse. All four now go through `sync_num`, which normalises a missing
+or failed count to a single `0`.
+
+Evidence: test section 47 (20 assertions). The negative control against the
+pre-fix file reports 10 failures, including the stray status line and both
+false-success refusals.
+
+### A conflict id is an id, never a path
+
+`sync resolve` finishes by removing the conflict directory: `rm -rf
+"$(sync_conflict_dir)/$id"`. `sync show` reads `"$(sync_conflict_dir)/$id/meta"`.
+Both took the id straight from the command line, so an id containing `/` or
+`..` was a delete primitive and a file-read primitive aimed wherever the
+operator -- or a script wrapping the CLI, or a tray action passing through an
+id it did not itself produce -- happened to point. The only gate was `[ -d ]`
+plus a `meta` file carrying an `addr=` line, which is a shape an unrelated
+directory can easily have. Verified before the fix: `agents fleet sync resolve
+../../../../<dir> --local` printed `resolved`, exited 0, and deleted a
+directory outside the conflict store entirely.
+
+An id is only ever the value `sync_conflict_id` emits: twelve lowercase hex
+characters. `sync_conflict_id_ok` enforces exactly that, and both `resolve` and
+`show` call it before the id reaches a path expression. A well-formed id that
+does not exist still fails as `no such conflict`, not as malformed, so a real
+id is never rejected as garbage and the operator is not sent hunting.
+
+### An exception that could never match is refused, not stored
+
+`except add` validated the class and nothing else. An exception is compared
+against an address field by field, with an *exact* string compare on class,
+profile and vendor -- so a field that can never occur in an address matches
+nothing, forever. Verified before the fix: `except add settings Work clade
+settings.json` (one letter wrong in `claude`) appended the record, printed
+`excepted` and exited 0, while `sync scope` still listed
+`settings|Work|claude|settings.json` and the next pass would overwrite this
+machine's copy with the fleet's. That is the exception feature reporting the
+opposite of what it did, in the direction that loses the operator's data.
+
+The `|` separator was the quieter version of the same lie: `except add settings
+'a|b' claude settings.json` stored `settings|a|b|claude|settings.json`, which
+reads back as profile `a`, vendor `b`, glob `claude|settings.json` -- a
+different exception from the one echoed to the operator. A tab or newline in a
+field corrupts the line-based store outright.
+
+Two gates, both deliberately narrow:
+
+- **vendor** is a closed set. `*`, `-` (the reserved fleet tools slot), or a
+  member of `$N2_VENDORS`; anything else is refused and the error names the
+  known set so the typo is fixable from the message.
+- **profile** and **vendor** are shape-checked by `sync_except_name_ok`: no
+  `/`, no `|`, no tab or newline, not `.` or `..`, not empty -- exactly the
+  shapes `sync_scope_ok` already refuses in an address, so refusing them here
+  removes only records that were inert by construction.
+- the trailing **glob** keeps `|` (it is the last field, read back intact, and
+  an addr relpath may legitimately contain one) and keeps `/` (`skills/*` is
+  ordinary). Only tab, newline and empty are refused.
+
+What is *not* refused matters as much: a profile this machine has never seen is
+accepted. Excepting a profile before it arrives from the fleet is exactly what
+a new machine does, and a gate that demanded the profile already exist would
+break that in the name of catching a typo.
+
+### An exception outranks a conflict pin made before it
+
+A pin outlives the scope it was made in. The operator can add an exception (or
+withdraw an auth opt-in) while a conflict sits unresolved; from that moment a
+sync pass skips the address entirely, so nothing re-examines the pin and it
+never clears itself. Before this was fixed, `sync resolve <id> --remote`
+reached `sync_write` directly — the only path in the file that bypassed
+`sync_scope_ok` — and happily wrote the peer's bytes over the exact resource
+the operator had just declared this machine keeps to itself. That inverts the
+feature: the exception exists to make an intentional difference durable.
+
+So `sync_conflicts` prints a fifth column, `scope:in` or `scope:out`, for every
+row (both states printed, so neither is an absence), and `resolve --remote`
+refuses an out-of-scope address, keeps the pin, touches no file, and exits
+non-zero. `--local` still works and is the documented way out: it writes
+nothing, so clearing the pin does not contradict the exception. Removing the
+exception restores `--remote`. The gate is `sync_scope_ok`, not `sync_excepted`
+alone, so a withdrawn auth opt-in is covered by the same rule — a pinned `auth`
+conflict cannot be used to land a credential the machine no longer opts into.
+Verified by test section 46 (12 assertions); with the guard removed the section
+reports 8 failures including the excepted local file reading `ALPHA X` instead
+of `BETA X`, so the assertions are not vacuous.
+
+## Adopted symlinks
+
+A slot may be a symlink into `~/.claude-profiles/<Name>` (`cmd_adopt`). Sync
+follows the slot symlink to read and write **contents**, and never transmits or
+reproduces the link itself: the link is a local fact about how this machine
+shares state with the older `claudes` tool. Symlinks *inside* a slot are not
+followed for content and are not replicated; a resource whose real path escapes
+the slot is refused as an unsafe path. This keeps replication from turning a
+local convenience into a fleet-wide dependency on a path that may not exist.
+
+## Auth: opt-in per provider, and honest about what is impossible
+
+### A credential is not always in a file called `auth.json`
+
+The same binary shows `apiKeyHelper` (103 occurrences), `awsAuthRefresh` (25)
+and `ANTHROPIC_BASE_URL` (88) alongside the token names above, and it reads an
+`env` block out of `settings.json`. So a live token can sit in a file whose
+*path* classifies as `settings` — a class the per-provider auth opt-in does not
+gate.
+
+Making `sync_classify` content-aware was rejected: class is a pure function of
+the path so that an address is stable, and a file whose address changed with
+its contents would occupy two addresses, the abandoned one reading as a
+deletion. The **gate** is content-aware instead. `sync_file_carries_secret`
+matches credential *key assignments* in JSON or TOML/env form
+(`SYNC_SECRET_KEYS`), and `sync_secret_shareable` then applies exactly the
+`auth.json` opt-in to any non-auth file carrying one. It is enforced at three
+points, because no single one covers every path:
+
+* `sync_manifest` (sender) — the address never leaves the machine.
+* `sync_scope_ok` (both sides) — inspects whichever local copy exists.
+* `sync_write` (receiver) — checks the *arriving* payload, since a first pull
+  has no local copy for `sync_scope_ok` to inspect.
+
+The matcher only ever reads key names, never values, so the check cannot itself
+leak. A held-back address is *reported* (`skipped	<addr>`) rather than silently
+dropped: a resource that vanishes without explanation looks like a bug.
+
+An environment-variable name is not the only way a credential is written down,
+and the first version of `SYNC_SECRET_KEYS` assumed it was. A **remote** MCP
+server is authenticated with an HTTP header whose name the protocol fixes, not
+the vendor:
+
+```json
+{"mcpServers":{"s":{"url":"https://…","headers":{"Authorization":"Bearer <token>"}}}}
+```
+
+That file classifies as `mcp`, which the auth opt-in does not gate, and it
+contains none of the vendor key names — so a live bearer token replicated to
+every peer byte-for-byte with auth sharing explicitly **off** on both machines.
+The operator had refused to share credentials and shared one anyway.
+`SYNC_SECRET_HEADER_KEYS` therefore covers the header and generic spellings,
+matched **case-insensitively**, because HTTP header names are: `authorization`
+and `Authorization` are one header.
+
+#### The list grew five times, and each time a real bypass grew it
+
+The first version of the list was the snake_case env-style spellings plus the
+protocol headers. Every widening since came from probing
+`sync_file_carries_secret` directly for a spelling the list did not have and
+finding it `clean`, not from reading the list and imagining one. Each is held
+down by its own section in `scripts/test-sync.sh`. Sections 66, 67 and 68 were
+each additionally run against a byte-identical **revert** of the fix as well as
+against the fix, so the recorded failure is the bypass itself and not a test
+that would pass either way.
+
+| spelling | what it looked like | why the list missed it | section |
+| --- | --- | --- | --- |
+| escaped JSON key | `"\u0041uthorization": "Bearer …"` | the key is not stored literally, so a grep over raw bytes reads it as an ordinary string. Fixed by matching the **decoded** text (`sync_json_unescape`, ASCII range only) | 64 |
+| key split over a newline | `"access\n_token" : "…"` | JSON permits whitespace between a key and its `:`, and the raw-byte scan anchored on adjacency. Fixed by folding whitespace runs before matching (`sync_scan_fold`) | 65 |
+| TOML literal key | `'OPENAI_API_KEY' = '…'` in a codex `config.toml` | the anchor allowed an optional *double* quote around the name. [TOML keys may be single-quoted literals](https://toml.io/en/v1.0.0#keys), so the name matched nothing. Fixed by widening both anchors to the quote class `["']` | 66 |
+| camelCase | `{"claudeAiOauth":{"accessToken":…,"refreshToken":…}}` — the shape Claude Code itself stores — pasted into `settings.json` or `.mcp.json` | only `access_token` was listed. A bare `token`, the commonest key a remote MCP entry stores a bearer under, was missing for the same reason | 67 |
+| hyphenated | `{"headers":{"api-key":"…"}}`, `x-goog-api-key` | hyphen is the separator two providers actually use in their authentication header — Azure OpenAI reads `api-key`, Google's generative API reads `x-goog-api-key`. Neither ends in a listed name: `key` is not listed and cannot be, because `"key":` is an ordinary map key in half the files that sync | 68 |
+
+The hyphenated names are listed explicitly rather than derived by rewriting `-`
+to `_`, which would have broken the `X-Api-Key` alternative they share a
+character class with. `access-token`, `refresh-token` and `client-secret` need
+no entry: they end in `token` / `secret`, which the anchor then reads as the
+assignment it is.
+
+The common shape of all four: a file class the auth opt-in does **not** gate
+(`settings`, `mcp`) carrying a credential under a name the list did not
+enumerate. The gate is an enumeration, so it is only ever as good as the
+enumeration — a new provider with a new header name is the next bypass, and the
+honest statement of the limit is that this catches *known* credential
+spellings, not all of them. What bounds the damage is that the enumeration is
+checked at three points and the tier table below claims no provider as
+`supported`.
+
+The anchor — key name, optional closing quote (either kind), then `:` or `=` —
+is what keeps the broader names from over-reading, and it is load-bearing now
+that names as generic as `token`, `secret` and `password` are in the list.
+`"authorizationRequired": true`, `CLAUDE_CODE_MAX_OUTPUT_TOKENS: "8192"`,
+`{"maxTokens":8192}`, `{"passwordless":true}`, `{"key":"cmd+k"}`,
+`{"secretName":"prod"}`, `{"apiKeyless":true}`, an array member
+`{"fields":["api-key","secret"]}`, and prose that merely mentions an api-key all
+put a letter, a comma or a space where the anchor needs a quote or an
+assignment, so none of them match. All still replicate. Each widening carries an
+over-broadness guard in its own section, and the remaining cases were checked
+by probing `sync_file_carries_secret` directly for a `clean` result.
+
+The gate remains an opt-in and not a ban: opting the vendor in on both sides
+shares the credentialed file, and the receiver enforces its own opt-in
+independently, so a sender opting in alone does not place the file.
+
+Class `auth` is off unless the operator opts a provider in. The tiers follow the
+binary evidence recorded above, not hopefulness — and **no provider is tiered
+`supported`**. The rule this section hands the `sync` task sets the bar for that
+word at an authenticated call succeeding on the receiving machine from synced
+state; development is not permitted to make that call against real credentials,
+so the bar is unmet for every provider and none claims it. `partial` means the
+file material is portable and replication is implemented and tested with
+synthetic secrets; it does **not** mean sign-in was demonstrated. A provider
+whose credential lives outside the isolated slot is `unsupported`, not
+`partial` — an opt-in that would carry nothing is refused, because a false
+affordance reads as a sync bug rather than as a stated limit.
+
+| provider | tier | what actually happens, and what is not shown |
+| --- | --- | --- |
+| claude | **partial** | only env-supplied token/API key material is file-visible and therefore replicable, wherever it sits; it is gated by the auth opt-in through the content-aware check above. The interactive credential lives in the login keychain, which profile isolation does not isolate and file sync cannot see — transplanting an interactive session is **explicitly unsupported** |
+| codex | **partial** | `auth.json` carries `tokens` + `last_refresh`, so the file is portable and two independent refreshes are raised as a conflict rather than clobbering (section 10). **Not shown:** that a transplanted token is accepted by the provider on the receiving machine. File portability is not sign-in |
+| opencode | **unsupported** | the shipped binary resolves the credential from `XDG_DATA_HOME`, while profile isolation repoints only `XDG_CONFIG_HOME`, so the token is machine-wide and sits entirely outside the slot the sync walks. That is structural, not partial: nothing under the synced slot carries it, so an opt-in would be inert and is **refused** rather than accepted and silently ignored. Per-provider-key merge *would* be the right shape for that file (it multiplexes providers, so whole-file replication would couple unrelated refresh state), but carrying the file safely first requires isolating `XDG_DATA_HOME` — a change to the isolation tier, recorded as an open item |
+| gemini | **unsupported** | `swap`-tier isolation: the config dir is a source constant, so it cannot be isolated per process |
+| grok, cursor | **unverified** | not inspected; absence of evidence is reported as unverified rather than assumed to match codex |
+
+Unsupported and unverified providers are *listed with the reason*, not omitted.
+A refresh that happens on two machines is a conflict, not a silent overwrite.
+Secret values never enter `events.log`, fixtures, or any message header; tests
+use synthetic material and assert redaction rather than assuming it.
+
+## Managed utilities
+
+`$fleet_root/tools/manifest` lists only what the operator explicitly designated
+(`agents fleet tools add <name> [--version <v>]`). Nothing else is ever
+installed or updated — a tool that appears on a peer's manifest but not in the
+local operator's authorization is reported, not executed.
+
+A designation needs two commands, and both are refused when missing.
+`--install` is the authorization. `--check` is how every later pass reads the
+installed version, and it is equally mandatory: with no check command
+`sync_tool_state` can only ever answer `install`, so the installer re-runs on
+every tick and even a successful install is reported `failed`, because the
+post-install re-check can never reach `ok`. `sync_tool_line_ok` enforces the
+same rule on a record that arrives already written — a replicated or
+hand-edited line with an empty check field is `invalid` in `tools list`,
+`tools status` and `tools apply`, and `tools install <name>` refuses it, so an
+unverifiable record never executes an installer. Verified by test section 14
+(`tools: a tool with no check command cannot be designated`, `tools: an
+uncheckable manifest line is listed invalid`, `tools: apply refuses it
+loudly`, `tools: the invalid record installed nothing`); removing either guard
+fails seven assertions, including the one proving the installer would have run.
+
+Pending work applies immediately when it can. A manifest entry declares whether
+its update is `safe` (can apply while agent tasks run) or `disruptive`; only
+`disruptive` entries defer, and they defer against real task state rather than
+a blanket rule. The hook is `fleet_tasks_active` — the `sync` task ships a
+conservative implementation reading `$fleet_root/tasks/`, which the `execution`
+task replaces with the live task table. Deferred work is recorded and retried
+on the next pass, so "deferred" never silently means "dropped".
+
+## Defects the replication tests found (kept as regression anchors)
+
+Three bugs in this module were found by execution, not by reading, and each one
+now has a named assertion in `scripts/test-sync.sh`:
+
+1. **A global merge base deleted files on the originator.** A peer that had
+   never seen a resource read its absence as a deletion, so enrolling a fresh
+   machine proposed deleting the enroller's own skills. The base is now keyed
+   per `(peer, address)`; `sync_base`/`sync_base_set` take a peer.
+   Anchor: *"except: gamma still takes the skill"*.
+
+2. **`tools install <anything>` passed the authorization gate.**
+   `sync_tool_line` ended in `... | tail -1`, so the pipeline's exit status was
+   `tail`'s — always zero — and `sync_tool_managed` therefore said yes for every
+   name, including one the operator never designated. The function now captures
+   the match and fails on an empty result.
+   Anchor: *"tools: an unlisted tool is refused"*.
+
+3. **A symlink planted inside a slot carried outside bytes to a peer.**
+   `sync_path_contained` resolves the *parent directory*, which a symlinked file
+   passes. `sync_link_contained` resolves the link target itself and is applied
+   both when building the advertised manifest and when serving `sync-get`, so
+   the escape is refused on the wire and not merely hidden from the listing.
+   Anchor: *"escape: the outside file's bytes never reach the peer"*.
+
+## Managed utilities: the authorization and deferral contract
+
+* `--install` **is** the authorization. A tool with no installer cannot be
+  designated, and `tools install` refuses any name absent from the manifest —
+  reachability is never permission.
+* An update that is not marked `--disruptive` applies immediately, including
+  while tasks are running. This is the agreed behavior: updates do not wait for
+  the fleet to go idle.
+* A `--disruptive` update while `$fleet_root/tasks/active` is non-empty is
+  **deferred**: recorded in `tools/deferred`, journalled as `tool-deferred` with
+  the active-task count, reported to the operator, and retried on the next
+  apply. Active work is never interrupted to force an update through, and the
+  update is never silently dropped.
+* **An active-task record must name its owner, or it is believed forever.**
+  `tasks/active` is the deferral gate, and emptiness was the only signal. A
+  worker killed mid-task leaves its record behind, so every `--disruptive`
+  update defers on every subsequent pass while the operator keeps reading
+  "deferred, retried on the next apply" for a retry that can never succeed —
+  the fleet drifts silently, which is the exact failure the deferral rule
+  exists to avoid. `sync_tasks_reap` (called from `sync_tasks_active`) reads a
+  `pid <n>` line from each record and, when `ps -p` says that owner is gone,
+  renames the record in place to `.stale-<name>`: `ls -1` no longer lists it so
+  it leaves the active count, and the bytes the execution task wrote survive
+  for reconciliation instead of being deleted. A `task-record-stale` event is
+  journalled.
+  **The rule is deliberately one-sided.** A record that declares no pid, or one
+  that cannot be parsed, is counted as ACTIVE. Liveness we cannot prove is
+  never treated as permission to interrupt somebody's work, so the only way to
+  be reaped is to say who you are and be provably gone. Honest limit: `ps -p`
+  cannot see a recycled pid, so such a record reads as alive and is kept one
+  more pass — erring toward deferring an update, never toward running one
+  against live work. **Interface for the `execution` task:** write `pid <n>`
+  as a line of the active-task record. Anchored by section 60, "stale-task: a
+  live owner still defers the disruptive update", "stale-task: a record with no
+  declared owner is still active" and "stale-task: an abandoned record does not
+  defer the update forever".
+
+* An installer that exits 0 without reaching the requested version is reported
+  as `failed`, not as success — that asymmetry is how a fleet silently drifts.
+* **`tools apply` reports failure in its exit status.** It printed
+  `failed <tool>` on stdout and exited `0`, so `agents fleet tools apply ||
+  alert` never alerted and any automation that only reads exit codes — the tray,
+  a launchd wrapper, CI — recorded a drifting fleet as healthy. Any tool that
+  could not reach its designated version (`failed`, from either a non-zero
+  installer or an installer that lies), and any manifest record that can never
+  apply (`invalid`), now makes the batch exit `1`. A **deferral is not a
+  failure**: holding a `--disruptive` update back while a task runs is the
+  agreed behavior succeeding, and it is retried on the next tick, so it stays
+  exit `0`. The per-tool lines are unchanged — only the status is new.
+  The arrival hook in `fleet_handle_sync_put` wraps the call in `|| true`: a
+  failing installer must not abort the handler under `set -e` and leave the
+  sender staring at a protocol error for a manifest that actually landed. The
+  two pipeline callers (`sync_pass_peer`, `sync_tick`) already take `sed`'s
+  status, so a tool failure does not abort a sync pass either. Anchored by
+  "apply-rc: and the batch exits non-zero", "apply-rc: a deferral is NOT a
+  failure" and "apply-rc: withdrawing the broken tool restores a zero exit".
+
+* **A tool option may not swallow the next flag as its value.** `tools add x
+  --check c --install --disruptive` stored an installer whose command was
+  literally the string `--disruptive`, printed `managed`, and exited `0`. Two
+  things are wrong at once: the tool can never install, and the
+  `--disruptive` flag — the *only* marker that holds an update back while a
+  task is running — was silently dropped, so a genuinely disruptive update
+  would have been free to run against active work. That inverts the
+  managed-tools contract by way of a typo. A missing value at the end of the
+  line was the louder version of the same bug: a raw `$2: unbound variable`
+  instead of a usage message. `--version`, `--check` and `--install` now
+  require a value, and that value may not itself begin with `--`; no version
+  string and no runnable command does. The gate is deliberately narrow — a
+  dashed version (`2.0-rc1`) and flags *inside* a quoted command
+  (`sh -c "true --flag"`) are ordinary and pass, and an explicitly empty
+  `--version ''` still means "any version". Anchored by "optval: --install
+  cannot take the following flag as its value", "optval: and the disruptive
+  flag reaches field five" and "optval: a dashed version and a flag inside a
+  quoted command are fine".
+
+* **The same rule, on the `sync` half of the command surface.** `cmd_fleet_sync`
+  read every option value as a bare `$2`, so the whole family was present
+  there too, and one case was worse than anything in `tools add`:
+  `sync tick --interval abc` **exited `0`**. `sync_tick` quietly substituted
+  the default for a value it could not parse, so a wrapper, a cron entry or a
+  timer that asked for a cadence was told the cadence was in force when it was
+  not — and `--interval 300s`, the realistic typo, is exactly that case. The
+  tell that this was an oversight rather than a decision: `sync auto` and
+  `sync service install` both reject the identical value. The swallowing
+  variant hit `--peer` and `--rounds`: `sync now --peer --dry-run` consumed the
+  `--dry-run` and then reported `peer is not approved: --dry-run`, and
+  `sync auto --interval --rounds 1` consumed the `--rounds` and blamed the bare
+  `1` — an argument the operator had written correctly. `--peer`, `--interval`
+  and `--rounds` now go through `sync_needval`, which requires a value and
+  refuses one beginning with `--` (no peer id, interval or round count does),
+  and `tick` validates its interval with `sync_seconds_ok` like its two
+  siblings instead of falling back. Anchored by "syncopt: a non-numeric
+  interval is refused, not defaulted", "syncopt: --interval does not swallow
+  --rounds", "syncopt: and it no longer blames the innocent argument" and the
+  four over-broadness guards in section 52.
+
+### Four more defects review found, and the tests that now hold them down
+
+Each of these passed the earlier suite and still lost data or leaked bytes. The
+named assertion is the anchor; the rule it encodes is stated with it.
+
+1. **A peer's exception read as a deletion.** A machine-local exception is a
+   statement about *that* machine. But an excepted resource simply vanished
+   from the responder's manifest, and absence is how a tombstone is spelled —
+   so the originator deleted its own file. The manifest now carries a distinct
+   `!` marker (`SYNC_EXCEPTED`): the responder *announces* an exception rather
+   than hiding it, and the initiator reports `excepted` and leaves the agreed
+   base untouched, because nothing was exchanged. Everything else out of scope
+   (bad class, unsafe path, auth not opted in) stays unmentioned. Anchored by
+   "except-vs-delete: alpha still has its own file" and its repeated-pass twin.
+
+2. **A rejected push pinned an empty conflict.** When the receiver answered a
+   put with `conflict`, the sender recorded a conflict with no candidates, so a
+   later `resolve --local` restored nothing — it deleted the edit it existed to
+   preserve. The sender now fetches the peer's bytes and names its own local
+   path before pinning, exactly as the initiator-detected path does. Anchored
+   by "rejected-push: the local candidate holds alpha's real bytes" and
+   "rejected-push: choosing local keeps the local edit".
+
+3. **A symlinked *directory* walked straight past the file-level check.**
+   `find -L` descends *through* a directory link, so the file it emits is not
+   itself a symlink and `sync_link_contained` never sees it. The manifest walk
+   now also resolves each file's parent against the slot, and `sync_push_one`
+   re-checks both before reading a single byte — the read path is guarded, not
+   only the advertised address. Anchored by "dirlink: the address is never
+   advertised" and "dirlink: the outside bytes never reach the peer".
+
+4. **`tools install <name>` ignored active work.** `tools apply` deferred a
+   disruptive update while a task was live; naming the tool explicitly bypassed
+   that. Naming a tool is authorization to install it, not permission to
+   interrupt running work, so the single-tool path now obeys the same rule:
+   defer, journal, report the active count, and apply on the next call once the
+   fleet is idle. Anchored by "named install: nothing was installed" and
+   "named install: it installs once the fleet is idle".
+
+5. **A local edit inside the apply window was overwritten.** A pass reads the
+   local digest from its manifest snapshot, then spends a whole peer round trip
+   fetching the remote body before it writes. An edit landing in that gap was
+   lost twice over: the body case overwrote it with the remote bytes and
+   reported `pulled`, and the remote-tombstone case truncated the file to
+   nothing and reported `deleted` — in both, zero conflicts, so the operator
+   was never told. The decision is now re-checked against the bytes on disk at
+   the moment of the write (`sync_pull_still_current`), and a moved file is
+   re-decided from its current contents (`sync_pull_raced`): either the local
+   edit happens to equal the remote, which is convergence and advances the
+   base, or it does not, which pins a conflict with the local path and the
+   peer's candidate. Neither answer writes over the new bytes. The base digest
+   alone cannot close this: it records what was agreed, not what is on disk.
+   Anchored by section 43, "no lost update across the apply window" — "the edit
+   that landed during the fetch is still on disk", "the pass reports a conflict,
+   not a silent pull", and the tombstone twin "a remote deletion does not take
+   an edit that landed after the read". The push direction needs no such guard
+   and deliberately did not get one: `sync_push_one` re-reads the file but
+   advertises the snapshot digest, and `fleet_handle_sync_put` recomputes the
+   digest of the decoded body and answers `ERR sync-digest-mismatch`, so a
+   racing local edit fails closed at the receiver instead of landing on a stale
+   base.
+
+### The sub-verb completions are held to the fleet-level standard
+
+`test-sync.sh` section 45 reads the `sync` and `tools` verbs out of their usage
+text and asserts each one is completable — the same self-updating shape
+`test-fleet.sh` uses for the top-level verbs. It originally executed bash's
+completion function and gave zsh and fish only a `zsh -n` parse check, which
+cannot see a missing verb. zsh and fish publish their sub-verb lists as literal
+text, so the check now reads that text as well: a verb added to `sync help` but
+not to `_values 'sync verb'` or fish's `-a` list fails here. Dropping `auto`
+from either list turns exactly that assertion red while both parse checks stay
+green, which is why the parse check alone was not coverage. The literal read
+needs neither shell installed — drift in a list this host cannot execute is
+still drift on the host that can.
+
+### The automatic trigger (`sync tick` / `sync auto`)
+
+Replication is not something the operator has to remember, so `sync_tick` is
+the one automatic entry point. For each approved peer it pings, records
+`state=online|offline` and `last_pass` under `fleet/sync/seen/<peer>`, and runs
+a pass when the peer is *newly* reachable (the reconnect trigger) or when
+`last_pass` is older than the interval (the ongoing trigger). A peer that is
+neither is reported `fresh` and left alone, so a timer does not turn into a
+busy loop over the fleet.
+
+`agents fleet sync tick [--interval s]` is one round; `agents fleet sync auto
+[--interval s] [--rounds n]` repeats it in the foreground, which is a debugging
+tool rather than the mechanism — it dies with its terminal. `agents fleet
+reconcile` runs a round with interval 0 — being away
+is precisely the case where every reachable peer is due — and `--no-sync`
+exists for the revocation-only case.
+
+An offline peer is only recorded, never treated as agreement: the agreed base
+is untouched, so the pass after it returns replays the missed change.
+
+### The installed timer (`sync service`)
+
+A verb that exists is not a verb that runs. `agents fleet sync service install
+[--interval s]` writes a launchd **user agent** to
+`~/Library/LaunchAgents/com.n2agents.fleet-sync.plist` and bootstraps it into
+`gui/<uid>`. That is what makes ongoing replication actually ongoing: a user
+agent survives logout and reboot, and it runs whether or not the tray app is
+open — which matters because the CLI is the behaviour authority and the tray is
+one of its clients, not the scheduler.
+
+The plist is deliberately explicit about three things that launchd would
+otherwise get wrong:
+
+| plist key | value | why |
+| --- | --- | --- |
+| `ProgramArguments` | `/bin/sh <resolved agents path> fleet sync tick --interval s` | the symlink-resolved entry point, so an installed shim on `PATH` does not decide which copy runs |
+| `EnvironmentVariables.HOME` | the installing `HOME` | profile roots hang off `$HOME`; a job with launchd's idea of `HOME` would sync the wrong machine's slots |
+| `EnvironmentVariables.PATH` | the `PATH` in force at install time | launchd hands a job a near-empty environment, and this job shells out to `ssh` and `ssh-keygen` |
+
+`StartInterval` carries the same interval the tick is passed, `RunAtLoad` makes
+login a reconnect trigger, and stdout/stderr go to `fleet/sync/service.log`.
+Intervals below 30s are refused — the round would spend more time starting than
+syncing. Reinstalling boots the old job out first, so there is exactly one job
+and exactly one plist. `service status` reports the plist path, the interval it
+actually contains, whether launchd has it loaded, and the timestamp of the last
+`sync-tick` or `sync-service` journal entry, so "installed" and "running" are
+distinguishable rather than assumed.
+
+Nothing secret is written into the plist: it is ordinary world-readable user
+config, and the only paths in it are the entry point, `$HOME` and the log.
+
+`N2_FLEET_LAUNCH_DIR` and `N2_FLEET_LAUNCHCTL` redirect the directory and the
+`launchctl` binary. They exist so the suite can install against a fixture and a
+recording stub, exercising the real plist writer and the real load/unload path
+without touching the operator's login session; with neither set, this installs
+for real.
+
+### The managed-tool manifest is a replicated resource
+
+The manifest replicates under the reserved address `tools|-|-|manifest`
+(profile and vendor are `-` because a designation is a fleet fact, not a
+per-profile one). It goes through the same merge table, the same exceptions
+and the same conflict pinning as a skill or a settings file, so two machines
+that independently designate tools produce a visible conflict rather than a
+silent winner.
+
+When a pass *pulls* the manifest, the receiving machine applies it immediately
+through `sync_tools_apply`. Authorization is unchanged: the manifest is still
+the only authorization, `tools install <name>` still refuses a name that is not
+in it, and the active-task deferral still holds, so an arriving manifest cannot
+interrupt running work.
+
+### A manifest record has exactly five fields, and the operator's shell is data
+
+A manifest line is `name|version|check|install|flags`, and the deferral rule
+reads the disruptive flag out of field 5 by exact comparison. Fields 2-4 hold
+operator-supplied text — an installer command is an arbitrary shell pipeline —
+so writing them raw let that text choose its own field boundaries. A perfectly
+legitimate designation such as `--install 'curl … | sh'` pushed `disruptive`
+into field 6, the exact comparison failed, and a tool the operator had marked
+disruptive ran *during active work*. The authorization check passed; only the
+deferral was lost, which is the worse half to lose silently.
+
+Fields 2-4 are therefore percent-escaped on write by `sync_tool_enc`
+(`%` → `%25`, `|` → `%7C`, newline → `%0A`) and decoded on read by
+`sync_tool_dec`. The encoding is total and reversible, so the round trip is
+lossless: `tools list` prints the operator's command back verbatim, and the
+installer executed is the one that was designated. Anchored by "pipe: the
+pipelined disruptive installer is deferred, not run" and "pipe: the
+round-tripped install command is the operator's command".
+
+Escaping protects records this machine wrote. A record can also *arrive* — the
+manifest is a replicated resource, and the file is editable by hand — so shape
+is validated rather than assumed. `sync_tool_line_ok` requires exactly five
+fields, a non-empty name, and a field 5 that is empty or literally
+`disruptive`; `sync_tool_line`, `tools apply`, `tools list`, `tools status` and
+`tools install` all refuse a record that fails it. A malformed line reports
+`invalid` and is never executed — a mangled record is not authorization, and it
+is not silently reinterpreted as a differently-shaped one. Anchored by "pipe: a
+malformed manifest record is refused" and "pipe: a malformed record is not
+authorization".
+
+### Reconciliation is part of every tick, not only of a deferred backlog
+
+Designating a tool is the authorization; installing it is the tick's job. The
+tick used to call `sync_tools_apply` only when the deferred journal was
+non-empty, which meant `tools add` on an idle machine installed nothing until
+a human ran `tools apply`, and a tool that was deleted or broken after the
+fact stayed broken forever. Every tick now reconciles the whole designated
+set: satisfied tools report `ok` and are not reinstalled, missing or
+version-mismatched tools are installed, and nothing outside the manifest is
+ever touched. The deferral rule is unchanged and still lives inside
+`sync_tools_apply`, so making reconciliation unconditional did not make it
+capable of interrupting a live task — a disruptive update on a busy machine is
+still journalled and applied on a later tick once the fleet is idle.
+
+## Running the suites
+
+`scripts/test-sync.sh` costs roughly 300s end-to-end, which is longer than some
+runners allow for a single foreground command. It is therefore resumable, not
+only truncatable:
+
+```sh
+N2_SYNC_BASE=/tmp/fx N2_SYNC_KEEP=1 N2_SYNC_STOP_AFTER=30 sh scripts/test-sync.sh
+N2_SYNC_BASE=/tmp/fx N2_SYNC_START_AT=31                  sh scripts/test-sync.sh
+```
+
+`N2_SYNC_BASE` fixes the fixture root, `N2_SYNC_KEEP` leaves it behind, and
+`N2_SYNC_START_AT` re-execs a trimmed copy of the file — the same preamble,
+then the named section onward — against that fixture. Sections build forward on
+fixture state, so they cannot be skipped in place; the preamble is written to be
+re-enterable, and records the three machine ids in `$base/.ids` so a resumed
+section compares against the identities the earlier sections enrolled. A split
+run and a contiguous run of the same range produce the same assertion count:
+1-3 (12 ok) plus 4-8 (18 ok) equals a single 1-8 run (30 ok), 0 failed in all.
+
+
+`scripts/test-fleet.sh` is the fleet verification command, and it now runs both
+suites: its own transport sections, then `scripts/test-sync.sh` in a separate
+process with its own fixture. Only the child's verdict folds into the parent
+tally — the two suites keep independent counts because they have independent
+fixtures, and a merged count would hide which half regressed.
+
+```sh
+sh scripts/test-fleet.sh                      # transport + replication
+N2_FLEET_SUITES=transport sh scripts/test-fleet.sh   # transport alone
+sh scripts/test-sync.sh                       # replication alone (~4 min)
+N2_SYNC_STOP_AFTER=12 sh scripts/test-sync.sh # sections 1-12, with a tally
+```
+
+`N2_SYNC_STOP_AFTER=<n>` exists because the replication suite runs longer than
+some automation windows, and a log that stops mid-section is indistinguishable
+from a hang. A bounded run ends at a section boundary and prints a tally that
+names its own bound (`50 passed, 0 failed (sections 1-12 of 63; stopped by
+N2_SYNC_STOP_AFTER)`), so a partial pass can never be read as a full one.
+
+The bound is a prefix, not a sample. Sections only ever build forward on fixture
+state — a later section may depend on what an earlier one wrote, never the
+reverse — so sections 1..n are exactly the suite with the tail removed. That is
+also why `N2_SYNC_START_AT` is not a way to sample the middle of the suite on its
+own: it requires the fixture an earlier prefix run left behind (`N2_SYNC_BASE` +
+`N2_SYNC_KEEP`), and refuses with exit 2 — printing the two commands that would
+have produced it — when `$base/.ids` is absent. Resuming is therefore always
+"continue this fixture forward", never "run section n against nothing".
+
+### `fleet tools` help answers before the identity check
+
+`cmd_fleet_tools` ran `sync_need` before its verb `case`, so on a machine that
+had not run `agents fleet init` every invocation — including `--help` and a
+mistyped verb — died with "no fleet identity yet" instead of printing usage.
+That is precisely the machine whose operator needs the help. `fleet sync` never
+had the bug: it calls `sync_need` per verb, so its `help` and unknown-verb arms
+are reachable without an identity. The verb gate now runs first for `tools`
+too: `help` prints usage and returns 0, an unknown verb prints the verb list
+and exits non-zero, and every real verb still requires an identity. Section 55
+of `scripts/test-sync.sh` holds all three down.
+
+### An auth opt-in must name a vendor that exists
+
+`sync_auth_support` answers `unverified` for any provider it has not inspected,
+and an unknown vendor is indistinguishable from an uninspected one. So
+`agents fleet sync auth enable clade` exited 0, appended `clade` to the opt-in
+file and printed `auth-optin clade unverified`. Because `auth list` iterates
+`$N2_VENDORS`, the bogus line never appeared again: the operator read "enabled"
+for a provider whose auth was in fact still not shared, with nothing in the UI
+to contradict it. This is the same class as the `except add` typo — a record
+stored that can never match, reported as if it took effect.
+
+The revoking direction is the one with teeth. `auth disable clade` printed
+`auth-optout clade` and exited 0 while `claude` stayed opted in and kept
+replicating credential material on every pass. An operator withdrawing consent
+to share credentials must not be told it happened when it did not.
+
+Both arms now gate on `vendor_known` before doing anything, and the error names
+the real vendors. The gate is a gate, not a wall: a real partially-portable
+vendor still opts in and out, and an unsupported vendor is still refused for its
+own documented reason (`sync_auth_reason`) rather than for the name. Section 56
+of `scripts/test-sync.sh` holds all of that down, including the negative control
+that the correctly spelt vendor round-trips.
+
+### A grant that could not be stored is not a grant
+
+`agents fleet tools add` is how the operator designates a utility as
+fleet-managed — it is the authorization that later passes act on. Both writes
+behind it were unchecked: the dedupe rewrite (`awk ... > "$t"; mv "$t" "$f"`)
+and the append. When the manifest could not be written — a read-only directory,
+a full disk, a stale root-owned file — the command still printed
+`managed <tool> <version>` and exited 0 with nothing on disk.
+
+That is the worst shape for this surface. The operator reads "managed" and stops
+watching the tool; no later `tools apply` or reconnect pass will ever install or
+update it, and `tools list` shows no trace of the attempt, so the grant is
+invisible rather than merely absent. Nothing in the fleet reports the gap.
+
+`add` now rewrites through a temp file that must survive, refuses if the append
+fails, and reads the record back out of the manifest before reporting `managed`.
+Every failure path names the tool and says plainly that it is *not* managed.
+The guard is a guard and not a wall: once the manifest is writable the identical
+grant lands, re-adding an existing name still replaces rather than duplicates,
+and `tools rm` still withdraws.
+
+Covered by section 57 of `scripts/test-sync.sh`. Against the pre-fix binary that
+section fails exactly two assertions — the false `managed` line and its exit
+status — while the nine surrounding controls pass, so the test is pinned to the
+defect rather than to the shape of the fix.
+
+### A conflict that could not be cleared is not a resolution
+
+`rm -rf` on a directory the process cannot unlink is not a no-op. It deletes
+the contents it *can* reach and leaves the directory standing. `sync resolve`
+ended with exactly that call and never looked at its result, which produced the
+worst available outcome: for `--remote` the peer's bytes were already written
+and the base already advanced, `sync-resolved` was already in the event log,
+and the command printed `resolved` and exited 0 — while the pin survived, so
+every later pass refused to sync that address. The pin also survived *without
+its meta*, having lost the `addr` line the rm did manage to delete, so no later
+`resolve` could settle it either: the address was stuck permanently, and the
+only signal was a conflict the operator could no longer act on.
+
+Clearing a pin is therefore staged, and staged first. `sync_conflict_stage`
+renames the record to a dot-prefixed sibling before anything is written; the
+`*` glob in `sync_conflicts` and the exact-id test in `sync_conflict_pinned`
+both look past that name, so the pin is atomically gone from every view or
+still entirely present. A failed rename refuses the resolution outright, which
+costs nothing because nothing has happened yet. Every failure path inside the
+resolution — out of scope, unavailable peer candidate, a refused write, a bad
+choice word — puts the record back with `sync_conflict_unstage`. The same
+staging guards `sync_conflict_drop`; when it cannot clear a pin it returns
+non-zero without emitting the event, and the pinned-resource test immediately
+below its caller then keeps refusing the write, which is the safe direction.
+
+This is the third defect of one family found on this surface, after `auth
+enable` and `tools add`: a command that performs a write, never checks it, and
+reports the outcome it intended rather than the one it achieved.
+
+### The last four defects: an interrupted resolution, a wedged backlog, a withdrawn update, and a deletion that destroyed unagreed bytes
+
+**An interrupted resolution leaves the pin, not a hidden orphan** (section 59).
+Staging a pin renames it to `.resolving-<id>.<pid>` before the caller commits,
+and both read paths skip dot-prefixed names — which is exactly what makes the
+rename atomic, and exactly what makes a crash in that window invisible. Kill the
+process between the rename and the commit and the conflict is neither resolved
+nor listed: `sync conflicts` stops asking about it, the address stays pinned
+against future writes, and the bytes become litter with no name an operator can
+type. `sync_conflicts` therefore recovers as it reads. A staged record whose
+owning pid is dead is unstaged back to its original id before the listing is
+produced, so the operator sees the conflict again, unchanged. Recovery is
+one-sided on purpose: a staged record whose owner is *still running* is left
+alone, because that is a resolution in progress and not wreckage.
+
+Honest limit, shared with the task sweep below: liveness is `ps -p`, so a
+recycled pid belonging to an unrelated process reads as alive and defers
+recovery to a later sweep. That errs toward leaving a staged record in place and
+never toward clearing a live one, and the next pass re-detects the divergence
+regardless.
+
+**An abandoned task record stops deferring forever** (section 60).
+A `--disruptive` update is held back while `tasks/active` is non-empty, which is
+the whole point of the deferral contract — but the record is created by the
+worker and removed by the worker, so a worker killed mid-task leaves its record
+behind permanently. The failure is quiet and indefinite: every disruptive update
+defers, and the operator keeps reading "retried on the next apply" from a tick
+that will never apply anything. Reconciliation now reaps a record whose named
+owner is dead. It is deliberately one-sided in the other direction from the
+above: a record that names *nobody* is treated as active work, because the
+alternative is reaping a task whose ownership this machine simply cannot see and
+interrupting it — the one outcome the interview never authorized.
+
+**Withdrawing a tool grant withdraws its pending update** (section 61).
+`tools install` appends to the deferred list and only `tools apply` rebuilds it,
+so on a machine whose tick is not running, `tools rm` removed the manifest
+record and left the deferred entry standing. `tools deferred` then named a tool
+that is no longer fleet-managed, and the tick kept printing a retry count for an
+update `apply` would never perform, because `apply` walks the manifest. That is
+worse than cosmetic: the authorization boundary is the manifest, and a pending
+action outliving the grant that authorized it is precisely what "no blanket
+permission" forbids. `tools rm` now drops the tool's deferred entry with the
+record.
+
+**A profile deletion never destroys what was not agreed** (section 62).
+A tombstone for a profile's existence record is a recursive `rm` of the whole
+profile, and it was performed on the strength of the tombstone alone. A peer
+deleting a profile therefore destroyed, on every other machine: an edit made
+locally that the deleting peer never saw, an address under an explicit
+machine-specific exception, an unresolved conflict's bytes, and any file the
+fleet does not replicate at all — machine-only data and withheld credentials.
+Replication is allowed to converge; it is not allowed to delete what nobody
+agreed to lose. `sync_profile_blockers` now walks the subtree *before* anything
+is unlinked and reports each such file by reason (`unsynced`, `excepted`,
+`conflict`, `local-only`); a withheld credential is reported as `unsynced` like
+anything else, since naming it by class would disclose that it exists. A
+non-empty list makes `sync_write` return 4 — "blocked, nothing removed",
+distinct from 1 (failed) and 3 (the disk moved) — and the appliers turn that
+into a visible conflict carrying `remote:deleted`. The operator resolves it the
+normal way, and `--remote` calls back with `force`, which is the only path that
+skips the gate.
+
+The regression that fix caused is worth recording next to it. `find -L` follows
+the symlink of an *adopted* profile, so the adopted target's contents — never
+agreed with the deleting peer, because they came from outside the fleet's
+storage — read as `unsynced` and blocked the deletion. Every adopted profile the
+fleet ever deleted would have wedged. The symlink branch in
+`sync_profile_remove` therefore runs *before* the blocker gate: removing an
+adopted profile unlinks one symlink and destroys no bytes, so a gate that exists
+solely to prevent data loss has nothing to weigh. The adopted target is left
+standing, which is the same rule adopted profiles follow everywhere else here.
+Section 54 caught this, which is the argument for running the existing suite
+against a fix rather than only the tests written for it.
+
+## Running the sync suite
+
+`scripts/test-sync.sh` is the behavioural suite for profile replication,
+conflicts, credential propagation and managed tools. It is 65 sections and
+~540 assertions, and `scripts/test-fleet.sh` invokes it after the transport
+sections, so the top-level command is:
+
+    sh scripts/test-fleet.sh          # transport + sync
+    sh scripts/test-sync.sh           # sync only
+    N2_FLEET_SUITES=transport sh scripts/test-fleet.sh   # transport only
+
+### Runtime
+
+The sync suite takes **roughly 350-450 seconds** on an M-series Mac. The cost
+is real work, not padding: the sections build a fleet forward across several
+peers, each a separate `agents` process under its own HOME, and every
+assertion is a real CLI invocation against real on-disk state. The carrier is
+`exec`, not ssh -- the sync suite exercises replication, conflict and tool
+behaviour over local peer processes, and the live-sshd transport coverage
+lives in `scripts/test-fleet.sh` (run it with `N2_FLEET_REQUIRE_LIVE_SSH=1` to
+make a skipped ssh section a hard failure). It is not
+uniform — sections 1-12 run at about 2.4s each, sections 13-38 at about 6.4s,
+and the tail is heavier still. Extrapolating the total from an early sample
+therefore understates it by roughly 2.5x. Budget the full runtime; a caller
+that caps the run below it will see a truncated log with no final tally, which
+looks like a hang and is not one.
+
+### Resuming
+
+Sections build forward against one evolving fixture, so a section cannot run
+against a fixture that has not reached it. Two variables make a long run
+resumable across invocations:
+
+    N2_SYNC_BASE=<dir>        put the fixture somewhere durable
+    N2_SYNC_KEEP=1            do not delete the fixture at exit
+    N2_SYNC_STOP_AFTER=<n>    stop cleanly after section <n> and print a tally
+    N2_SYNC_START_AT=<n>      resume at section <n> against an existing fixture
+
+For example, to run 1-34 and then the remainder against the same fixture:
+
+    N2_SYNC_BASE=/tmp/n2s N2_SYNC_KEEP=1 N2_SYNC_STOP_AFTER=34 sh scripts/test-sync.sh
+    N2_SYNC_BASE=/tmp/n2s N2_SYNC_KEEP=1 N2_SYNC_START_AT=35  sh scripts/test-sync.sh
+
+`N2_SYNC_START_AT` refuses to run when `N2_SYNC_BASE` holds no fixture, and
+prints the two commands that would build one, so a resumed run cannot silently
+grade itself against an empty tree. A resumed chain over one fixture covers the
+same states as a single invocation, but only an uninterrupted run prints a
+single 1-65 tally; prefer one run when the caller can afford the wall clock.

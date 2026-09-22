@@ -1548,7 +1548,7 @@ agents fleet <verb>
   deny <peerid>
   revoke [--propagate] <peerid>
   discover                                 learn peers-of-peers (stay pending)
-  reconcile                                re-sync roster + revocations after time offline
+  reconcile [--no-sync]                    revocations + roster + one sync round after time offline
   route <peerid> [--transport t] [--address a] [--port n] [--user u]
         [--home p] [--command c] [--host-key <line>|--host-key-file <f>]
   rehost --announce                        tell peers this machine's ssh host key changed
@@ -1557,6 +1557,8 @@ agents fleet <verb>
   peers [--porcelain] [--no-probe]         roster + reachability
   ping <peerid>                            signed round trip
   status [--porcelain]                     self + peers + pending
+  sync <verb>                              shared profile replication (sync help)
+  tools <verb>                             fleet-managed utilities (tools help)
   send <peerid> --verb <v> [--payload-file <f>]   raw signed request
   serve                                    stdio responder (the remote end)
   help                                     this list
@@ -1686,6 +1688,16 @@ cmd_fleet() {
     discover) fleet_need_id; fleet_discover ;;
     reconcile)
       fleet_need_id; rcrc=0; fleet_reconcile || rcrc=1
+      # Reconnecting is exactly when replication is owed, so a reconcile also
+      # runs one automatic sync round. --no-sync exists for the revocation-only
+      # case; it is opt-out because forgetting to sync is the failure mode.
+      rcsync=1
+      while [ $# -gt 0 ]; do case $1 in --no-sync) rcsync=0; shift ;; *) shift ;; esac; done
+      # Interval 0: reconcile is the operator saying "I have been away", so
+      # every reachable peer is due by definition, not merely the ones whose
+      # timer happened to expire.
+      [ "$rcsync" = 1 ] && sync_ready 2>/dev/null &&
+        sync_tick 0 2>/dev/null | sed 's/^/sync\t/'
       [ "$rcrc" = 1 ] && echo "agents: a revoked peer still holds an inbound ssh grant on this machine — see the revoked-grant-not-removed lines above; rerun \`agents fleet reconcile\` once $(fleet_authkeys) is writable" >&2
       return $rcrc
       ;;
@@ -1761,6 +1773,8 @@ cmd_fleet() {
       for d in "$fleet_root/pending"/*; do [ -d "$d" ] || continue
         printf 'pending\t%s\t%s\n' "$(fleet_meta "$d" peer)" "$(fleet_meta "$d" machine)"; done
       ;;
+    sync) cmd_fleet_sync "$@" ;;
+    tools) cmd_fleet_tools "$@" ;;
     serve) fleet_serve ;;
     help|-h|--help) fleet_usage ;;
     *) fleet_usage >&2; fleet_die "unknown fleet verb: $verb" ;;
