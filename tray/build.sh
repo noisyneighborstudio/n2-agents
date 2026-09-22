@@ -42,7 +42,7 @@ for channel key in stable N2AgentsStableFeedURL continuous N2AgentsContinuousFee
   /usr/libexec/PlistBuddy -c "Add :$key string $N2_FEED_BASE_URL/$channel/appcast.xml" "$app/Contents/Info.plist"
 done
 echo "Version: $ver ($build_ver)"
-cp ../make-claude-profile.sh ../repatch-claude-profiles.sh ../agents ../vendors.sh ../fleet.sh ../fleet-sync.sh "$app/Contents/Resources/"
+cp ../make-claude-profile.sh ../repatch-claude-profiles.sh ../agents ../vendors.sh ../fleet.sh ../fleet-sync.sh ../fleet-exec.sh "$app/Contents/Resources/"
 cp ../shell/agents.zsh ../shell/agents.bash ../shell/agents.fish ../shell/agent-as "$app/Contents/Resources/"
 chmod +x "$app/Contents/Resources/"*.sh "$app/Contents/Resources/agents" "$app/Contents/Resources/agent-as"
 

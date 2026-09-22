@@ -1684,7 +1684,7 @@ bopts=$(raw fr1 'fleet_ssh_run print peer.example 2222 1')
 check "ssh-isolation: bootstrap hop keeps multiplexing off"   "ControlPath=none" "$bopts"
 check "ssh-isolation: bootstrap hop keeps the pin exclusive"  "KnownHostsCommand=none" "$bopts"
 
-# --- the replication suite -------------------------------------------------
+# --- the replication and execution suites -------------------------------------------------
 # scripts/test-fleet.sh is the declared fleet verification command, so the
 # replication/conflict/managed-tool suite runs from here rather than sitting in
 # a file nothing calls. It is a separate process with its own fixture and its
@@ -1692,13 +1692,20 @@ check "ssh-isolation: bootstrap hop keeps the pin exclusive"  "KnownHostsCommand
 # N2_FLEET_SUITES=transport runs the transport sections alone.
 case "${N2_FLEET_SUITES:-all}" in
   transport)
-    printf '\nnote: scripts/test-sync.sh skipped (N2_FLEET_SUITES=transport)\n' ;;
+    printf '\nnote: scripts/test-sync.sh, scripts/test-exec.sh skipped (N2_FLEET_SUITES=transport)\n' ;;
   *)
     printf '\n=== scripts/test-sync.sh ===\n'
     if sh "$repo/scripts/test-sync.sh"; then
       printf '=== scripts/test-sync.sh: passed ===\n'
     else
       printf '=== scripts/test-sync.sh: FAILED ===\n'
+      fail=$((fail+1))
+    fi
+    printf '\n=== scripts/test-exec.sh ===\n'
+    if sh "$repo/scripts/test-exec.sh"; then
+      printf '=== scripts/test-exec.sh: passed ===\n'
+    else
+      printf '=== scripts/test-exec.sh: FAILED ===\n'
       fail=$((fail+1))
     fi ;;
 esac

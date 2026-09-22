@@ -24,6 +24,12 @@ sync_tools_manifest() { echo "$fleet_root/tools/manifest"; }
 # ordinary merge, with the ordinary conflict and exception rules.
 SYNC_TOOLS_ADDR='tools|-|-|manifest'
 sync_addr_is_tools() { [ "$1" = "$SYNC_TOOLS_ADDR" ]; }
+# The allowed-agent preference shares the reserved fleet-level slot. It is a
+# separate address from the manifest so an exception can withhold one without
+# withholding the other.
+SYNC_AGENTS_REL='agents.allowed'
+SYNC_AGENTS_ADDR='tools|-|-|agents.allowed'
+sync_agents_pref() { echo "$fleet_root/tools/$SYNC_AGENTS_REL"; }
 
 sync_init() {
   mkdir -p "$(sync_root)" "$(sync_conflict_dir)" "$fleet_root/tools" 2>/dev/null
@@ -253,6 +259,10 @@ sync_classify() {  # sync_classify <vendor> <relpath>
     # that makes an *empty* profile representable and its deletion a deletion
     # rather than silence. Anything else under a '-' vendor is out of scope.
     [ "$2" = manifest ] && { echo tools; return 0; }
+    # The dispatcher's allowed-agent preference. It is a fleet-wide statement
+    # about which agents may be chosen, so it replicates like the tool manifest
+    # and is excepted per machine through the same mechanism.
+    [ "$2" = "$SYNC_AGENTS_REL" ] && { echo tools; return 0; }
     [ "$2" = "$SYNC_PROFILE_REL" ] && { echo profile; return 0; }
     return 0
   fi
@@ -701,6 +711,9 @@ sync_manifest() {
   # The fleet-level managed-tool manifest, addressed like everything else.
   smtf=$(sync_tools_manifest)
   [ -f "$smtf" ] && printf '%s\t%s\n' "$SYNC_TOOLS_ADDR" "$(sync_digest_file "$smtf")"
+  # The dispatcher's allowed-agent preference, same slot, its own address.
+  sapf=$(sync_agents_pref)
+  [ -f "$sapf" ] && printf '%s\t%s\n' "$SYNC_AGENTS_ADDR" "$(sync_digest_file "$sapf")"
   # Tombstones for agreed resources that no longer exist locally.
   sbf=$(sync_state_file)
   [ -f "$sbf" ] || return 0
