@@ -37,6 +37,9 @@ struct PanelView: View {
     @ObservedObject var model: PanelModel
     let actions: PanelActions
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// A lab's mark and gauge travel between depth 1 and depth 2 rather than
+    /// one view dissolving into the other.
+    @Namespace private var slots
 
     /// The screen's height less the menu bar gap, header, footer and a margin.
     static var bodyLimit: CGFloat {
@@ -51,13 +54,20 @@ struct PanelView: View {
                 // Header and footer stay put; everything between grows with
                 // its content and scrolls once the panel would outgrow the
                 // screen — more profiles, an open drawer, a banner.
-                FittingScroll(maxHeight: Self.bodyLimit, focus: model.selection?.profile) {
+                FittingScroll(maxHeight: Self.bodyLimit, focus: model.expanded) {
                     VStack(spacing: 0) {
+                        if data.profiles.count > 1 {
+                            // The answer for anyone who doesn't need to choose,
+                            // above the diagnostics rather than below them.
+                            NextBestButton(pick: model.nextBest, data: data, actions: actions)
+                                .padding(.horizontal, Metrics.side)
+                                .padding(.vertical, 12)
+                        }
                         Banners(data: data, model: model, actions: actions)
                         if data.profiles.count <= 1 {
                             FirstRun(actions: actions)
                         } else {
-                            ProfilesSection(data: data, model: model, actions: actions)
+                            ProfilesSection(data: data, model: model, actions: actions, namespace: slots)
                             if !data.sessions.isEmpty {
                                 Divider()
                                 SessionsSection(data: data, actions: actions)
@@ -99,7 +109,20 @@ private struct FittingScroll<Content: View>: View {
                 })
             }
             .frame(height: min(contentHeight, maxHeight))
-            .onPreferenceChange(ContentHeight.self) { contentHeight = $0 }
+            // Mid-animation the frame trails the content, which would read as
+            // scrollable and flash the scroller on every card opened. Only a
+            // panel taller than the screen scrolls.
+            .scrollIndicators(contentHeight > maxHeight ? .automatic : .never)
+            .scrollDisabled(contentHeight <= maxHeight)
+            // On the content's own curve: set bare, the frame (and the footer
+            // under it) would jump to the new height while the cards animate.
+            // The first measurement lands as is — the panel opens at size.
+            .onPreferenceChange(ContentHeight.self) { height in
+                let first = contentHeight == 0
+                withAnimation(first || reduceMotion ? nil : .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.32)) {
+                    contentHeight = height
+                }
+            }
             .onChange(of: focus) { profile in
                 guard let profile else { return }
                 withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) { proxy.scrollTo(profile) }
@@ -158,34 +181,37 @@ private struct PanelHeader: View {
 
     private func popUpActiveMenu(_ data: PanelData) {
         popUp(data.profiles.map { p in
-            ClosureItem(p.name, checked: p.name == data.snapshot.active) {
+            ClosureItem(p.name, symbol: "person.crop.circle", checked: p.name == data.snapshot.active) {
                 actions.setActive(profile: p.name, vendor: nil)
             }
         })
     }
 
     private func popUpSettingsMenu() {
-        var items: [NSMenuItem] = [ClosureItem("New Profile…") { actions.newProfile() }, .separator()]
+        var items: [NSMenuItem] = [ClosureItem("New Profile…", symbol: "person.badge.plus") { actions.newProfile() },
+                                   .separator()]
         if let terms = model.data?.terminals, terms.count > 1 {
-            items.append(submenu("Open Sessions In", terms.enumerated().map { i, name in
-                ClosureItem(name, checked: i == 0) { actions.setPreferredTerminal(name) }
+            items.append(submenu("Open Sessions In", symbol: "terminal", terms.enumerated().map { i, name in
+                ClosureItem(name, symbol: "terminal", checked: i == 0) { actions.setPreferredTerminal(name) }
             }))
         }
         let channel = UpdateChannel.selected()
-        items.append(submenu("Update Channel", UpdateChannel.allCases.map { c in
-            ClosureItem(c.rawValue.capitalized, checked: c == channel) { actions.setUpdateChannel(c) }
+        items.append(submenu("Update Channel", symbol: "dial.medium", UpdateChannel.allCases.map { c in
+            ClosureItem(c.rawValue.capitalized, symbol: "shippingbox", checked: c == channel) { actions.setUpdateChannel(c) }
         }))
         if let clone = model.data?.cloneVendor {
             if model.data?.desktopInstalled == true {
-                items.append(ClosureItem("Auto-repatch \(clone.desktopName) Clones", checked: actions.autoRepatch) {
+                items.append(ClosureItem("Auto-repatch \(clone.desktopName) Clones",
+                                         symbol: "arrow.triangle.2.circlepath",
+                                         checked: actions.autoRepatch) {
                     actions.setAutoRepatch(!actions.autoRepatch)
                 })
-                items.append(ClosureItem("Re-patch All Clones Now") { actions.repatchAll() })
+                items.append(ClosureItem("Re-patch All Clones Now", symbol: "hammer") { actions.repatchAll() })
             }
-            items.append(ClosureItem("Locate \(clone.desktopName)…") { actions.locateClaude() })
+            items.append(ClosureItem("Locate \(clone.desktopName)…", symbol: "folder.badge.questionmark") { actions.locateClaude() })
         }
         items.append(.separator())
-        items.append(ClosureItem("Check for Updates…") { actions.checkForUpdates() })
+        items.append(ClosureItem("Check for Updates…", symbol: "arrow.down.circle") { actions.checkForUpdates() })
         popUp(items)
     }
 }
@@ -224,8 +250,12 @@ private struct PanelFooter: View {
                 .help(updateHelp)
                 .foregroundStyle(model.updateStatus == .available ? Ink.link : Ink.secondary)
             Spacer()
-            Button("Report a Bug") { actions.reportBug() }.buttonStyle(.plain).foregroundStyle(Ink.link)
-            Button("Quit") { actions.quit() }.buttonStyle(.plain).foregroundStyle(Ink.link)
+            Button { actions.reportBug() } label: {
+                Label("Report a Bug", systemImage: "ladybug")
+            }.buttonStyle(.plain).foregroundStyle(Ink.link)
+            Button { actions.quit() } label: {
+                Label("Quit", systemImage: "power")
+            }.buttonStyle(.plain).foregroundStyle(Ink.link)
         }
         .font(.system(size: 11))
         .padding(.horizontal, Metrics.side)
@@ -243,8 +273,12 @@ private struct Banners: View {
     var body: some View {
         if !data.desktopInstalled, let clone = data.cloneVendor {
             Banner(icon: "exclamationmark.triangle", text: "\(clone.desktopName) not found — CLI profiles still work") {
-                Button("Locate…") { actions.locateClaude() }
-                Button("Download…") { actions.downloadClaude() }
+                Button { actions.locateClaude() } label: {
+                    Label("Locate…", systemImage: "folder.badge.questionmark")
+                }
+                Button { actions.downloadClaude() } label: {
+                    Label("Download…", systemImage: "arrow.down.circle")
+                }
             }
         }
         let clones = Set(data.staleClones.keys).union(model.repatching)
@@ -253,7 +287,9 @@ private struct Banners: View {
                    text: model.repatching.isEmpty
                        ? "\(clone.desktopName) \(version) — \(clones.count) clone(s) behind"
                        : "\(clone.desktopName) \(version) — rebuilding \(model.repatching.count) of \(clones.count) clones") {
-                Button("Details") { actions.showCloneDetails() }
+                Button { actions.showCloneDetails() } label: {
+                    Label("Details", systemImage: "list.bullet")
+                }
             }
         }
     }
@@ -288,9 +324,11 @@ private struct Banner<Buttons: View>: View {
 private struct SectionLabel: View {
     let title: LocalizedStringKey
     let detail: String
+    var symbol: String? = nil
 
     var body: some View {
-        HStack {
+        HStack(spacing: 5) {
+            if let symbol { Image(systemName: symbol).font(.system(size: 9, weight: .semibold)) }
             Text(title)
                 .textCase(.uppercase)
                 .font(.system(size: 11, weight: .semibold))
@@ -307,14 +345,15 @@ private struct ProfilesSection: View {
     @ObservedObject var model: PanelModel
     let actions: PanelActions
 
+    let namespace: Namespace.ID
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionLabel(title: "Profiles", detail: "\(data.profiles.count)")
-            ForEach(Array(data.profiles.enumerated()), id: \.element.name) { index, p in
-                ProfileCard(profile: p, index: index, data: data, model: model, actions: actions)
+            SectionLabel(title: "Profiles", detail: "\(data.profiles.count)", symbol: "person.2")
+            ForEach(data.profiles, id: \.name) { p in
+                ProfileCard(profile: p, data: data, model: model, actions: actions, namespace: namespace)
                     .id(p.name)
             }
-            NextBestButton(pick: model.nextBest, data: data, actions: actions)
         }
         .padding(.horizontal, Metrics.side)
         .padding(.vertical, 12)
@@ -347,7 +386,7 @@ private struct NextBestButton: View {
             Button {
                 popUp(data.profiles.flatMap { p in
                     data.snapshot.installedVendors.filter { p.slots[$0.id] != nil }.map { v in
-                        ClosureItem("Open \(v.label) in “\(p.name)” anyway") {
+                        ClosureItem("Open \(v.label) in “\(p.name)” anyway", symbol: "terminal") {
                             actions.openSession(profile: p.name, vendor: v.id, terminal: nil)
                         }
                     }
@@ -385,278 +424,428 @@ private struct NextBestButton: View {
 
 private struct ProfileCard: View {
     let profile: Profile
-    let index: Int
     let data: PanelData
     @ObservedObject var model: PanelModel
     let actions: PanelActions
-    @State private var expanded = false
+    let namespace: Namespace.ID
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var isActive: Bool { data.snapshot.active == profile.name }
-    // The card speaks for the whole profile, so its capacity treatment comes
-    // from every lab it holds, not one. A lab with no usage reading is never
-    // "out" — nothing says it is — so a profile only reads as maxed when each
-    // of its labs is. Labs that are out on their own are named instead, and
-    // their chips carry the maxed state.
-    private func usage(for v: Vendor) -> Usage? { model.usage[v.id]?[profile.name] }
-    private var labsOut: [(vendor: Vendor, until: Date?)] {
-        slotted.compactMap { v in usage(for: v).flatMap { $0.maxed ? (v, $0.maxedUntil) : nil } }
-    }
-    /// Every lab out: the whole card tints so it's found at a glance.
-    private var maxed: Bool { !slotted.isEmpty && labsOut.count == slotted.count }
+    private var slotted: [Vendor] { data.slotted(profile) }
+    private var addable: Bool { data.snapshot.installedVendors.contains { profile.slots[$0.id] == nil } }
+    private var open: Bool { model.expanded == profile.name }
     private var repatching: Bool { model.repatching.contains(profile.name) }
     private var stale: Bool { data.staleClones[profile.name] != nil }
-    private var selected: Vendor? {
-        guard let s = model.selection, s.profile == profile.name, profile.slots[s.vendor] != nil else { return nil }
-        return data.snapshot.vendor(s.vendor)
-    }
-    private var slotted: [Vendor] { data.snapshot.installedVendors.filter { profile.slots[$0.id] != nil } }
-    private var addable: Bool { data.snapshot.installedVendors.contains { profile.slots[$0.id] == nil } }
-
-    // One row of chips keeps every card the same height; the rest sit behind
-    // a +N chip. The selected lab is always on show.
-    private static let chipLimit = 4
-    private var showAll: Bool {
-        expanded || slotted.count <= Self.chipLimit
-            || (selected.map { v in !slotted.prefix(Self.chipLimit).contains { $0.id == v.id } } ?? false)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            nameRow
-            detailRow
-            FlowLayout(spacing: 4) {
-                ForEach(showAll ? slotted : Array(slotted.prefix(Self.chipLimit)), id: \.id) { v in
-                    VendorChip(vendor: v, active: profile.isActive(for: v.id), selected: selected?.id == v.id,
-                               gauge: gauge(for: v),
-                               signedOut: signedOut(v),
-                               account: data.snapshot.account(profile.name, v.id)) {
-                        model.selection = selected?.id == v.id ? nil : Selection(profile: profile.name, vendor: v.id)
-                    }
-                    .contextMenu {
-                        if data.hasDesktop(v, for: profile) {
-                            Button("Open \(v.desktopName)") { actions.openDesktop(profile: profile.name, vendor: v.id) }
-                        }
-                        Button("Sign In Again…") { actions.signIn(profile: profile.name, vendor: v.id, confirm: true) }
-                    }
-                }
-                if !showAll {
-                    SmallChip(title: "+\(slotted.count - Self.chipLimit)") { expanded = true }
-                        .help("Show all \(slotted.count) labs")
-                } else if expanded {
-                    SmallChip(title: "−") { expanded = false }.help("Show fewer")
-                }
-                if addable && showAll {
-                    Button { actions.addVendor(profile: profile.name) } label: {
-                        Image(systemName: "plus").font(.system(size: 9, weight: .semibold)).frame(width: 17, height: 17)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Ink.secondary)
-                    .help("Add a lab to \(profile.name)")
-                }
-            }
-            if let v = selected {
-                VendorDrawer(profile: profile, vendor: v, data: data, model: model, actions: actions)
-            }
-        }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 9)
-        .background(RoundedRectangle(cornerRadius: Metrics.cardRadius).fill(Ink.surface)
-            .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius)
-                .fill(maxed ? maxedRed.opacity(0.13) : isActive ? Color.accentColor.opacity(0.16) : Color.clear)))
-        .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius)
-            .strokeBorder(maxed ? maxedRed.opacity(0.5) : isActive ? Color.accentColor.opacity(0.55) : Color.primary.opacity(0.08)))
-        .contextMenu {
-            if !isActive { Button("Make Active for All Labs") { actions.setActive(profile: profile.name, vendor: nil) } }
-            if addable { Button("Add Lab…") { actions.addVendor(profile: profile.name) } }
-            Menu("Sign In Again") {
-                ForEach(slotted, id: \.id) { v in
-                    Button("\(v.label)…") { actions.signIn(profile: profile.name, vendor: v.id, confirm: true) }
-                }
-            }
-            if profile.hasApp, let clone = data.cloneVendor {
-                Button("Reveal \(clone.desktopName) Data") { actions.revealData(profile: profile.name) }
-            }
-            if !profile.isDefault {
-                Divider()
-                Button("Delete Profile…") { actions.deleteProfile(profile.name) }
-            }
-        }
-    }
-
-    private func signedOut(_ v: Vendor) -> Bool {
-        usage(for: v)?.note == .noToken || usage(for: v)?.note == .staleToken
-    }
-
-    // Four pictures that never look alike: a reading (track + fill), no
-    // reading yet or a failed one (empty track), loading (sweep), and no
-    // quota API at all (no track).
-    private func gauge(for v: Vendor) -> ChipGauge? {
-        guard v.hasUsageAPI else { return nil }
-        if let used = usage(for: v)?.used { return .used(used) }
-        if usage(for: v) == nil && !model.usageSlow { return .loading }
-        return .noReading
-    }
-
-    private var nameRow: some View {
-        HStack(spacing: 7) {
-            RoundedRectangle(cornerRadius: 2).fill(profileColor(profile.name)).frame(width: 3, height: 18)
-            Text(profile.name).font(.system(size: 13, weight: .medium))
-            Spacer()
-            Group {
-                if let setup = pendingSetup {
-                    Text("\(setup.done) of \(setup.labs.count) signed in").foregroundStyle(Ink.amber)
-                } else if maxed {
-                    // Back when the first lab is back.
-                    HStack(spacing: 4) {
-                        Image(systemName: "clock")
-                        Text(labsOut.compactMap(\.until).min().map { "Maxed until \(clockTime($0))" } ?? "Maxed")
-                    }
-                    .foregroundStyle(maxedRed)
-                } else if let out = labsOut.first {
-                    HStack(spacing: 4) {
-                        Image(systemName: "clock")
-                        if labsOut.count == 1 {
-                            Text(out.until.map { "\(out.vendor.label) out until \(clockTime($0))" }
-                                 ?? "\(out.vendor.label) out")
-                        } else {
-                            Text("\(labsOut.count) of \(slotted.count) labs out")
-                        }
-                    }
-                    .foregroundStyle(Ink.amber)
-                } else if repatching {
-                    Text("Rebuilding…").foregroundStyle(Ink.secondary)
-                } else if stale {
-                    Text("Update pending").foregroundStyle(Ink.amber)
-                } else if let clone = data.cloneVendor, data.hasDesktop(clone, for: profile) {
-                    // The profile's own desktop app: its state, and a click opens it.
-                    Button { actions.openDesktop(profile: profile.name, vendor: clone.id) } label: {
-                        HStack(spacing: 5) {
-                            if profile.running { Circle().fill(Ink.green).frame(width: 6, height: 6) }
-                            Text(profile.running ? "\(clone.desktopName) running" : "\(clone.desktopName) idle")
-                            Image(systemName: "arrow.up.forward.app").font(.system(size: 9))
-                        }
-                        .foregroundStyle(Ink.secondary)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help(profile.running ? "Bring \(profile.name)'s \(clone.desktopName) forward" : "Open \(profile.name)'s \(clone.desktopName)")
-                }
-            }
-            .font(.system(size: 10.5))
-        }
-        .frame(height: 18)
-    }
-
-    // Clone state outranks capacity: while a clone is behind, that is the
-    // thing to act on. Otherwise the card carries the selected lab's capacity,
-    // or else the most constrained lab's.
-    private var quotaShown: Vendor? {
-        if let v = selected, v.hasUsageAPI { return v }
-        return slotted.filter(\.hasUsageAPI).max { (usage(for: $0)?.used ?? -1) < (usage(for: $1)?.used ?? -1) }
-    }
+    private var reading: (state: ProfileState, used: Int?) { model.reading(profile, data) }
+    private var allOut: Bool { if case .allOut = reading.state { return true }; return false }
 
     // A setup left unfinished: labs chosen, and some known to be signed out.
-    // (A lab that keeps its login out of sight counts as done, as in setup.)
     private var pendingSetup: (labs: [String], done: Int, missing: [String])? {
         guard let labs = model.pendingSetups[profile.name] else { return nil }
         let missing = labs.filter { data.snapshot.signedIn[profile.name]?[$0] == false }
         return missing.isEmpty ? nil : (labs, labs.count - missing.count, missing)
     }
 
-    @ViewBuilder private var detailRow: some View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Depth 1: whose it is, whether you can work, where. At rest the
+            // card is these two rows and nothing else, so three profiles read
+            // as a column rather than three shapes.
+            Button { toggle() } label: {
+                VStack(alignment: .leading, spacing: 7) {
+                    nameRow
+                    if !open {
+                        CapacityStrip(profile: profile, data: data, model: model, namespace: namespace)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(helpText)
+
+            fixStrip
+
+            // Depth 2: the strip resolved into one row per lab.
+            if open {
+                VStack(spacing: 1) {
+                    ForEach(slotted, id: \.id) { v in
+                        SlotRow(profile: profile, vendor: v, data: data, model: model,
+                                actions: actions, namespace: namespace)
+                    }
+                    if addable {
+                        Button { actions.addVendor(profile: profile.name) } label: {
+                            Label("Add a lab…", systemImage: "plus")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Ink.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 3)
+                                .frame(height: 22)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(RowButtonStyle(radius: 5))
+                    }
+                }
+                .padding(.top, 7)
+            }
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 9)
+        .background(RoundedRectangle(cornerRadius: Metrics.cardRadius).fill(Ink.surface)
+            .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius)
+                .fill(allOut ? maxedRed.opacity(0.13) : isActive ? Color.accentColor.opacity(0.16) : Color.clear)))
+        .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius)
+            .strokeBorder(allOut ? maxedRed.opacity(0.5)
+                          : isActive ? Color.accentColor.opacity(0.55) : Color.primary.opacity(0.08)))
+        .contextMenu {
+            if !isActive {
+                Button { actions.setActive(profile: profile.name, vendor: nil) } label: {
+                    Label("Make Active for All Labs", systemImage: "checkmark.circle")
+                }
+            }
+            if addable {
+                Button { actions.addVendor(profile: profile.name) } label: {
+                    Label("Add Lab…", systemImage: "plus")
+                }
+            }
+            if profile.hasApp, let clone = data.cloneVendor {
+                Button { actions.revealData(profile: profile.name) } label: {
+                    Label("Reveal \(clone.desktopName) Data", systemImage: "folder")
+                }
+            }
+            if !profile.isDefault {
+                Divider()
+                Button(role: .destructive) { actions.deleteProfile(profile.name) } label: {
+                    Label("Delete Profile…", systemImage: "trash")
+                }
+            }
+        }
+    }
+
+    /// One profile open at a time: the panel's height stays bounded, which is
+    /// what lets depth 3 open in place instead of floating over everything.
+    private func toggle() {
+        withAnimation(reduceMotion ? nil : .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.32)) {
+            model.selection = nil
+            model.expanded = open ? nil : profile.name
+        }
+    }
+
+    private var nameRow: some View {
+        HStack(spacing: 7) {
+            RoundedRectangle(cornerRadius: 2).fill(profileColor(profile.name)).frame(width: 3, height: 18)
+            Text(profile.name).font(.system(size: 13, weight: .medium))
+            Spacer(minLength: 6)
+            statusLabel
+            Image(systemName: "chevron.right")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(Ink.secondary)
+                .rotationEffect(.degrees(open ? 90 : 0))
+        }
+        .frame(height: 18)
+    }
+
+    // The status slot answers one question — can I work here — in a closed
+    // vocabulary, with the profile's capacity beside it. A desktop app's
+    // process state and a pending rebuild are not capacity; they live deeper
+    // and in the banner respectively.
+    @ViewBuilder private var statusLabel: some View {
+        let s = status
+        HStack(spacing: 4) {
+            if case .ready = reading.state {
+                Circle().fill(Ink.green).frame(width: 6, height: 6)
+            } else if let icon = s.icon {
+                Image(systemName: icon)
+            }
+            Text(s.text)
+            if let used = reading.used {
+                Text(verbatim: "· \(used)% used").monospacedDigit().fontWeight(.semibold).foregroundStyle(.primary)
+            }
+        }
+        .font(.system(size: 10.5))
+        .foregroundStyle(s.tint)
+        .lineLimit(1)
+    }
+
+    private var status: (icon: String?, text: String, tint: Color) {
+        switch reading.state {
+        case .ready:             return (nil, "Ready", Ink.secondary)
+        case .checking:          return (nil, "Checking…", Ink.secondary)
+        case .allOut:            return ("clock", "All out", maxedRed)
+        case .labsOut(let out, let of, _):
+            return ("clock", "\(out) of \(of) out", Ink.amber)
+        case .needsSignIn(let n):
+            return ("exclamationmark.triangle", n == 1 ? "1 needs sign-in" : "\(n) need sign-in", Ink.amber)
+        case .notSignedIn:       return ("exclamationmark.triangle", "Not signed in", Ink.amber)
+        }
+    }
+
+    private var helpText: String {
+        var parts: [String] = [status.text]
+        if let used = reading.used { parts.append("\(used)% used across \(slotted.count) labs") }
+        switch reading.state {
+        case .allOut(let until), .labsOut(_, _, let until):
+            if let until { parts.append("first back \(clockTime(until))") }
+        default: break
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    // Only present when there is something to act on.
+    @ViewBuilder private var fixStrip: some View {
         if let setup = pendingSetup {
             let names = setup.missing.compactMap { data.snapshot.vendor($0)?.label }
             InlineStatus(text: "\(names.joined(separator: ", ")) never finished signing in",
-                         button: "Finish setup") { actions.finishSetup(profile: profile.name) }
+                         button: "Finish setup", symbol: "key") { actions.finishSetup(profile: profile.name) }
+                .padding(.top, 7)
         } else if repatching {
             ProgressView().progressViewStyle(.linear).controlSize(.small).tint(Ink.amber)
+                .padding(.top, 7)
         } else if stale {
             InlineStatus(text: profile.running ? "Waiting — clone is in use"
                                                : actions.autoRepatch ? "Queued for rebuild" : "Auto-repatch is off",
-                         button: "Rebuild Now") { actions.rebuildClone(profile.name) }
-        } else if let v = quotaShown {
-            QuotaRegion(vendor: v, usage: usage(for: v), slow: model.usageSlow, index: index) {
-                actions.signIn(profile: profile.name, vendor: v.id, confirm: false)
-            } retry: {
-                actions.retryUsage()
-            }
+                         button: "Rebuild Now", symbol: "hammer") { actions.rebuildClone(profile.name) }
+                .padding(.top, 7)
         }
     }
 }
 
-// The card's capacity readout. Fixed height in every state — sweeping,
-// filled, or a note with its action — so nothing below it moves when the
-// reading lands.
-private struct QuotaRegion: View {
+// MARK: - Depth 2: one row per lab
+
+// The lab, its binding window, and when that window comes back. The mark and
+// the gauge arrive from the strip rather than fading in, so the row reads as
+// the same segment resolved.
+private struct SlotRow: View {
+    let profile: Profile
     let vendor: Vendor
-    let usage: Usage?
-    let slow: Bool
-    let index: Int
-    let logIn: () -> Void
-    let retry: () -> Void
+    let data: PanelData
+    @ObservedObject var model: PanelModel
+    let actions: PanelActions
+    let namespace: Namespace.ID
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private static let resetTime: DateFormatter = {
-        let f = DateFormatter()
-        f.timeStyle = .short
-        f.dateStyle = .none
-        return f
-    }()
-
-    private var stateKey: String { usage?.note.rawValue ?? (slow ? "slow" : "loading") }
+    private var usage: Usage? { model.usage[vendor.id]?[profile.name] }
+    private var signedOut: Bool { data.snapshot.signedIn[profile.name]?[vendor.id] == false }
+    private var open: Bool { model.selection == Selection(profile: profile.name, vendor: vendor.id) }
 
     var body: some View {
-        ZStack(alignment: .leading) {
-            content.transition(.opacity)
+        VStack(alignment: .leading, spacing: 0) {
+            Button { toggle() } label: {
+                HStack(spacing: 7) {
+                    LabMark(vendor: vendor)
+                        .foregroundStyle(Color.primary.opacity(0.82))
+                        .frame(width: 18, height: 18)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.primary.opacity(0.12)))
+                        .matchedGeometryEffect(id: SlotID.mono(profile.name, vendor.id), in: namespace)
+                    Text(vendor.label)
+                        .font(.system(size: 11.5)).lineLimit(1).truncationMode(.tail)
+                        .frame(width: 74, alignment: .leading)
+                    detail
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(Ink.secondary)
+                        .rotationEffect(.degrees(open ? 90 : 0))
+                }
+                .padding(.horizontal, 3)
+                .frame(height: 24)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(RowButtonStyle(radius: 5, resting: open ? 0.07 : 0))
+            if open {
+                SlotActions(profile: profile, vendor: vendor, data: data, model: model, actions: actions)
+            }
         }
-        .frame(height: 29)
-        .animation(.easeOut(duration: reduceMotion ? 0.1 : 0.18), value: stateKey)
     }
 
-    @ViewBuilder private var content: some View {
-        switch usage?.note {
-        case .ok?:
-            // Fills rise from zero, cards 80 ms apart.
-            let delay = reduceMotion ? 0 : Double(index) * 0.08
-            // A plan may have only one of the windows (Codex Pro: weekly alone).
-            VStack(spacing: 7) {
-                if let five = usage?.fiveHour {
+    private func toggle() {
+        withAnimation(reduceMotion ? nil : .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.32)) {
+            model.selection = open ? nil : Selection(profile: profile.name, vendor: vendor.id)
+        }
+    }
+
+    @ViewBuilder private var detail: some View {
+        if !vendor.hasUsageAPI {
+            flat("minus.circle", "no quota API", Ink.secondary)
+        } else if signedOut {
+            flat("exclamationmark.triangle", "not signed in", Ink.amber)
+        } else if let u = usage, let b = u.binding {
+            Gauge(percent: b.percent)
+                .frame(height: 4)
+                .matchedGeometryEffect(id: SlotID.gauge(profile.name, vendor.id), in: namespace)
+            Text(verbatim: "\(b.percent)% used")
+                .font(.system(size: 10.5)).monospacedDigit()
+                .foregroundStyle(u.maxed ? maxedRed : .primary)
+                .frame(width: 56, alignment: .trailing)
+            meta(u, b)
+        } else if let note = usage?.note {
+            flat(note == .staleToken ? "exclamationmark.triangle" : "arrow.clockwise", label(for: note), Ink.amber)
+        } else if model.usageSlow {
+            flat(nil, "checking…", Ink.secondary)
+        } else {
+            Sweep().clipShape(Capsule())
+                .frame(height: 4)
+                .matchedGeometryEffect(id: SlotID.gauge(profile.name, vendor.id), in: namespace)
+            Text(verbatim: "").frame(width: 30)
+            Text(verbatim: "").frame(width: 88)
+        }
+    }
+
+    // The window tag rides with the time: depth 2 has one bar, so a separate
+    // column for "5h" was spending width the gauge needed.
+    private func meta(_ u: Usage, _ b: (tag: String, percent: Int, resets: Date?)) -> some View {
+        HStack(spacing: 3) {
+            if u.maxed { Image(systemName: "clock").font(.system(size: 8)) }
+            Text(u.maxed ? (u.maxedUntil.map(clockTime) ?? "out")
+                         : b.resets.map { "\(b.tag) · \(clockTime($0))" } ?? b.tag)
+        }
+        .font(.system(size: 10))
+        .foregroundStyle(u.maxed ? maxedRed : Ink.secondary)
+        .lineLimit(1)
+        .frame(width: 88, alignment: .trailing)
+    }
+
+    private func flat(_ icon: String?, _ text: String, _ tint: Color) -> some View {
+        HStack(spacing: 4) {
+            Spacer(minLength: 0)
+            if let icon { Image(systemName: icon).font(.system(size: 8)) }
+            Text(text)
+        }
+        .font(.system(size: 10.5))
+        .foregroundStyle(tint)
+        .lineLimit(1)
+    }
+
+    private func label(for note: Usage.Note) -> String {
+        switch note {
+        case .noToken:     return "not signed in"
+        case .staleToken:  return "token expired"
+        case .rateLimited: return "rate-limited"
+        case .fetchError:  return "check failed"
+        default:           return "no reading"
+        }
+    }
+}
+
+// MARK: - Depth 3: everything for one slot
+
+// Both windows in full, then the actions in one order that never varies:
+// Start, then Fix when something is actually broken, then Configure. The
+// primary action is the only filled control.
+private struct SlotActions: View {
+    let profile: Profile
+    let vendor: Vendor
+    let data: PanelData
+    @ObservedObject var model: PanelModel
+    let actions: PanelActions
+    @State private var copied = false
+
+    private var usage: Usage? { model.usage[vendor.id]?[profile.name] }
+    private var signedOut: Bool {
+        data.snapshot.signedIn[profile.name]?[vendor.id] == false
+            || usage?.note == .staleToken || usage?.note == .noToken
+    }
+    private var blocked: Bool { usage?.maxed ?? false }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let u = usage, u.note == .ok {
+                if let five = u.fiveHour {
                     MeterRow(label: "5h", percent: five,
-                             meta: usage?.resets.map { "resets \(Self.resetTime.string(from: $0))" } ?? "", delay: delay)
+                             meta: u.resets.map(clockTime) ?? "", delay: 0)
                 }
-                if let seven = usage?.sevenDay {
-                    MeterRow(label: "7d", percent: seven, meta: sevenDayMeta, delay: delay)
+                if let seven = u.sevenDay {
+                    MeterRow(label: "7d", percent: seven,
+                             meta: u.sevenResets.map(clockTime) ?? "", delay: 0)
                 }
             }
-        case .noToken?:
-            InlineStatus(text: "\(vendor.label) quota unavailable — not signed in", button: "Log In", action: logIn)
-        case .staleToken?:
-            InlineStatus(text: "\(vendor.label) quota unavailable — token expired", button: "Log In", action: logIn)
-        case .rateLimited?:
-            InlineStatus(text: "\(vendor.label) quota check rate-limited", button: "Retry", action: retry)
-        case .fetchError?:
-            InlineStatus(text: "\(vendor.label) quota check failed", button: "Retry", action: retry)
-        case .noUsageAPI?:
-            EmptyView()
-        case nil:
-            if slow {
-                Text("Checking quota…").font(.system(size: 10.5)).foregroundStyle(Ink.secondary)
-            } else {
-                VStack(spacing: 7) {
-                    MeterRow(label: "5h", percent: nil, meta: "", delay: 0)
-                    MeterRow(label: "7d", percent: nil, meta: "", delay: 0)
+
+            group("Start", "bolt")
+            OpenButton(terminals: data.terminals, blocked: blocked) { terminal in
+                actions.openSession(profile: profile.name, vendor: vendor.id, terminal: terminal)
+            }
+            if data.hasDesktop(vendor, for: profile) {
+                ActionRow(title: "Open \(vendor.desktopName)", icon: "macwindow") {
+                    actions.openDesktop(profile: profile.name, vendor: vendor.id)
+                }
+            }
+
+            if signedOut {
+                group("Fix", "wrench.adjustable")
+                ActionRow(title: "Sign in…", icon: "key", tint: Ink.amber) {
+                    actions.signIn(profile: profile.name, vendor: vendor.id, confirm: false)
+                }
+            }
+
+            group("Configure", "slider.horizontal.3")
+            if !profile.isActive(for: vendor.id) {
+                ActionRow(title: "Use for new sessions", icon: "checkmark.circle") {
+                    actions.setActive(profile: profile.name, vendor: vendor.id)
+                }
+            }
+            ActionRow(title: "Copy command", icon: "doc.on.doc",
+                      trailing: copied ? "Copied" : "\(vendor.id)-\(profile.name.lowercased())", mono: true) {
+                actions.copyCommand(profile: profile.name, vendor: vendor.id)
+                copied = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
+            }
+            if let account = data.snapshot.account(profile.name, vendor.id) {
+                ActionRow(title: account, icon: "person.crop.circle", trailing: "Sign in again…") {
+                    actions.signIn(profile: profile.name, vendor: vendor.id, confirm: true)
+                }
+            }
+            if vendor.hasSessions {
+                ActionRow(title: "Transfer session…", icon: "arrowshape.turn.up.right") {
+                    actions.transferSession(profile: profile.name, vendor: vendor.id)
                 }
             }
         }
+        .padding(.leading, 10)
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 1).fill(Color.primary.opacity(0.14)).frame(width: 2)
+        }
+        .padding(.leading, 12)
+        .padding(.top, 3)
+        .padding(.bottom, 5)
     }
 
-    // Which lab the bars belong to — or, when the last read failed and these
-    // are the previous numbers, how old they are.
-    private var sevenDayMeta: String {
-        if let at = usage?.fetchedAt, Date().timeIntervalSince(at) > 360 {
-            return "as of \(Int(Date().timeIntervalSince(at) / 60))m ago"
+    private func group(_ title: String, _ icon: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon).font(.system(size: 8))
+            Text(title).textCase(.uppercase).tracking(0.5)
         }
-        return vendor.label
+        .font(.system(size: 8.5, weight: .semibold))
+        .foregroundStyle(Ink.secondary)
+        .padding(.top, 4)
+    }
+}
+
+private struct ActionRow: View {
+    let title: String
+    let icon: String
+    var tint: Color = .primary
+    var trailing: String? = nil
+    var mono = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: icon).font(.system(size: 10)).frame(width: 12)
+                Text(title).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 6)
+                if let trailing {
+                    Text(trailing)
+                        .font(.system(size: 10.5, design: mono ? .monospaced : .default))
+                        .foregroundStyle(Ink.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .font(.system(size: 11.5))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 5)
+            .frame(height: 23)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(RowButtonStyle(radius: 5))
     }
 }
 
@@ -755,7 +944,7 @@ private struct Pulse: View {
 private struct ColdStart: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionLabel(title: "Profiles", detail: "")
+            SectionLabel(title: "Profiles", detail: "", symbol: "person.2")
             ForEach(0..<2, id: \.self) { _ in
                 VStack(alignment: .leading, spacing: 9) {
                     HStack(spacing: 7) {
@@ -784,206 +973,117 @@ private struct ColdStart: View {
 private struct InlineStatus: View {
     let text: LocalizedStringKey
     let button: LocalizedStringKey
+    var symbol: String = "wrench.adjustable"
     let action: () -> Void
 
     var body: some View {
         HStack {
             Text(text).font(.system(size: 11)).foregroundStyle(Ink.secondary)
             Spacer(minLength: 6)
-            Button(button, action: action).buttonStyle(PillButtonStyle())
+            Button(action: action) { Label(button, systemImage: symbol) }
+                .buttonStyle(PillButtonStyle())
         }
     }
 }
 
-enum ChipGauge: Equatable {
-    case used(Int)    // 0–100 of the tighter window
-    case noReading    // has a quota API; token stale or fetch failed
-    case loading
+// MARK: - Depth 1: the capacity strip
 
-    var maxed: Bool { if case .used(let u) = self { return u >= Usage.maxedAt }; return false }
-}
-
-private struct VendorChip: View {
+// The lab's two-letter mark, as ProfileSetup already draws it. Fixed width is
+// the whole point: seven labs fit one row with no overflow control, where word
+// chips wrapped and needed a +N to hide the rest.
+// One lab at depth 1: its mark over its headroom. Four pictures that never look
+// alike — a reading, no quota API at all (dashed), signed out (amber), and a
+// reading still on its way (sweep).
+private struct CapacitySegment: View {
+    let profile: String
     let vendor: Vendor
-    let active: Bool
-    let selected: Bool
-    /// Nil for labs with no usage API — no gauge is drawn rather than a guessed one.
-    let gauge: ChipGauge?
+    let usage: Usage?
     let signedOut: Bool
-    let account: String?
-    let action: () -> Void
+    let slow: Bool
+    let namespace: Namespace.ID
 
-    // Filled accent = active for this lab, outlined = holds a slot. The open
-    // drawer's chip carries an accent ring.
+    private var used: Int? { usage?.used }
+    private var maxed: Bool { (used ?? 0) >= Usage.maxedAt }
+
     var body: some View {
-        Button(action: action) {
-            chip.contentShape(Rectangle())
+        VStack(spacing: 3) {
+            LabMark(vendor: vendor)
+                .foregroundStyle(maxed ? maxedRed : signedOut ? Ink.amber : Ink.secondary)
+                .opacity(vendor.hasUsageAPI ? 1 : 0.5)
+                .matchedGeometryEffect(id: SlotID.mono(profile, vendor.id), in: namespace)
+            track
+                .frame(height: 4)
+                .matchedGeometryEffect(id: SlotID.gauge(profile, vendor.id), in: namespace)
         }
-        .buttonStyle(.plain)
         .help(helpText)
     }
 
     private var helpText: String {
-        // Blue = this profile is the lab's active one: what a plain run of the
-        // lab's CLI in any terminal signs in as. Outlined = a slot held here,
-        // with another profile active for the lab.
-        var parts = [active ? "\(vendor.label) — active: a plain terminal session uses this profile"
-                            : "\(vendor.label) — held by this profile; another profile is active for it"]
-        if let account { parts.append(account) }
-        if signedOut {
-            parts.append("signed out")
-        } else if case .used(let u)? = gauge {
-            parts.append(u >= Usage.maxedAt ? "maxed" : "\(u)% used")
-        }
+        var parts = [vendor.label]
+        if !vendor.hasUsageAPI { parts.append("no quota API") }
+        else if signedOut { parts.append("not signed in") }
+        else if let u = used { parts.append(u >= Usage.maxedAt ? "maxed" : "\(u)% used") }
         return parts.joined(separator: " · ")
     }
 
-    // Maxed is a state, not a hue: clock glyph, dimmed label, full red bar.
-    private var maxed: Bool { gauge?.maxed ?? false }
-
-    private var chip: some View {
-        HStack(spacing: 3) {
-            if maxed {
-                Image(systemName: "clock").font(.system(size: 8)).foregroundStyle(maxedRed)
-            }
-            if signedOut {
-                Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 8))
-                    .foregroundStyle(active ? Color.white : Ink.amber)
-            }
-            Text(vendor.label).opacity(maxed ? 0.55 : 1)
+    @ViewBuilder private var track: some View {
+        if !vendor.hasUsageAPI {
+            Capsule().strokeBorder(Color.primary.opacity(0.22),
+                                   style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
+        } else if signedOut {
+            Capsule().fill(Ink.amber.opacity(0.18))
+                .overlay(Capsule().strokeBorder(Ink.amber.opacity(0.45)))
+        } else if let u = used {
+            Gauge(percent: u)
+        } else if slow {
+            Capsule().fill(Color.primary.opacity(0.16))
+        } else {
+            Sweep().clipShape(Capsule())
         }
-        .font(.system(size: 10.5))
-        .padding(.horizontal, 6)
-        .frame(height: 17)
-        .foregroundStyle(active && !maxed ? Color.white : Color.primary)
-        .background(RoundedRectangle(cornerRadius: 4)
-            .fill(maxed ? maxedRed.opacity(0.15) : active ? Ink.chip : Color.clear))
-        .overlay(alignment: .bottom) {
-            switch gauge {
-            case .used(let u)?: UsageLine(percent: u)
-            case .noReading?: Rectangle().fill(Color.primary.opacity(0.16)).frame(height: 2)
-            case .loading?: Sweep().frame(height: 2)
-            case nil: EmptyView()
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 4))
-        .overlay(RoundedRectangle(cornerRadius: 4)
-            .strokeBorder(maxed ? maxedRed.opacity(0.7) : active ? Color.clear : Color.primary.opacity(0.25),
-                          lineWidth: 1))
-        .overlay(RoundedRectangle(cornerRadius: 5.5)
-            .strokeBorder(Color.accentColor, lineWidth: 1.5)
-            .padding(-2)
-            .opacity(selected ? 1 : 0))
     }
 }
 
-// +N / − beside the chips.
-private struct SmallChip: View {
-    let title: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(verbatim: title)
-                .font(.system(size: 10.5))
-                .padding(.horizontal, 6)
-                .frame(height: 17)
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.primary.opacity(0.25)))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(Ink.secondary)
-    }
-}
-
-// Used, along a chip's bottom edge. The track is always drawn and the fill
-// is the number — length carries it, colour only reinforces. Maxed fills
-// the whole track red.
-private struct UsageLine: View {
+// Track plus fill. The length is the reading; colour only reinforces it.
+private struct Gauge: View {
     let percent: Int
 
     var body: some View {
         GeometryReader { g in
             ZStack(alignment: .leading) {
-                Rectangle().fill(Color.primary.opacity(0.16))
-                Rectangle()
-                    .fill(percent >= Usage.maxedAt ? maxedRed : meterColor(percent))
-                    .frame(width: percent >= Usage.maxedAt ? g.size.width
-                                                          : g.size.width * CGFloat(min(max(percent, 0), 100)) / 100)
+                Capsule().fill(Color.primary.opacity(0.16))
+                Capsule().fill(percent >= Usage.maxedAt ? maxedRed : meterColor(percent))
+                    .frame(width: g.size.width * CGFloat(min(max(percent, 0), 100)) / 100)
             }
         }
-        .frame(height: 2)
     }
 }
 
-// What used to be a profile submenu: every action for one (profile, lab).
-private struct VendorDrawer: View {
+// Shared geometry ids, so a lab's mark and gauge travel between depth 1 and
+// depth 2 rather than one view dissolving into another.
+private enum SlotID {
+    static func mono(_ profile: String, _ vendor: String) -> String { "mono-\(profile)-\(vendor)" }
+    static func gauge(_ profile: String, _ vendor: String) -> String { "gauge-\(profile)-\(vendor)" }
+}
+
+// Every lab the profile holds, in one fixed-height row. Segments share the
+// width but never stretch past 52 pt, so a profile with two labs doesn't draw
+// two bars across half the panel.
+private struct CapacityStrip: View {
     let profile: Profile
-    let vendor: Vendor
     let data: PanelData
     @ObservedObject var model: PanelModel
-    let actions: PanelActions
-    @State private var copied = false
-
-    private var usage: Usage? { model.usage[vendor.id]?[profile.name] }
-    private var command: String { "\(vendor.id)-\(profile.name.lowercased())" }
-
-    private var summary: String {
-        // Capacity is on the card; the drawer says how the lab runs.
-        "\(vendor.label) · pinned per process"
-    }
+    let namespace: Namespace.ID
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Divider().padding(.bottom, 3)
-            Text(summary).font(.system(size: 11)).foregroundStyle(Ink.secondary)
-            HStack(spacing: 6) {
-                OpenButton(terminals: data.terminals) { terminal in
-                    actions.openSession(profile: profile.name, vendor: vendor.id, terminal: terminal)
-                }
-                if data.hasDesktop(vendor, for: profile) {
-                    Button { actions.openDesktop(profile: profile.name, vendor: vendor.id) } label: {
-                        Label(vendor.desktopName, systemImage: "macwindow").labelStyle(.titleAndIcon)
-                    }
-                    .buttonStyle(PillButtonStyle(height: 22))
-                    .help(vendor.clonesDesktopApp ? "Open \(profile.name)'s \(vendor.desktopName)"
-                                                  : "Open \(vendor.desktopName) — one app, signed in as the active profile")
-                }
-                if usage?.note == .noToken || usage?.note == .staleToken {
-                    Button("Log In…") { actions.signIn(profile: profile.name, vendor: vendor.id, confirm: false) }
-                        .buttonStyle(PillButtonStyle(height: 22))
-                }
-                // Make this profile the lab's default: what new sessions use.
-                if !profile.isActive(for: vendor.id) {
-                    Button("Use") {
-                        actions.setActive(profile: profile.name, vendor: vendor.id)
-                    }
-                    .buttonStyle(PillButtonStyle(height: 22))
-                    .help("Use \(profile.name) for new \(vendor.label) sessions")
-                }
+        HStack(alignment: .bottom, spacing: 3) {
+            ForEach(data.slotted(profile), id: \.id) { v in
+                CapacitySegment(profile: profile.name, vendor: v,
+                                usage: model.usage[v.id]?[profile.name],
+                                signedOut: data.snapshot.signedIn[profile.name]?[v.id] == false,
+                                slow: model.usageSlow, namespace: namespace)
+                    .frame(maxWidth: 52)
             }
-            .padding(.vertical, 2)
-            DrawerRow(title: "Copy command") {
-                actions.copyCommand(profile: profile.name, vendor: vendor.id)
-                copied = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
-            } trailing: {
-                HStack(spacing: 5) {
-                    Text(copied ? "Copied" : command).font(.system(size: 11, design: .monospaced))
-                    Image(systemName: "doc.on.doc").font(.system(size: 10))
-                }
-            }
-            DrawerRow(title: "Sign in again…") {
-                actions.signIn(profile: profile.name, vendor: vendor.id, confirm: true)
-            } trailing: {
-                if let account = data.snapshot.account(profile.name, vendor.id) {
-                    Text(account).lineLimit(1).truncationMode(.middle)
-                }
-            }
-            .help("Sign this profile's \(vendor.label) out and back in, e.g. after using the wrong account")
-            if vendor.hasSessions {
-                DrawerRow(title: "Transfer session…") { actions.transferSession(profile: profile.name, vendor: vendor.id) }
-            }
+            Spacer(minLength: 0)
         }
     }
 }
@@ -991,12 +1091,16 @@ private struct VendorDrawer: View {
 // "Open in <terminal>" with a chevron for picking another terminal this once.
 private struct OpenButton: View {
     let terminals: [String]
+    /// Every window is spent; opening anyway is still allowed, and says so.
+    var blocked = false
     let open: (String?) -> Void
 
     var body: some View {
         HStack(spacing: 0) {
             Button { open(nil) } label: {
-                Text("Open in \(terminals.first ?? "Terminal")")
+                Label(blocked ? "Open in \(terminals.first ?? "Terminal") anyway"
+                              : "Open in \(terminals.first ?? "Terminal")", systemImage: "terminal")
+                    .labelStyle(.titleAndIcon)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.leading, 9)
                     .frame(height: 22)
@@ -1006,7 +1110,7 @@ private struct OpenButton: View {
             if terminals.count > 1 {
                 Divider().frame(height: 14)
                 Button {
-                    popUp(terminals.map { name in ClosureItem(name) { open(name) } })
+                    popUp(terminals.map { name in ClosureItem(name, symbol: "terminal") { open(name) } })
                 } label: {
                     Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
                         .frame(width: 24, height: 22)
@@ -1022,35 +1126,66 @@ private struct OpenButton: View {
     }
 }
 
-private struct DrawerRow<Trailing: View>: View {
-    let title: LocalizedStringKey
-    let action: () -> Void
-    @ViewBuilder let trailing: Trailing
+// A small tag. Takes a monogram when the thing has one, a symbol otherwise —
+// never bare text, so a row can be scanned rather than read.
+private struct Chip: View {
+    var text: String? = nil
+    var vendor: Vendor? = nil
+    var symbol: String? = nil
+    var tint: Color = .primary
 
     var body: some View {
-        Button(action: action) {
-            HStack {
-                Text(title).font(.system(size: 11.5))
-                Spacer()
-                trailing.font(.system(size: 11)).foregroundStyle(Ink.secondary)
+        HStack(spacing: 3) {
+            if let vendor {
+                LabMark(vendor: vendor, size: 9)
+            } else if let symbol {
+                Image(systemName: symbol).font(.system(size: 8, weight: .semibold))
             }
-            .padding(.horizontal, 5)
-            .frame(height: 24)
-            .contentShape(Rectangle())
+            if let text { Text(text).font(.system(size: 10)) }
         }
-        .buttonStyle(RowButtonStyle(radius: 5))
-    }
-}
-
-extension DrawerRow where Trailing == EmptyView {
-    init(title: LocalizedStringKey, action: @escaping () -> Void) {
-        self.init(title: title, action: action) { EmptyView() }
+        .padding(.horizontal, text == nil ? 3.5 : 5)
+        .frame(height: 16)
+        .foregroundStyle(tint)
+        .background(Capsule().fill(tint.opacity(0.12)))
+        .overlay(Capsule().strokeBorder(tint.opacity(0.28)))
+        .fixedSize()
     }
 }
 
 // MARK: - Sessions
 
 private struct SessionsSection: View {
+    let data: PanelData
+    let actions: PanelActions
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button { actions.showAllSessions() } label: {
+                HStack(spacing: 5) {
+                    SectionLabel(title: "Recent sessions", detail: "", symbol: "clock.arrow.circlepath")
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Ink.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Open all sessions")
+            ForEach(data.sessions.prefix(2), id: \.id) { s in
+                SessionRow(session: s, data: data, actions: actions)
+            }
+        }
+        .padding(.horizontal, Metrics.side)
+        .padding(.vertical, 12)
+    }
+}
+
+// Where it was and what it was doing are two different questions, so they get
+// two lines. The tags ride with the folder; the summary — the line you
+// actually recognise a session by — gets the full width instead of the scraps
+// left over beside them.
+private struct SessionRow: View {
+    let session: SessionInfo
     let data: PanelData
     let actions: PanelActions
 
@@ -1063,32 +1198,99 @@ private struct SessionsSection: View {
     }()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            SectionLabel(title: "Recent sessions", detail: "")
-            ForEach(data.sessions.prefix(2), id: \.id) { s in
-                Button { actions.resumeSession(s) } label: {
-                    HStack(alignment: .top, spacing: 8) {
-                        Circle().fill(profileColor(s.profile)).frame(width: 6, height: 6).padding(.top, 5)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(s.cwd.map { ($0 as NSString).lastPathComponent } ?? "—")
-                                .font(.system(size: 12.5))
-                            Text(s.snippet).font(.system(size: 11)).foregroundStyle(Ink.secondary)
-                        }
-                        .lineLimit(1)
-                        Spacer(minLength: 6)
-                        Text("\(data.snapshot.vendor(s.vendor)?.label ?? s.vendor) · \(Self.age.string(from: s.mtime, to: Date()) ?? "")")
-                            .font(.system(size: 11)).foregroundStyle(Ink.secondary)
+        Button { actions.resumeSession(session) } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 5) {
+                    Text(session.cwd.map { ($0 as NSString).lastPathComponent } ?? "—")
+                        .font(.system(size: 12.5))
+                        .lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 6)
+                    Chip(text: session.profile, symbol: "person.crop.circle",
+                         tint: profileColor(session.profile))
+                    // The logo is the lab's name; spelling it out again was
+                    // costing the summary its width.
+                    if let v = data.snapshot.vendor(session.vendor) {
+                        Chip(vendor: v, tint: Ink.secondary)
                     }
-                    .padding(.horizontal, 8)
-                    .frame(height: 40)
-                    .contentShape(Rectangle())
+                    Text(Self.age.string(from: session.mtime, to: Date()) ?? "")
+                        .font(.system(size: 11)).monospacedDigit()
+                        .foregroundStyle(Ink.secondary)
+                        .frame(minWidth: 22, alignment: .trailing)
                 }
-                .buttonStyle(RowButtonStyle(radius: 7, resting: 0.05))
-                .help("Resume in \(s.profile)")
+                Text(session.snippet)
+                    .font(.system(size: 11)).foregroundStyle(Ink.secondary)
+                    .lineLimit(2).truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .frame(minHeight: 56, alignment: .top)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(RowButtonStyle(radius: 7, resting: 0.05))
+        .help("Resume in \(session.profile)")
+    }
+}
+
+// The panel keeps two sessions. This is the rest of the list, in a window of
+// its own: same rows, wide enough that the prompt can actually be read.
+struct SessionsWindowView: View {
+    @ObservedObject var model: PanelModel
+    let actions: PanelActions
+
+    private static let width: CGFloat = 560
+    private static var listLimit: CGFloat {
+        ((NSScreen.main?.visibleFrame.height ?? 800) - 44 - 48) * 0.72
+    }
+
+    private var rows: [SessionInfo] {
+        model.allSessions.isEmpty ? (model.data?.sessions ?? []) : model.allSessions
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Ink.secondary)
+                Text("Recent sessions").font(.system(size: 13, weight: .semibold))
+                Spacer()
+                if !rows.isEmpty {
+                    Text("\(rows.count)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Ink.secondary)
+                }
+                Button { actions.closeSessions() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 24, height: 24)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.08)))
+                }
+                .buttonStyle(.plain)
+                .help("Close")
+            }
+            .padding(.horizontal, Metrics.side)
+            .frame(height: 44)
+            Divider()
+            if let data = model.data, !rows.isEmpty {
+                FittingScroll(maxHeight: Self.listLimit, focus: nil) {
+                    VStack(spacing: 6) {
+                        ForEach(rows, id: \.id) { s in
+                            SessionRow(session: s, data: data, actions: actions)
+                        }
+                    }
+                    .padding(Metrics.side)
+                }
+            } else {
+                Text("No sessions yet")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Ink.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 28)
             }
         }
-        .padding(.horizontal, Metrics.side)
-        .padding(.vertical, 12)
+        .frame(width: Self.width)
     }
 }
 
@@ -1106,7 +1308,9 @@ private struct FirstRun: View {
                 .foregroundStyle(Ink.secondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("New Profile…") { actions.newProfile() }
+            Button { actions.newProfile() } label: {
+                Label("New Profile…", systemImage: "person.badge.plus")
+            }
                 .buttonStyle(.borderedProminent)
                 .padding(.top, 4)
             Text("Your current logins stay put as “Default”.")
@@ -1169,40 +1373,6 @@ private struct HoverBackground<Content: View>: View {
     }
 }
 
-// Chips wrap onto a second line when a profile holds many labs.
-private struct FlowLayout: Layout {
-    var spacing: CGFloat
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let rows = arrange(width: proposal.width ?? .infinity, subviews: subviews)
-        return CGSize(width: proposal.width ?? rows.width, height: rows.height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        for (i, point) in arrange(width: bounds.width, subviews: subviews).origins.enumerated() {
-            subviews[i].place(at: CGPoint(x: bounds.minX + point.x, y: bounds.minY + point.y), proposal: .unspecified)
-        }
-    }
-
-    private func arrange(width: CGFloat, subviews: Subviews) -> (origins: [CGPoint], width: CGFloat, height: CGFloat) {
-        var origins: [CGPoint] = []
-        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, maxX: CGFloat = 0
-        for sub in subviews {
-            let size = sub.sizeThatFits(.unspecified)
-            if x > 0 && x + size.width > width {
-                x = 0
-                y += rowHeight + spacing
-                rowHeight = 0
-            }
-            origins.append(CGPoint(x: x, y: y))
-            x += size.width + spacing
-            maxX = max(maxX, x - spacing)
-            rowHeight = max(rowHeight, size.height)
-        }
-        return (origins, maxX, y + rowHeight)
-    }
-}
-
 // MARK: - AppKit menus
 
 // SwiftUI's Menu flattens custom labels on macOS, so the panel's menus are
@@ -1210,11 +1380,13 @@ private struct FlowLayout: Layout {
 final class ClosureItem: NSMenuItem {
     private let handler: () -> Void
 
-    init(_ title: String, checked: Bool = false, handler: @escaping () -> Void) {
+    init(_ title: String, symbol: String? = nil, checked: Bool = false,
+         handler: @escaping () -> Void) {
         self.handler = handler
         super.init(title: title, action: #selector(fire), keyEquivalent: "")
         target = self
         state = checked ? .on : .off
+        if let symbol { image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) }
     }
 
     required init(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -1222,8 +1394,9 @@ final class ClosureItem: NSMenuItem {
     @objc private func fire() { handler() }
 }
 
-private func submenu(_ title: String, _ items: [NSMenuItem]) -> NSMenuItem {
+private func submenu(_ title: String, symbol: String? = nil, _ items: [NSMenuItem]) -> NSMenuItem {
     let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+    if let symbol { item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) }
     let menu = NSMenu()
     items.forEach(menu.addItem)
     item.submenu = menu

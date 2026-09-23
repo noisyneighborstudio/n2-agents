@@ -12,14 +12,16 @@ struct Vendor {
     let id: String
     let installed: Bool
     let desktop: String     // "clone" | "launch" | "none"
-    let usage: String       // "oauth" | "none"
+    let usage: String       // "oauth" | "ondemand" | "none"
     let label: String
     let sessions: String    // transcript layout, "none" when agents can't read them
     let monogram: String    // two-letter tile the panel draws for the lab
     let desktopName: String // its desktop app, "" when it has none
     let desktopBundle: String // that app's bundle id
 
-    var hasUsageAPI: Bool { usage == "oauth" }
+    var hasUsageAPI: Bool { usage == "oauth" || usage == "ondemand" }
+    /// Each read costs something, so it's never polled: read on open or retry.
+    var readsOnDemand: Bool { usage == "ondemand" }
     var hasSessions: Bool { sessions != "none" }
     var clonesDesktopApp: Bool { desktop == "clone" }
 }

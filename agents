@@ -336,14 +336,14 @@ rotation_next() {
 }
 
 # Server-side usage per profile, from the endpoint the lab's own CLI reads for
-# its usage screen (Claude: /usage; Codex: /status). Ground truth (includes
-# web/desktop/other machines), not a local heuristic.
+# its usage screen (Claude: /usage; Codex: /status; Grok: its ACP billing call).
+# Ground truth (includes web/desktop/other machines), not a local heuristic.
 # Prints: name<TAB>5h%<TAB>7d%<TAB>5h-resets<TAB>note<TAB>7d-resets
 #
-# Only vendors whose adapter reports usage=oauth can answer this; the rest have
-# no quota endpoint, and guessing from local logs would be worse than saying so.
+# Only vendors whose adapter reports usage can answer this; the rest have no
+# quota endpoint, and guessing from local logs would be worse than saying so.
 usage_table() {  # vendor
-  if [ "$(vendor_usage "$1")" != oauth ]; then
+  if ! vendor_has_usage "$1"; then
     for n in $(all_profiles); do
       d=$(config_dir "$n" "$1")
       [ -d "$d" ] || continue
@@ -360,7 +360,8 @@ usage_table() {  # vendor
   [ -n "$ut_args" ] || return 0
   # shellcheck disable=SC2086
   /usr/bin/python3 - "$1" $ut_args <<'PYEOF'
-import hashlib, json, os, subprocess, sys, time, urllib.error, urllib.request
+import hashlib, json, os, signal, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request
+from datetime import datetime, timezone
 
 def claude_creds(cfg, is_default):
     # Keychain service is "Claude Code-credentials[-<sha256(cfgdir)[:8]>]";
@@ -430,7 +431,98 @@ def codex_row(r):
     five, seven = cols.get('five', ('-', '-')), cols.get('seven', ('-', '-'))
     return five[0], seven[0], five[1], seven[1]
 
-request, row = {'claude': (claude, claude_row), 'codex': (codex, codex_row)}[sys.argv[1]]
+def grok(name, cfg):
+    # Signed in = an auth.x.ai entry in the slot's auth.json. Its key lasts six
+    # hours, so the read goes through the CLI, which renews it on the way.
+    try:
+        a = json.load(open(cfg + '/auth.json'))
+    except (OSError, ValueError):
+        a = {}
+    if not any(k.startswith('https://auth.x.ai::') and v.get('key') for k, v in a.items()):
+        return 'no-token', None
+    return 'ok', lambda: grok_billing(cfg)
+
+def grok_billing(cfg):
+    # grok's own billing call over ACP (JSON-RPC on stdio), pinned to the slot.
+    # Only the replies are parsed: its startup notices carry MCP servers' env.
+    # SIGTERM ends it in ~1.5 s (closing stdin takes 4); SIGKILL if it hangs.
+    p = subprocess.Popen(['grok', 'agent', 'stdio'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                         stderr=subprocess.DEVNULL, text=True, cwd=tempfile.gettempdir(),
+                         env=dict(os.environ, GROK_HOME=cfg), start_new_session=True)
+    kill = lambda sig: os.killpg(p.pid, sig)
+    timer = threading.Timer(20, kill, (signal.SIGKILL,))
+    timer.start()
+    def call(i, method, params):
+        p.stdin.write(json.dumps({'jsonrpc': '2.0', 'id': i, 'method': method, 'params': params}) + '\n')
+        p.stdin.flush()
+        for line in p.stdout:
+            try:
+                m = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(m, dict) and m.get('id') == i:
+                if 'result' not in m:
+                    raise RuntimeError(m.get('error'))
+                return m['result']
+        raise RuntimeError('grok exited')
+    try:
+        call(1, 'initialize', {'protocolVersion': 1, 'clientCapabilities': {}})
+        return call(2, '_x.ai/billing', {})
+    finally:
+        timer.cancel()
+        try:
+            kill(signal.SIGTERM)
+            p.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            kill(signal.SIGKILL)
+            p.wait()
+        except ProcessLookupError:
+            p.wait()
+
+def grok_row(r):
+    # One credit pool per billing period (a week on today's plans) and no
+    # 5-hour window, so it fills the 7d column alone.
+    c = r.get('config') or {}
+    end = (c.get('currentPeriod') or {}).get('end') or c.get('billingPeriodEnd')
+    reset = datetime.fromisoformat(end.replace('Z', '+00:00')).astimezone(timezone.utc) \
+        .strftime('%Y-%m-%dT%H:%M') if end else '-'
+    return '-', c.get('creditUsagePercent', '-'), '-', reset
+
+def muse(name, cfg):
+    # A profile's login is in its slot's auth.json (the file backend N2 pins);
+    # Default's is the one keychain item a plain `muse` uses. Never the
+    # keychain for a profile: that would show Default's numbers under its name.
+    try:
+        t = (json.load(open(cfg + '/auth.json')).get('providers') or {}).get('meta', {}).get('access_token', '')
+    except (OSError, ValueError):
+        t = ''
+    if not t and name == 'Default':
+        p = subprocess.run(['security', 'find-generic-password', '-s', 'ai.meta.dev.credentials',
+                            '-a', 'meta', '-w'], capture_output=True, text=True)
+        try:
+            t = json.loads(p.stdout).get('access_token', '') if p.returncode == 0 else ''
+        except ValueError:
+            t = ''
+    if not t.startswith('dca:'):
+        return 'no-token', None
+    url = os.environ.get('N2_MUSE_USAGE_URL', 'https://api.meta.ai/muse-code/key')
+    return 'ok', urllib.request.Request(url, data=b'{}', method='POST',
+        headers={'Authorization': 'Bearer ' + t, 'x-api-version': '1.0.0',
+                 'Content-Type': 'application/json', 'User-Agent': 'n2-agents'})
+
+def muse_row(r):
+    # The key endpoint (it mints an inference key we drop) reports both
+    # windows: `window` is the 5-hour one, `weekly` the week.
+    u = r.get('subs_usage') or {}
+    cols = []
+    for w in (u.get('window') or {}, u.get('weekly') or {}):
+        at = w.get('resets_at')
+        cols.append((w.get('used_percent', '-'),
+                     time.strftime('%Y-%m-%dT%H:%M', time.gmtime(at)) if at else '-'))
+    return cols[0][0], cols[1][0], cols[0][1], cols[1][1]
+
+request, row = {'claude': (claude, claude_row), 'codex': (codex, codex_row),
+                'grok': (grok, grok_row), 'muse': (muse, muse_row)}[sys.argv[1]]
 for pair in sys.argv[2:]:
     name, cfg = pair.split('=', 1)
     status, req = request(name, cfg)
@@ -438,7 +530,7 @@ for pair in sys.argv[2:]:
         print(f"{name}\t-\t-\t-\t{status}")
         continue
     try:
-        five, seven, five_at, seven_at = row(json.load(urllib.request.urlopen(req, timeout=10)))
+        five, seven, five_at, seven_at = row(req() if callable(req) else json.load(urllib.request.urlopen(req, timeout=10)))
         print(f"{name}\t{five}\t{seven}\t{five_at}\tok\t{seven_at}")
     except urllib.error.HTTPError as e:
         note = {429: 'rate-limited', 401: 'stale-token', 403: 'stale-token'}.get(e.code, 'fetch-error')
@@ -490,7 +582,7 @@ cmd_best() {
   done
   if [ -z "$vsel" ]; then
     # Every lab that reports usage, not whichever sorts first.
-    bv=$(for x in $(vendors_installed); do [ "$(vendor_usage "$x")" = oauth ] && echo "$x"; done; true)
+    bv=$(for x in $(vendors_installed); do vendor_has_usage "$x" && echo "$x"; done; true)
     [ -n "$bv" ] || die "none of the installed labs reports usage"
     for x in $bv; do
       if [ "$porcelain" = 1 ]; then cmd_best --vendor "$x" --porcelain; else cmd_best --vendor "$x"; fi
@@ -502,9 +594,9 @@ cmd_best() {
     usage_table "$v"
     return 0
   fi
-  if [ "$(vendor_usage "$v")" != oauth ]; then
+  if ! vendor_has_usage "$v"; then
     echo "$(vendor_label "$v") exposes no usage API — there is nothing to rank." >&2
-    echo "Vendors with usage data: $(for x in $N2_VENDORS; do [ "$(vendor_usage "$x")" = oauth ] && printf '%s ' "$x"; done)" >&2
+    echo "Vendors with usage data: $(for x in $N2_VENDORS; do vendor_has_usage "$x" && printf '%s ' "$x"; done)" >&2
     return 1
   fi
   echo "vendor: $v"
@@ -534,7 +626,7 @@ remember_slot() {  # profile, vendor
 # usage_table rows, each prefixed with its vendor, for the labs that report usage.
 usage_rows() {  # vendors
   for ur_v in $1; do
-    [ "$(vendor_usage "$ur_v")" = oauth ] || continue
+    vendor_has_usage "$ur_v" || continue
     usage_table "$ur_v" | sed "s/^/$ur_v	/"
   done
 }
@@ -547,7 +639,7 @@ slot_signed_in() {  # profile, vendor — yes or can't tell
 }
 
 slot_has_room() {  # profile, vendor, usage rows
-  [ "$(vendor_usage "$2")" = oauth ] || return 0
+  vendor_has_usage "$2" || return 0
   su_row=$(printf '%s\n' "$3" | awk -F'\t' -v v="$2" -v n="$1" '$1 == v && $2 == n' | head -1)
   [ -n "$su_row" ] || return 1
   IFS="$(printf '\t')" read -r _ _ su_f su_s _ su_note _ <<EOF
@@ -576,7 +668,7 @@ next_best() {  # profiles, vendors -> "profile vendor"; fails when nothing is us
   for s in $nb_order; do
     nb_n=${s%%:*} nb_v=${s#*:}
     slot_signed_in "$nb_n" "$nb_v" || continue
-    if [ "$(vendor_usage "$nb_v")" = oauth ] && [ "$nb_fetched" = 0 ]; then
+    if vendor_has_usage "$nb_v" && [ "$nb_fetched" = 0 ]; then
       nb_rows=$(usage_rows "$2")
       nb_fetched=1
     fi
@@ -658,6 +750,7 @@ cmd_run() {
 
   remember_slot "$name" "$v"
 
+  announce_auth "$v" "$name" "$cfg" "${1:-}"
   if [ -n "$sess" ]; then
     [ "$src" = "$name" ] || cmd_transfer "$sess" --from "$src" --to "$name" --vendor "$v" >&2
     hit=$(find_session "$sess" "$v" "$name") || die "session $sess missing after transfer"
@@ -667,9 +760,17 @@ cmd_run() {
     elif [ -n "$cwd" ]; then
       echo "agents: project dir $cwd no longer exists; resuming from $PWD" >&2
     fi
-    exec_vendor "$v" "$cfg" "$cli" "$(resume_flag "$v")" "$sess" "$@"
+    exec_vendor "$v" "$name" "$cfg" "$cli" "$(resume_flag "$v")" "$sess" "$@"
   fi
-  exec_vendor "$v" "$cfg" "$cli" "$@"
+  exec_vendor "$v" "$name" "$cfg" "$cli" "$@"
+}
+
+# A sign-in writes a credential into whichever slot the process was pinned to, and the
+# vendor's own login output never says which profile that is. Say it first, so a
+# browser prompt cannot be answered with the wrong account for the wrong profile.
+announce_auth() {  # vendor, profile, slot-dir, first vendor arg
+  case ${4:-} in login|logout|auth) ;; *) return 0 ;; esac
+  echo "agents: $(vendor_label "$1") $4 for profile '$2' ($(vendor_env "$1")=$(vendor_env_value "$1" "$3"))" >&2
 }
 
 resume_flag() {
@@ -679,10 +780,13 @@ resume_flag() {
   esac
 }
 
-# Launch a vendor CLI pinned to a config dir through its env var.
-exec_vendor() {  # vendor, cfg, cli, args...
-  ev_vendor=$1 ev_cfg=$2; shift 2
-  exec env "$(vendor_env "$ev_vendor")=$(vendor_env_value "$ev_vendor" "$ev_cfg")" "$@"
+# Launch a vendor CLI pinned to a config dir through its env var (and any
+# extra the lab needs to keep its login in the slot).
+exec_vendor() {  # vendor, profile, cfg, cli, args...
+  ev_vendor=$1 ev_profile=$2 ev_cfg=$3; shift 3
+  # shellcheck disable=SC2046
+  exec env "$(vendor_env "$ev_vendor")=$(vendor_env_value "$ev_vendor" "$ev_cfg")" \
+    $(vendor_env_extra "$ev_vendor" "$ev_profile") "$@"
 }
 
 # --- login -----------------------------------------------------------------
@@ -719,23 +823,23 @@ cmd_login() {
   if [ "$authed" != 1 ] && [ -n "$out_args" ]; then
     echo "Signing $(vendor_label "$v") out of '$name'…"
     # shellcheck disable=SC2086
-    ( exec_vendor "$v" "$cfg" "$cli" $out_args ) || \
+    ( exec_vendor "$v" "$name" "$cfg" "$cli" $out_args ) || \
       echo "agents: '$cli $out_args' reported an error — signing in anyway" >&2
   fi
   echo "Now sign in with the account '$name' should use."
   in_args=$(vendor_login "$v")
   if [ -z "$in_args" ]; then
-    exec_vendor "$v" "$cfg" "$cli"   # no login subcommand: the CLI asks on start
+    exec_vendor "$v" "$name" "$cfg" "$cli"   # no login subcommand: the CLI asks on start
   fi
   echo "(The browser signs in with whatever account it's already using — switch it there first if needed.)"
   # shellcheck disable=SC2086
-  ( exec_vendor "$v" "$cfg" "$cli" $in_args ) || die "sign-in did not complete"
+  ( exec_vendor "$v" "$name" "$cfg" "$cli" $in_args ) || die "sign-in did not complete"
   who=$(vendor_whoami "$v")
   if [ -n "$who" ]; then
     echo ""
     echo "'$name' $(vendor_label "$v") is now:"
     # shellcheck disable=SC2086
-    ( exec_vendor "$v" "$cfg" "$cli" $who ) || true
+    ( exec_vendor "$v" "$name" "$cfg" "$cli" $who ) || true
   fi
 }
 
@@ -936,7 +1040,7 @@ cmd_new() {
   for v in $created; do
     slot="$root/$name/$(vendor_slot_name "$v")"
     printf '  %-9s %s-%s   (or %s)\n' "$v" "$v" "$(lower "$name")" \
-      "$(vendor_env "$v")=$(vendor_env_value "$v" "$slot") $(vendor_cli "$v")"
+      "$(echo "$(vendor_env "$v")=$(vendor_env_value "$v" "$slot") $(vendor_env_extra "$v" "$name") $(vendor_cli "$v")" | tr -s ' ')"
   done
   echo "  Sign in to each one once."
 }
@@ -1068,7 +1172,13 @@ session_meta() {  # path -> cwd \t snippet
     | grep -v -e '^\(\\n\| \)*<' -e '^\(\\n\| \)*# AGENTS.md instructions' \
              -e '^\(\\n\| \)*# Files mentioned by the user' -e '^\[Request interrupted' | head -1 || true)
   # Escapes out, and a markdown link reads as its text ([$skill](/path) -> $skill).
-  snippet=$(printf '%s' "$snippet" | sed 's/\\[nt]/ /g; s/\\"/"/g; s/\[\([^]]*\)\]([^)]*)/\1/g' | cut -c1-70)
+  # Cut generously: this is one tab-separated field, and the panel decides how
+  # much of it fits. Trimming to a line's worth here meant the tray could never
+  # show more than a fragment however wide its row got.
+  # Squeeze the runs the escape-stripping leaves behind, then trim whatever the
+  # cut lands mid-token on — a dangling backslash reads as a rendering bug.
+  snippet=$(printf '%s' "$snippet" | sed 's/\\[nt]/ /g; s/\\"/"/g; s/\[\([^]]*\)\]([^)]*)/\1/g' \
+    | tr -s ' ' | cut -c1-240 | sed 's/[\\ ]*$//')
   printf '%s\t%s\n' "$cwd" "${snippet:-(no prompt)}"
 }
 

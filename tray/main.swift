@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 #if canImport(Sparkle)
 import Sparkle
@@ -85,9 +86,16 @@ let terminalSpecs: [TerminalSpec] = [
 final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtocol, PanelActions, SetupHost {
     private var statusItem: NSStatusItem!
     private let model = PanelModel()
-    // Built on first open: it anchors to the status item's button.
+    private var statusIcon: StatusIcon?
+    private var quotaWatch: AnyCancellable?
+    private var menuBarAppearance: NSKeyValueObservation?
+    private lazy var quotaToast = QuotaToast(anchor: statusItem.button!) { [weak self] in self?.togglePanel() }
+    // Built on first use (an open, or the first quota reading): it anchors to
+    // the status item's button.
     private lazy var panel = GlassWindow(rootView: PanelView(model: model, actions: self),
                                          behavior: .transient(anchor: statusItem.button!))
+    /// Recent sessions, opened out of the panel into its own window.
+    private var sessionsWindow: GlassWindow?
     private let fm = FileManager.default
     private let home = NSHomeDirectory()
     private var configRoot: String { home + "/.n2-agents" }
@@ -160,14 +168,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let r = Bundle.main.resourcePath, let icon = NSImage(contentsOfFile: r + "/n2agents.icns") {
-            icon.size = NSSize(width: 20, height: 20)
-            statusItem.button?.image = icon
+            statusIcon = StatusIcon(base: icon)
+            drawStatusIcon()
             statusItem.button?.imagePosition = .imageLeft
         } else {
             statusItem.button?.title = "🤖"
         }
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePanel)
+        // @Published fires before the store, so read the model a turn later.
+        quotaWatch = model.$data.combineLatest(model.$usage)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.quotaChanged() }
+        // The drained part is drawn in the menu bar's ink, which follows the
+        // wallpaper behind it.
+        menuBarAppearance = statusItem.button?.observe(\.effectiveAppearance) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.drawStatusIcon() }
+        }
 
 
         // The panel is ready before anyone clicks: it starts from the last
@@ -202,6 +219,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 #endif
     }
 
+    // The icon is a gauge of quota left, and anything newly low gets a toast.
+    private func quotaChanged() {
+        drawStatusIcon()
+        quotaToast.update(model.lowQuota, quiet: panel.isShowing)
+    }
+
+    private func drawStatusIcon() {
+        guard let icon = statusIcon, let button = statusItem.button else { return }
+        let dark = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua, .vibrantLight, .vibrantDark])
+        button.image = icon.image(remaining: model.remaining, dark: dark == .darkAqua || dark == .vibrantDark)
+    }
+
     // MARK: - Panel (re-read every time it opens)
 
     @objc private func togglePanel() {
@@ -209,6 +238,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
             panel.dismiss()
             return
         }
+        quotaToast.dismiss()
         var still = Transaction()
         still.disablesAnimations = true
         withTransaction(still) { model.presented = false }
@@ -217,6 +247,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         panel.present()
         DispatchQueue.main.async { self.model.presented = true }
         refreshPanel()
+        refreshUsage(force: false, onDemand: true)
     }
 
     // Anything that opens a window, dialog or terminal closes the panel first:
@@ -301,22 +332,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 
     // Quota is a network call per profile against a rate-limited endpoint the
     // labs' own CLIs also poll, so it runs beside the panel, is reused for 5
-    // minutes, and backs off to 15 after a 429. One fetch at a time: a fetch
-    // that becomes due while another is in flight runs right after it, so a
-    // result read before a sign-in never stands in for one after it.
-    private var usageFetchedAt: Date?
+    // minutes per lab, and backs off to 15 after a 429. A lab whose read costs
+    // something (Muse mints a key per read) is never polled: only an open, a
+    // retry or a sign-in reads it. One fetch at a time: a fetch that becomes
+    // due while another is in flight runs right after it, so a result read
+    // before a sign-in never stands in for one after it.
+    private var usageFetchedAt: [String: Date] = [:]
+    private var usageTTL: [String: TimeInterval] = [:]
     private var usageRefetch = false
-    private var usageTTL: TimeInterval = 300
+    private var usageRefetchOnDemand = false
     private var usageSlowTimer: DispatchWorkItem?
 
-    private func refreshUsage(force: Bool) {
-        guard let vendors = model.data?.quotaVendors, !vendors.isEmpty else { return }
-        let due = force || usageFetchedAt.map { Date().timeIntervalSince($0) >= usageTTL } ?? true
-        guard due else { return }
+    private func refreshUsage(force: Bool, onDemand: Bool = false) {
+        guard let vendors = model.data?.quotaVendors.filter({ v in
+            (onDemand || !v.readsOnDemand) && (force || usageFetchedAt[v.id].map {
+                Date().timeIntervalSince($0) >= usageTTL[v.id, default: 300]
+            } ?? true)
+        }), !vendors.isEmpty else { return }
         if model.usageLoading {
             usageRefetch = true
+            usageRefetchOnDemand = usageRefetchOnDemand || onDemand
             return
         }
+        // Stamped when the read starts, so a call landing mid-read doesn't
+        // queue the same labs again; a sign-in clears the stamps to force one.
+        for v in vendors { usageFetchedAt[v.id] = Date() }
         model.usageLoading = true
         usageSlowTimer?.cancel()
         let slow = DispatchWorkItem { [weak self] in self?.model.usageSlow = true }
@@ -331,13 +371,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
                 self.model.usageLoading = false
                 self.usageSlowTimer?.cancel()
                 self.model.usageSlow = false
-                self.usageFetchedAt = Date()
-                self.usageTTL = fresh.values.contains { $0.values.contains { $0.note == .rateLimited } } ? 900 : 300
-                let old = self.model.usage
-                self.model.usage = fresh.reduce(into: [:]) { $0[$1.key] = Usage.merge(old[$1.key] ?? [:], $1.value) }
+                var usage = self.model.usage
+                for (id, rows) in fresh {
+                    self.usageTTL[id] = rows.values.contains { $0.note == .rateLimited } ? 900 : 300
+                    usage[id] = Usage.merge(usage[id] ?? [:], rows)
+                }
+                self.model.usage = usage
                 if self.usageRefetch {
+                    let onDemand = self.usageRefetchOnDemand
                     self.usageRefetch = false
-                    self.refreshUsage(force: true)
+                    self.usageRefetchOnDemand = false
+                    self.refreshUsage(force: true, onDemand: onDemand)
                 }
             }
         }
@@ -357,13 +401,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
                setup?.model.profile == profile {
                 setup?.loginFinished(vendor: vendor)
             }
-            usageFetchedAt = nil
+            usageFetchedAt.removeAll()
             refreshPanel()
+            refreshUsage(force: false, onDemand: true)
         }
     }
 
     func retryUsage() {
-        refreshUsage(force: true)
+        refreshUsage(force: true, onDemand: true)
     }
 
     // MARK: - Profile discovery
@@ -580,8 +625,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     }
 
 #if canImport(Sparkle)
+    // raw.githubusercontent.com caches each encoding of the feed for 5
+    // minutes, and the gzip copy Sparkle asks for can lag a release: "up to
+    // date" while an update sits published. A query unique to the check
+    // skips the cache.
     func feedURLString(for updater: SPUUpdater) -> String? {
-        Bundle.main.object(forInfoDictionaryKey: UpdateChannel.selected().feedInfoKey) as? String
+        (Bundle.main.object(forInfoDictionaryKey: UpdateChannel.selected().feedInfoKey) as? String)
+            .map { "\($0)?t=\(Int(Date().timeIntervalSince1970))" }
     }
 
     func allowedChannels(for updater: SPUUpdater) -> Set<String> {
@@ -1058,7 +1108,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 
     func resumeSession(_ s: SessionInfo) {
         dismissPanel()
+        sessionsWindow?.dismiss()
         launchSession(resumeCommand(s, in: s.profile), slug: "\(s.profile)-\(s.vendor)", in: preferredTerminal)
+    }
+
+    // The panel shows two. The rest live in a window of their own, same rows,
+    // wide enough that the prompt is the line you read.
+    func showAllSessions() {
+        dismissPanel()
+        model.allSessions = model.data?.sessions ?? []
+        if sessionsWindow == nil {
+            sessionsWindow = GlassWindow(rootView: SessionsWindowView(model: model, actions: self),
+                                         behavior: .floating)
+        }
+        sessionsWindow?.present()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let r = self.runCLI(["sessions", "--porcelain", "--limit", "50"])
+            let parsed = r.status == 0 ? SessionInfo.parse(r.output) : []
+            DispatchQueue.main.async { self.model.allSessions = parsed }
+        }
+    }
+
+    func closeSessions() {
+        sessionsWindow?.dismiss()
     }
 
     private func sessionRowLabel(_ s: SessionInfo) -> String {

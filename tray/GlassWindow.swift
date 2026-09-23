@@ -11,6 +11,9 @@ final class GlassWindow: NSPanel {
         /// The menu bar panel: pinned under the status item, and gone on Esc,
         /// a click elsewhere, or another window taking focus — a popover's job.
         case transient(anchor: NSStatusBarButton)
+        /// A notice under the status item: shown without taking focus or
+        /// activating the app, and gone when its owner dismisses it.
+        case toast(anchor: NSStatusBarButton)
         /// The setup window: floats above everything, including the terminal
         /// that takes focus mid-sign-in, until it is closed.
         case floating
@@ -22,6 +25,10 @@ final class GlassWindow: NSPanel {
     /// Holds the content at its full size, pinned top-centre and clipped, so
     /// the window can unfurl around it without the layout moving.
     private let stage = NSView()
+    /// The glass itself. It fills the window at rest; while the content
+    /// resizes, it animates inside a window already at the larger size.
+    private var surface = NSView()
+    private let cornerRadius: CGFloat
     private var unfurling = false
     private var dismissing = false
     /// Bumped by every present/dismiss, so a stale animation's completion
@@ -42,7 +49,11 @@ final class GlassWindow: NSPanel {
         hosting.sizingOptions = [.intrinsicContentSize]
         content = hosting
         self.behavior = behavior
-        super.init(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: true)
+        self.cornerRadius = cornerRadius
+        var style: NSWindow.StyleMask = [.borderless]
+        // Clickable without pulling the app forward over what you're doing.
+        if case .toast = behavior { style.insert(.nonactivatingPanel) }
+        super.init(contentRect: .zero, styleMask: style, backing: .buffered, defer: true)
         isOpaque = false
         backgroundColor = .clear
         // The window server traces the shadow from the window's alpha, which
@@ -51,7 +62,7 @@ final class GlassWindow: NSPanel {
         isReleasedWhenClosed = false
         hidesOnDeactivate = false
         switch behavior {
-        case .transient:
+        case .transient, .toast:
             level = .popUpMenu
             collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
         case .floating:
@@ -62,7 +73,11 @@ final class GlassWindow: NSPanel {
         stage.layer?.masksToBounds = true
         content.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin]
         stage.addSubview(content)
-        contentView = Self.glass(around: stage, cornerRadius: cornerRadius)
+        surface = Self.glass(around: stage, cornerRadius: cornerRadius)
+        surface.autoresizingMask = [.width, .height]
+        let container = NSView()
+        container.addSubview(surface)
+        contentView = container
         // Follow the SwiftUI content's size, top edge held still so it grows
         // downward. Coalesced onto the next turn of the run loop: the size is
         // reported mid-layout, and resizing the window there would re-enter it.
@@ -113,6 +128,9 @@ final class GlassWindow: NSPanel {
     private func placeContent() {
         contentView?.layoutSubtreeIfNeeded()
         content.frame = stage.bounds
+        // SwiftUI lays out at the new size now, not on its next pass: until
+        // then its last frame sits in the resized view, offset by the change.
+        content.layoutSubtreeIfNeeded()
         invalidateShadow()   // retrace it for the new size
     }
 
@@ -128,16 +146,19 @@ final class GlassWindow: NSPanel {
         alphaValue = 1
         fit(recenter: !isVisible)
         let target = frame
-        NSApp.activate(ignoringOtherApps: true)
+        let toast: Bool
+        if case .toast = behavior { toast = true } else { toast = false }
+        if !toast { NSApp.activate(ignoringOtherApps: true) }
+        let show = { toast ? self.orderFrontRegardless() : self.makeKeyAndOrderFront(nil) }
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || target.isEmpty {
-            makeKeyAndOrderFront(nil)
+            show()
         } else {
             setFrame(furled(target), display: false)
             alphaValue = 0
             // The window server can't retrace a shadow every frame of a moving
             // window; it comes back, fitted to the glass, once the frame lands.
             hasShadow = false
-            makeKeyAndOrderFront(nil)
+            show()
             unfurling = true
             let generation = generation
             NSAnimationContext.runAnimationGroup { context in
@@ -156,7 +177,8 @@ final class GlassWindow: NSPanel {
         makeFirstResponder(nil)
         if case .transient = behavior, clickMonitor == nil {
             clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-                self?.dismiss()
+                guard let self, !self.pointerOnAnchor else { return }
+                self.dismiss()
             }
         }
     }
@@ -168,15 +190,15 @@ final class GlassWindow: NSPanel {
         return NSRect(x: full.midX - width / 2, y: full.maxY - height, width: width, height: height)
     }
 
-    /// Transient: furls back up and hides, ready to show again (160 ms).
-    /// Floating: close for good.
+    /// Transient and toast: furls back up and hides, ready to show again
+    /// (160 ms). Floating: close for good.
     func dismiss() {
         guard isShowing else { return }
         if let monitor = clickMonitor {
             NSEvent.removeMonitor(monitor)
             clickMonitor = nil
         }
-        guard case .transient = behavior else {
+        if case .floating = behavior {
             close()
             return
         }
@@ -208,34 +230,105 @@ final class GlassWindow: NSPanel {
 
     override func resignKey() {
         super.resignKey()
-        if case .transient = behavior { dismiss() }
+        if case .transient = behavior, !pointerOnAnchor { dismiss() }
+    }
+
+    /// The pointer is on the status item. A press there can cost the panel
+    /// key, or register as a click away, before the item's own action runs —
+    /// and if either closed the panel, that action would open it straight
+    /// back up. So both leave it to the action, which toggles it shut.
+    private var pointerOnAnchor: Bool {
+        guard case .transient(let button) = behavior, let window = button.window else { return false }
+        return window.convertToScreen(button.convert(button.bounds, to: nil)).contains(NSEvent.mouseLocation)
     }
 
     private func fit(recenter: Bool) {
         guard !unfurling else { return }   // present()'s completion refits
         let size = measured.size == .zero ? content.intrinsicContentSize : measured.size
         guard size.width > 0, size.height > 0 else { return }
-        defer { placeContent() }
         switch behavior {
-        case .transient(let button):
+        case .transient(let button), .toast(let button):
             guard let buttonWindow = button.window else { return }
             let anchor = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
             var x = anchor.midX - size.width / 2
             if let visible = (buttonWindow.screen ?? NSScreen.main)?.visibleFrame {
                 x = min(max(x, visible.minX + 8), visible.maxX - size.width - 8)
             }
-            setFrame(NSRect(x: x, y: anchor.minY - 6 - size.height, width: size.width, height: size.height),
-                     display: true)
+            resize(to: NSRect(x: x, y: anchor.minY - 6 - size.height, width: size.width, height: size.height),
+                   animated: !recenter)
         case .floating:
             if recenter || frame.size == .zero {
                 setContentSize(size)
                 center()
+                placeContent()
             } else {
                 let top = frame.maxY
-                setFrame(NSRect(x: frame.minX, y: top - size.height, width: size.width, height: size.height),
-                         display: true, animate: false)
+                resize(to: NSRect(x: frame.minX, y: top - size.height, width: size.width, height: size.height),
+                       animated: true)
             }
         }
+    }
+
+    /// The SwiftUI content animates its own height (a card opening, 320 ms on
+    /// the design curve), and the glass follows on the same clock. Nothing is
+    /// resized mid-flight: an animated window frame is shown a beat before
+    /// its content redraws, and a resizing glass view re-lays out its content
+    /// on its own schedule — both read as the whole panel jumping. Instead the
+    /// window, glass and content all take the larger of the two sizes at once,
+    /// and a rounded mask, pinned top, animates between the two heights. A
+    /// shrinking window drops to its size once the mask has.
+    private func resize(to target: NSRect, animated: Bool) {
+        guard animated, isVisible, frame.size != target.size, let clip = surface.layer,
+              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            setFrame(target, display: true)
+            surface.frame = contentView?.bounds ?? .zero
+            placeContent()
+            return
+        }
+        generation += 1
+        let generation = generation
+        let from = frame.height, to = target.height
+        let outer = to > from ? target : frame
+        // Pinned to the top edge, which is y = 0 in a flipped layer.
+        let flipped = clip.contentsAreFlipped()
+        let path = { (h: CGFloat) in
+            CGPath(roundedRect: CGRect(x: 0, y: flipped ? 0 : outer.height - h, width: outer.width, height: h),
+                   cornerWidth: self.cornerRadius, cornerHeight: self.cornerRadius, transform: nil)
+        }
+        // Resize and redraw land as one, or the window server shows the old
+        // contents in the new frame for a beat.
+        disableScreenUpdatesUntilFlush()
+        setFrame(outer, display: false)
+        surface.frame = contentView?.bounds ?? .zero
+        placeContent()
+        let mask = clip.mask as? CAShapeLayer ?? CAShapeLayer()
+        mask.frame = clip.bounds
+        clip.mask = mask
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            guard let self, self.generation == generation else { return }
+            self.disableScreenUpdatesUntilFlush()
+            self.setFrame(target, display: false)
+            self.surface.frame = self.contentView?.bounds ?? .zero
+            clip.mask = nil
+            self.placeContent()
+            self.display()
+        }
+        let reveal = CABasicAnimation(keyPath: "path")
+        reveal.fromValue = (mask.presentation()?.path ?? mask.path) ?? path(from)
+        reveal.toValue = path(to)
+        reveal.duration = 0.32
+        reveal.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
+        mask.path = path(to)
+        mask.add(reveal, forKey: "reveal")
+        CATransaction.commit()
+        display()
+        // The shadow is traced from the window's alpha, so it's retraced
+        // every frame the mask changes shape.
+        let shadow = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
+            self?.invalidateShadow()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.36) { shadow.invalidate() }
     }
 }
 

@@ -14,7 +14,10 @@
 #   desktop     clone  — a macOS bundle we copy per profile (Claude)
 #               launch — the CLI opens its own desktop app (Codex)
 #               none
-#   usage       oauth  — server-side quota we can query (Claude, Codex)
+#   usage       oauth    — server-side quota we can query (Claude, Codex, Grok)
+#               ondemand — the same, but each read has a cost (Muse mints an
+#                          inference key per read), so the tray never polls it:
+#                          it reads when the panel opens or on retry
 #               none
 #   sessions    layout of resumable transcripts, for list/transfer
 #   logout/login  the CLI's own sign-out/sign-in subcommands, for `agents login`
@@ -90,6 +93,19 @@ vendor_env() {
   esac
 }
 
+# Extra env a pinned run needs so the login stays in the slot. Muse keeps its
+# sign-in in ONE keychain item (ai.meta.dev.credentials) whatever
+# XDG_CONFIG_HOME says, so without this every profile shares one account and
+# signing one in signs the others over. The file backend stores it in the
+# slot's auth.json instead. Default keeps the keychain: it's the login a plain
+# `muse` finds.
+vendor_env_extra() {  # vendor, profile
+  case $1 in
+    muse) [ "$2" = Default ] || echo "TBH_CREDENTIAL_BACKEND=file" ;;
+  esac
+  true
+}
+
 # opencode and muse read $XDG_CONFIG_HOME/<name>, so the env var must point one
 # level above the slot. Every other vendor's env var names the config dir itself.
 vendor_env_value() {  # vendor, slot-dir -> value for vendor_env's variable
@@ -137,10 +153,13 @@ vendor_desktop_bundle() {
 
 vendor_usage() {
   case $1 in
-    claude|codex) echo oauth ;;
+    claude|codex|grok) echo oauth ;;
+    muse)   echo ondemand ;;
     *)      echo none ;;
   esac
 }
+
+vendor_has_usage() { [ "$(vendor_usage "$1")" != none ]; }
 
 vendor_sessions() {
   case $1 in
@@ -190,7 +209,12 @@ vendor_authed() {  # vendor, slot dir, profile
         security find-generic-password -s "Claude Code-credentials" >/dev/null 2>&1 && return 0
       fi
       [ -s "$2/.credentials.json" ] ;;
-    codex|grok|muse) [ -s "$2/auth.json" ] ;;
+    codex|grok) [ -s "$2/auth.json" ] ;;
+    muse)
+      # A profile's login is the token in its auth.json (the file backend, see
+      # vendor_env_extra); Default's auth.json points at the keychain item.
+      if [ "$3" = Default ]; then [ -s "$2/auth.json" ]
+      else grep -q '"access_token"' "$2/auth.json" 2>/dev/null; fi ;;
     *)          return 2 ;;
   esac
 }

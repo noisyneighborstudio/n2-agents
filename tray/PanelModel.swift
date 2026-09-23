@@ -34,6 +34,15 @@ struct Usage {
     static let maxedAt = 95
     var maxed: Bool { (used ?? 0) >= Self.maxedAt }
 
+    /// The window that binds — the one that stops you first — with its reset.
+    /// Depth 2 shows this one; depth 3 shows both.
+    var binding: (tag: String, percent: Int, resets: Date?)? {
+        guard note == .ok else { return nil }
+        let f = fiveHour ?? -1, d = sevenDay ?? -1
+        guard f >= 0 || d >= 0 else { return nil }
+        return f >= d ? ("5h", max(f, 0), resets) : ("7d", max(d, 0), sevenResets)
+    }
+
     /// When a maxed lab comes back: the latest reset among the maxed windows.
     var maxedUntil: Date? {
         guard maxed else { return nil }
@@ -86,6 +95,10 @@ struct PanelData {
     let launchDesktops: Set<String>
 
     var desktopInstalled: Bool { desktopVersion != nil }
+    /// The labs this profile holds, in table order.
+    func slotted(_ profile: Profile) -> [Vendor] {
+        snapshot.installedVendors.filter { profile.slots[$0.id] != nil }
+    }
     /// The labs whose quota the panel can show.
     var quotaVendors: [Vendor] { snapshot.installedVendors.filter(\.hasUsageAPI) }
     /// The lab whose desktop app is cloned per profile (Claude alone, today) —
@@ -99,6 +112,16 @@ struct PanelData {
     }
 }
 
+/// Something whose quota has run low: overall, a profile, or one lab in one.
+/// The id holds across refreshes, so each tier is announced once per dip.
+struct LowQuota: Equatable {
+    let id: String
+    let title: String
+    let left: Int
+
+    var tier: StatusIcon.Tier { StatusIcon.Tier(remaining: left) }
+}
+
 struct Selection: Equatable {
     let profile: String
     let vendor: String
@@ -109,6 +132,21 @@ enum NextBest {
     /// Every signed-in slot is out of quota; the soonest one back, if known.
     case allMaxed(firstBack: Date?)
     case nothingSignedIn
+}
+
+/// Where a profile stands, as one closed vocabulary. The card's status slot
+/// answers exactly one question — can I work here right now — so everything
+/// that isn't capacity (a desktop app's process, a pending rebuild) lives
+/// deeper or in the banner, never here.
+enum ProfileState: Equatable {
+    case ready
+    case checking
+    /// Some labs are out; `until` is the soonest one back.
+    case labsOut(out: Int, of: Int, until: Date?)
+    /// Nothing left to run at all.
+    case allOut(until: Date?)
+    case needsSignIn(Int)
+    case notSignedIn
 }
 
 enum UpdateStatus: Equatable {
@@ -129,10 +167,106 @@ final class PanelModel: ObservableObject {
     /// Flips false → true on every open; the content rises into place off it.
     @Published var presented = true
     @Published var repatching: Set<String> = []
+    /// The one profile showing its labs. One at a time keeps the panel's
+    /// height bounded, which is what lets depth 3 open in place.
+    @Published var expanded: String?
+    /// The one slot showing its actions, inside the expanded profile.
     @Published var selection: Selection?
     @Published var updateStatus: UpdateStatus?
     /// Profiles whose setup was left unfinished: profile -> the labs it set up.
     @Published var pendingSetups: [String: [String]] = [:]
+    /// The full recent-sessions list for the standalone window. The panel
+    /// itself only keeps the two newest.
+    @Published var allSessions: [SessionInfo] = []
+
+    /// A profile's status and its capacity, read together because they answer
+    /// halves of the same question.
+    ///
+    /// The number is the mean of `used` across the slots that reported one:
+    /// equal weighting is a rule that can be stated, and a profile with one lab
+    /// maxed and six with room is genuinely usable — the mean says so while the
+    /// strip below it shows where the hole is. Labs with no quota API and labs
+    /// that aren't signed in contribute no number rather than a guessed one.
+    func reading(_ profile: Profile, _ data: PanelData) -> (state: ProfileState, used: Int?) {
+        let slotted = data.snapshot.installedVendors.filter { profile.slots[$0.id] != nil }
+        let metered = slotted.filter(\.hasUsageAPI)
+        func signedIn(_ v: Vendor) -> Bool { data.snapshot.signedIn[profile.name]?[v.id] != false }
+        func row(_ v: Vendor) -> Usage? { usage[v.id]?[profile.name] }
+
+        let live = metered.filter(signedIn)
+        let readable = live.compactMap { row($0) }.filter { $0.note == .ok }
+        let values = readable.compactMap(\.used)
+        let used = values.isEmpty ? nil : Int((Double(values.reduce(0, +)) / Double(values.count)).rounded())
+
+        let out = readable.filter(\.maxed)
+        let back = out.compactMap(\.maxedUntil).min()
+        let signedOut = slotted.filter { !signedIn($0) }
+
+        // No labs at all is nothing to run, not "Ready".
+        if signedOut.count == slotted.count { return (.notSignedIn, nil) }
+        if !live.isEmpty, live.allSatisfy({ row($0) == nil }) { return (.checking, nil) }
+        if !live.isEmpty, out.count == live.count {
+            // A lab with no quota API can still be opened, so it keeps the
+            // profile out of the red even when every metered one is spent.
+            let openable = slotted.contains { !$0.hasUsageAPI && signedIn($0) }
+            return openable ? (.labsOut(out: out.count, of: slotted.count, until: back), used)
+                            : (.allOut(until: back), used)
+        }
+        if !out.isEmpty { return (.labsOut(out: out.count, of: slotted.count, until: back), used) }
+        if !signedOut.isEmpty { return (.needsSignIn(signedOut.count), used) }
+        return (.ready, used)
+    }
+
+    /// Quota left in every signed-in slot that read cleanly — the slots a
+    /// profile's number is the mean of. A maxed slot is out, so it has none.
+    private var slotsLeft: [(profile: String, vendor: Vendor, left: Int)] {
+        guard let data else { return [] }
+        return data.profiles.flatMap { p in
+            data.quotaVendors
+                .filter { p.slots[$0.id] != nil && data.snapshot.signedIn[p.name]?[$0.id] != false }
+                .compactMap { v in
+                    usage[v.id]?[p.name].flatMap { u in u.used.map { (p.name, v, u.maxed ? 0 : 100 - $0) } }
+                }
+        }
+    }
+
+    private static func mean(_ values: [Int]) -> Int {
+        Int((Double(values.reduce(0, +)) / Double(values.count)).rounded())
+    }
+
+    /// Each profile's quota left — the mean over its slots — in panel order,
+    /// with how many slots it's taken over. Profiles with no reading are out.
+    private var profilesLeft: [(name: String, left: Int, slots: Int)] {
+        let byProfile = Dictionary(grouping: slotsLeft, by: \.profile)
+        return (data?.profiles ?? []).compactMap { p in
+            byProfile[p.name].map { (p.name, Self.mean($0.map(\.left)), $0.count) }
+        }
+    }
+
+    /// Quota left overall, for the menu bar icon: the mean of the profiles'
+    /// numbers, so each profile weighs the same however many labs it holds.
+    /// Nil until a slot has read.
+    var remaining: Int? {
+        let left = profilesLeft.map(\.left)
+        return left.isEmpty ? nil : Self.mean(left)
+    }
+
+    /// Low is the icon's orange tier or worse: under 50% left.
+    static let lowFrom = StatusIcon.Tier.orange
+
+    /// Everything running low, broadest first: overall, each profile, each
+    /// lab in a profile. A mean over a single slot is that slot again, so
+    /// it's only listed once, as the slot.
+    var lowQuota: [LowQuota] {
+        let profiles = profilesLeft
+        var all: [LowQuota] = []
+        if profiles.count > 1, let overall = remaining {
+            all.append(LowQuota(id: "*", title: "Overall", left: overall))
+        }
+        all += profiles.filter { $0.slots > 1 }.map { LowQuota(id: $0.name, title: $0.name, left: $0.left) }
+        all += slotsLeft.map { LowQuota(id: "\($0.profile)/\($0.vendor.id)", title: "\($0.vendor.label) · \($0.profile)", left: $0.left) }
+        return all.filter { $0.tier >= Self.lowFrom }
+    }
 
     /// The CLI's next_best, run over what's already read, so the button names
     /// its pick before anything starts: every slot in one rotation (profiles
@@ -183,6 +317,8 @@ protocol PanelActions: AnyObject {
     func signIn(profile: String, vendor: String, confirm: Bool)
     func finishSetup(profile: String)
     func resumeSession(_ session: SessionInfo)
+    func showAllSessions()
+    func closeSessions()
     func addVendor(profile: String)
     func revealData(profile: String)
     func deleteProfile(_ name: String)

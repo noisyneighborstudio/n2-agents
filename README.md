@@ -107,10 +107,10 @@ functions, so editors, GUI apps and scripts get them too.
 |---|---|---|---|---|---|---|
 | Claude | `claude` | `~/.claude` | `CLAUDE_CONFIG_DIR` | cloned per profile | ✅ | ✅ |
 | Codex | `codex` | `~/.codex` | `CODEX_HOME` | `codex app` | ✅ | ✅ |
-| Grok | `grok` | `~/.grok` | `GROK_HOME` | — | — | — |
+| Grok | `grok` | `~/.grok` | `GROK_HOME` | — | ✅ (weekly) | — |
 | Cursor | `cursor-agent` | `~/.cursor` | `CURSOR_CONFIG_DIR` | — | — | — |
 | opencode | `opencode` | `~/.config/opencode` | `XDG_CONFIG_HOME` | — | — | — |
-| Muse (Meta) | `muse` | `~/.config/muse` | `XDG_CONFIG_HOME` | — | — | — |
+| Muse (Meta) | `muse` | `~/.config/muse` | `XDG_CONFIG_HOME` + file credentials | — | ✅ (on demand) | — |
 
 Every one of those isolation levers was verified against the shipped binary
 rather than taken from documentation.
@@ -121,8 +121,17 @@ the macOS Keychain, where no profile switch can reach it. On first launch after
 the update, a `~/.gemini` that N2 Agents had linked into a profile turns back
 into a plain directory with the same contents.
 
-Only Claude and Codex expose a server-side quota endpoint, so `agents best`
-works for those two and tells you plainly that the others have nothing to rank.
+Claude, Codex, Grok and Muse expose a server-side quota endpoint, so `agents best`
+works for those four and tells you plainly that the others have nothing to rank.
+Grok has one weekly credit pool and no 5-hour window. Each Muse read mints an
+inference key, so the menu bar app reads Muse only when you open the panel or
+press retry, never on its timer. Muse reports numbers only while a 5-hour
+window is open; between windows its row says "no reading".
+
+Muse keeps its sign-in in one keychain item whatever `XDG_CONFIG_HOME` says, so
+every profile but Default runs it with `TBH_CREDENTIAL_BACKEND=file` and keeps
+its login in its own slot. Default keeps the keychain login a plain `muse` uses.
+A profile set up before this has to sign in to Muse once more.
 
 **Adding a lab** means adding one `case` arm to each accessor in
 [`vendors.sh`](vendors.sh). Nothing in `agents` or the menu bar app needs to
