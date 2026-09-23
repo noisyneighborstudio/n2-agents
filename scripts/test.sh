@@ -18,10 +18,26 @@ mkdir -p "$fake_bin"
 for v in claude codex grok gemini cursor-agent opencode muse; do
   cat > "$fake_bin/$v" <<'FAKE'
 #!/bin/sh
-echo "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-} CODEX_HOME=${CODEX_HOME:-} GROK_HOME=${GROK_HOME:-} CURSOR_CONFIG_DIR=${CURSOR_CONFIG_DIR:-} XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-}"
+echo "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-} CODEX_HOME=${CODEX_HOME:-} GROK_HOME=${GROK_HOME:-} CURSOR_CONFIG_DIR=${CURSOR_CONFIG_DIR:-} XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-} TBH_CREDENTIAL_BACKEND=${TBH_CREDENTIAL_BACKEND:-}"
 FAKE
   chmod +x "$fake_bin/$v"
 done
+# Grok's usage comes from `grok agent stdio` (ACP). The fake answers the two
+# calls, with billing read from the GROK_HOME it was pinned to.
+cat > "$fake_bin/grok" <<'FAKE'
+#!/bin/sh
+if [ "${1:-} ${2:-}" = "agent stdio" ]; then
+  while IFS= read -r line; do
+    case $line in
+      *'"id": 1'*) echo 'notice: MCP env would print here' ;
+                   echo '{"jsonrpc": "2.0", "id": 1, "result": {}}' ;;
+      *'"_x.ai/billing"'*) printf '{"jsonrpc": "2.0", "id": 2, "result": %s}\n' "$(cat "$GROK_HOME/billing.json")" ;;
+    esac
+  done
+  exit 0
+fi
+echo "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-} CODEX_HOME=${CODEX_HOME:-} GROK_HOME=${GROK_HOME:-} CURSOR_CONFIG_DIR=${CURSOR_CONFIG_DIR:-} XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-} TBH_CREDENTIAL_BACKEND=${TBH_CREDENTIAL_BACKEND:-}"
+FAKE
 # The keychain is the real user's even under a fake HOME: a stand-in
 # `security` that finds nothing keeps tests off real logins (and the network).
 printf '#!/bin/sh\nexit 44\n' > "$fake_bin/security"
@@ -160,7 +176,7 @@ print -r -- "$authed" | grep -qx 'codex	yes'
 print -r -- "$authed" | grep -qx 'grok	no'
 print -r -- "$authed" | grep -qx 'cursor	unknown'
 rm "$home/.n2-agents/Work/codex/auth.json"
-usage=$(run_agents best --porcelain --vendor grok)
+usage=$(run_agents best --porcelain --vendor gemini)
 print -r -- "$usage" | grep -qx 'Work	-	-	-	no-usage-api'
 # Codex reports quota too. Signed out says so; signed in, each window lands in
 # the column for its length (a weekly-only plan has no 5h figure), and a
@@ -181,6 +197,42 @@ codex_usage 80 true
 usage=$(run_agents best --porcelain --vendor codex)
 print -r -- "$usage" | grep -qx 'Work	-	100	-	ok	2026-09-26T08:24'
 rm "$home/.n2-agents/Work/codex/auth.json"
+# Grok has one weekly credit pool: its percent fills the 7d column, reset at
+# the period's end in UTC. Signed in = an auth.x.ai entry in auth.json.
+usage=$(run_agents best --porcelain --vendor grok)
+print -r -- "$usage" | grep -qx 'Work	-	-	-	no-token'
+grok_usage() {  # used%
+  printf '{"config": {"creditUsagePercent": %s, "currentPeriod": {"type": "USAGE_PERIOD_TYPE_WEEKLY", "start": "2026-09-22T09:51:31.674043+00:00", "end": "2026-09-29T09:51:31.674043+00:00"}}}' \
+    "$1" > "$home/.n2-agents/Work/grok/billing.json"
+}
+grok_auth='{"https://auth.x.ai::u1": {"key": "t", "email": "work@example.com"}}'
+echo "$grok_auth" > "$home/.n2-agents/Work/grok/auth.json"
+grok_usage 12.5
+usage=$(run_agents best --porcelain --vendor grok)
+print -r -- "$usage" | grep -qx 'Work	-	12.5	-	ok	2026-09-29T09:51'
+rm "$home/.n2-agents/Work/grok/auth.json" "$home/.n2-agents/Work/grok/billing.json"
+# Muse keeps one keychain login whatever XDG_CONFIG_HOME says, so a profile's
+# runs pin the file backend and its login lands in the slot. Default keeps the
+# keychain: it's the one a plain `muse` finds.
+muse_slot="$home/.n2-agents/Work/muse/muse"
+mkdir -p "$muse_slot"
+out=$(run_agents run Work --vendor muse)
+[[ $out == *"XDG_CONFIG_HOME=$home/.n2-agents/Work/muse TBH_CREDENTIAL_BACKEND=file"* ]]
+test -z "$(sh -c '. ./vendors.sh; vendor_env_extra muse Default')"
+# An auth.json that points at the keychain is Default's login, not the profile's.
+echo '{"providers": {"meta": {"storage": "keychain"}}}' > "$muse_slot/auth.json"
+run_agents authed Work | grep -qx 'muse	no'
+usage=$(run_agents best --porcelain --vendor muse)
+print -r -- "$usage" | grep -qx 'Work	-	-	-	no-token'
+# Signed in, both windows come back: `window` is the 5-hour one.
+echo '{"providers": {"meta": {"storage": "file", "access_token": "dca:t"}}}' > "$muse_slot/auth.json"
+run_agents authed Work | grep -qx 'muse	yes'
+printf '{"is_subs_active": true, "subs_usage": {"window": {"used_percent": 7, "window_duration_mins": 300, "resets_at": 1790411072}, "weekly": {"used_percent": 30, "resets_at": 1790911072}}}' \
+  > "$test_root/muse-usage.json"
+export N2_MUSE_USAGE_URL="file://$test_root/muse-usage.json"
+usage=$(run_agents best --porcelain --vendor muse)
+print -r -- "$usage" | grep -qx 'Work	7	30	2026-09-26T08:24	ok	2026-10-02T03:17'
+rm -r "$home/.n2-agents/Work/muse"
 
 # Recent sessions span labs, newest first, and skip injected context to reach
 # the first real prompt.
@@ -240,7 +292,8 @@ if run_agents login Work >/dev/null 2>&1; then echo "login guessed a lab" >&2; e
 rm -f "$home/.n2-agents/.last-slot"
 echo "$codex_auth" > "$home/.n2-agents/Work/codex/auth.json"
 codex_usage 10 false
-echo '{}' > "$home/.n2-agents/Work/grok/auth.json"
+echo "$grok_auth" > "$home/.n2-agents/Work/grok/auth.json"
+grok_usage 10
 # The only signed-in slots are Work's Codex and Grok, so that's where it goes…
 out=$(run_agents run 2>&1)
 [[ $out == *"CODEX_HOME=$home/.n2-agents/Work/codex"* ]]
@@ -263,7 +316,7 @@ out=$(run_agents run 2>&1)
 [[ $out == *"GROK_HOME=$home/.n2-agents/Work/grok"* ]]
 out=$(run_agents run 2>&1)
 [[ $out == *"GROK_HOME=$home/.n2-agents/Work/grok"* ]]
-rm "$home/.n2-agents/Work/codex/auth.json" "$home/.n2-agents/Work/grok/auth.json"
+rm "$home/.n2-agents/Work/codex/auth.json" "$home/.n2-agents/Work/grok/auth.json" "$home/.n2-agents/Work/grok/billing.json"
 
 # --- adopt: shares claudes state, never copies it --------------------------
 adopt_home="$test_root/adopt-home"

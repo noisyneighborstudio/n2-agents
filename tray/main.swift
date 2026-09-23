@@ -247,6 +247,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         panel.present()
         DispatchQueue.main.async { self.model.presented = true }
         refreshPanel()
+        refreshUsage(force: false, onDemand: true)
     }
 
     // Anything that opens a window, dialog or terminal closes the panel first:
@@ -331,22 +332,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 
     // Quota is a network call per profile against a rate-limited endpoint the
     // labs' own CLIs also poll, so it runs beside the panel, is reused for 5
-    // minutes, and backs off to 15 after a 429. One fetch at a time: a fetch
-    // that becomes due while another is in flight runs right after it, so a
-    // result read before a sign-in never stands in for one after it.
-    private var usageFetchedAt: Date?
+    // minutes per lab, and backs off to 15 after a 429. A lab whose read costs
+    // something (Muse mints a key per read) is never polled: only an open, a
+    // retry or a sign-in reads it. One fetch at a time: a fetch that becomes
+    // due while another is in flight runs right after it, so a result read
+    // before a sign-in never stands in for one after it.
+    private var usageFetchedAt: [String: Date] = [:]
+    private var usageTTL: [String: TimeInterval] = [:]
     private var usageRefetch = false
-    private var usageTTL: TimeInterval = 300
+    private var usageRefetchOnDemand = false
     private var usageSlowTimer: DispatchWorkItem?
 
-    private func refreshUsage(force: Bool) {
-        guard let vendors = model.data?.quotaVendors, !vendors.isEmpty else { return }
-        let due = force || usageFetchedAt.map { Date().timeIntervalSince($0) >= usageTTL } ?? true
-        guard due else { return }
+    private func refreshUsage(force: Bool, onDemand: Bool = false) {
+        guard let vendors = model.data?.quotaVendors.filter({ v in
+            (onDemand || !v.readsOnDemand) && (force || usageFetchedAt[v.id].map {
+                Date().timeIntervalSince($0) >= usageTTL[v.id, default: 300]
+            } ?? true)
+        }), !vendors.isEmpty else { return }
         if model.usageLoading {
             usageRefetch = true
+            usageRefetchOnDemand = usageRefetchOnDemand || onDemand
             return
         }
+        // Stamped when the read starts, so a call landing mid-read doesn't
+        // queue the same labs again; a sign-in clears the stamps to force one.
+        for v in vendors { usageFetchedAt[v.id] = Date() }
         model.usageLoading = true
         usageSlowTimer?.cancel()
         let slow = DispatchWorkItem { [weak self] in self?.model.usageSlow = true }
@@ -361,13 +371,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
                 self.model.usageLoading = false
                 self.usageSlowTimer?.cancel()
                 self.model.usageSlow = false
-                self.usageFetchedAt = Date()
-                self.usageTTL = fresh.values.contains { $0.values.contains { $0.note == .rateLimited } } ? 900 : 300
-                let old = self.model.usage
-                self.model.usage = fresh.reduce(into: [:]) { $0[$1.key] = Usage.merge(old[$1.key] ?? [:], $1.value) }
+                var usage = self.model.usage
+                for (id, rows) in fresh {
+                    self.usageTTL[id] = rows.values.contains { $0.note == .rateLimited } ? 900 : 300
+                    usage[id] = Usage.merge(usage[id] ?? [:], rows)
+                }
+                self.model.usage = usage
                 if self.usageRefetch {
+                    let onDemand = self.usageRefetchOnDemand
                     self.usageRefetch = false
-                    self.refreshUsage(force: true)
+                    self.usageRefetchOnDemand = false
+                    self.refreshUsage(force: true, onDemand: onDemand)
                 }
             }
         }
@@ -387,13 +401,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
                setup?.model.profile == profile {
                 setup?.loginFinished(vendor: vendor)
             }
-            usageFetchedAt = nil
+            usageFetchedAt.removeAll()
             refreshPanel()
+            refreshUsage(force: false, onDemand: true)
         }
     }
 
     func retryUsage() {
-        refreshUsage(force: true)
+        refreshUsage(force: true, onDemand: true)
     }
 
     // MARK: - Profile discovery
