@@ -86,8 +86,9 @@ let terminalSpecs: [TerminalSpec] = [
 final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtocol, PanelActions, SetupHost {
     private var statusItem: NSStatusItem!
     private let model = PanelModel()
-    private var baseIcon: NSImage?
+    private var statusIcon: StatusIcon?
     private var quotaWatch: AnyCancellable?
+    private var menuBarAppearance: NSKeyValueObservation?
     private lazy var quotaToast = QuotaToast(anchor: statusItem.button!) { [weak self] in self?.togglePanel() }
     // Built on first use (an open, or the first quota reading): it anchors to
     // the status item's button.
@@ -167,8 +168,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let r = Bundle.main.resourcePath, let icon = NSImage(contentsOfFile: r + "/n2agents.icns") {
-            baseIcon = icon
-            statusItem.button?.image = StatusIcon.image(base: icon, remaining: nil)
+            statusIcon = StatusIcon(base: icon)
+            drawStatusIcon()
             statusItem.button?.imagePosition = .imageLeft
         } else {
             statusItem.button?.title = "🤖"
@@ -179,6 +180,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         quotaWatch = model.$data.combineLatest(model.$usage)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.quotaChanged() }
+        // The drained part is drawn in the menu bar's ink, which follows the
+        // wallpaper behind it.
+        menuBarAppearance = statusItem.button?.observe(\.effectiveAppearance) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.drawStatusIcon() }
+        }
 
 
         // The panel is ready before anyone clicks: it starts from the last
@@ -215,10 +221,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 
     // The icon is a gauge of quota left, and anything newly low gets a toast.
     private func quotaChanged() {
-        if let base = baseIcon {
-            statusItem.button?.image = StatusIcon.image(base: base, remaining: model.remaining)
-        }
+        drawStatusIcon()
         quotaToast.update(model.lowQuota, quiet: panel.isShowing)
+    }
+
+    private func drawStatusIcon() {
+        guard let icon = statusIcon, let button = statusItem.button else { return }
+        let dark = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua, .vibrantLight, .vibrantDark])
+        button.image = icon.image(remaining: model.remaining, dark: dark == .darkAqua || dark == .vibrantDark)
     }
 
     // MARK: - Panel (re-read every time it opens)

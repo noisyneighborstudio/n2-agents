@@ -3,7 +3,7 @@ import AppKit
 // The menu bar icon doubles as a gauge for quota left across every profile:
 // the art drains from the top down as it's spent, and a glowing border takes
 // the tier's colour. With nothing read yet it's the plain icon.
-enum StatusIcon {
+struct StatusIcon {
     /// Ordered best to worst, so a lower reading compares greater.
     enum Tier: Comparable {
         case green, amber, orange, red
@@ -30,24 +30,41 @@ enum StatusIcon {
     /// its corner radius, as fractions of the canvas and the square.
     private static let artInset: CGFloat = 100 / 1024
     private static let artRadius: CGFloat = 0.22
-    /// What's left of the drained part: enough to still read as the icon.
-    private static let drainedAlpha: CGFloat = 0.3
 
-    static func image(base: NSImage, remaining: Int?) -> NSImage {
-        NSImage(size: size, flipped: false) { rect in
+    let base: NSImage
+    /// The art's foreground — hub, spokes, nodes — without its dark ground:
+    /// what's left standing above the level once the ground has drained.
+    private let glyph: NSImage
+
+    init(base: NSImage) {
+        self.base = base
+        glyph = Self.glyph(of: base)
+    }
+
+    /// The dark ground is the gauge's liquid: full colour below the level,
+    /// and above it only the foreground's outline, in the menu bar's ink.
+    func image(remaining: Int?, dark: Bool) -> NSImage {
+        let (base, glyph) = (base, glyph)
+        return NSImage(size: Self.size, flipped: false) { rect in
             let art = rect.insetBy(dx: 1, dy: 1)
             guard let remaining else {
                 base.draw(in: art)
                 return true
             }
-            let square = art.insetBy(dx: art.width * artInset, dy: art.height * artInset)
-            let level = CGFloat(min(max(remaining, 0), 100)) / 100
+            let square = art.insetBy(dx: art.width * Self.artInset, dy: art.height * Self.artInset)
+            let level = square.minY + square.height * CGFloat(min(max(remaining, 0), 100)) / 100
+            let (full, drained) = rect.divided(atDistance: level - rect.minY, from: .minYEdge)
 
-            base.draw(in: art, from: .zero, operation: .sourceOver, fraction: drainedAlpha)
             NSGraphicsContext.saveGraphicsState()
-            NSRect(x: rect.minX, y: rect.minY, width: rect.width,
-                   height: square.minY - rect.minY + square.height * level).clip()
+            full.clip()
             base.draw(in: art)
+            NSGraphicsContext.restoreGraphicsState()
+
+            NSGraphicsContext.saveGraphicsState()
+            drained.clip()
+            glyph.draw(in: art)
+            (dark ? NSColor.white : NSColor.black).setFill()
+            drained.fill(using: .sourceAtop)
             NSGraphicsContext.restoreGraphicsState()
 
             let color = Tier(remaining: remaining).color
@@ -58,12 +75,38 @@ enum StatusIcon {
             NSGraphicsContext.saveGraphicsState()
             glow.set()
             color.setStroke()
-            let radius = square.width * artRadius
+            let radius = square.width * Self.artRadius
             let border = NSBezierPath(roundedRect: square.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
             border.lineWidth = 1
             border.stroke()
             NSGraphicsContext.restoreGraphicsState()
             return true
         }
+    }
+
+    /// Lifts the foreground off the ground by brightness: the ground peaks
+    /// near 15% and the dimmest node near 75%. The ramp starts past the hub's
+    /// halo, which in solid ink would smudge.
+    private static func glyph(of base: NSImage) -> NSImage {
+        let px = 128
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: px, pixelsHigh: px, bitsPerSample: 8,
+                                   samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                   colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        base.draw(in: NSRect(x: 0, y: 0, width: px, height: px))
+        NSGraphicsContext.restoreGraphicsState()
+        let data = rep.bitmapData!
+        for y in 0..<px {
+            for x in 0..<px {
+                let p = data + y * rep.bytesPerRow + x * 4
+                let bright = Double(max(p[0], p[1], p[2])) / 255
+                let a = UInt8(255 * min(max((bright - 0.45) / 0.25, 0), 1))
+                (p[0], p[1], p[2], p[3]) = (a, a, a, a)   // premultiplied white
+            }
+        }
+        let image = NSImage(size: NSSize(width: px, height: px))
+        image.addRepresentation(rep)
+        return image
     }
 }
