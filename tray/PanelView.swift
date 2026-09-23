@@ -197,7 +197,7 @@ private struct PanelHeader: View {
         }
         let channel = UpdateChannel.selected()
         items.append(submenu("Update Channel", symbol: "dial.medium", UpdateChannel.allCases.map { c in
-            ClosureItem(c.rawValue.capitalized, symbol: "shippingbox", checked: c == channel) { actions.setUpdateChannel(c) }
+            ClosureItem(c.rawValue.capitalized, symbol: c.symbol, checked: c == channel) { actions.setUpdateChannel(c) }
         }))
         if let clone = model.data?.cloneVendor {
             if model.data?.desktopInstalled == true {
@@ -228,24 +228,39 @@ private struct PanelFooter: View {
     // counter resets with every stable release; the build number always climbs.
     private var versionLine: LocalizedStringKey {
         let build = (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String) ?? "0"
-        let version = "\(fullVersion.prefix { $0 != "-" }) (\(build))"
-        let channel = UpdateChannel.selected().rawValue.capitalized
+        return "\(fullVersion.prefix { $0 != "-" }) (\(build))"
+    }
+
+    private var statusSymbol: String? {
         switch model.updateStatus {
-        case .upToDate: return "\(version) · \(channel) · up to date"
-        case .available: return "\(version) · \(channel) · update available"
-        case .failed: return "\(version) · \(channel) · update check failed"
-        case nil: return "\(version) · \(channel)"
+        case .upToDate: return "checkmark.circle"
+        case .available: return "arrow.down.circle.fill"
+        case .failed: return "exclamationmark.triangle"
+        case nil: return nil
         }
     }
 
     private var updateHelp: String {
-        if case .failed(let reason)? = model.updateStatus { return "Update check failed: \(reason) Click to retry." }
-        return "N2 Agents \(fullVersion) — check for updates"
+        let channel = "\(UpdateChannel.selected().rawValue.capitalized) channel"
+        switch model.updateStatus {
+        case .upToDate?: return "N2 Agents \(fullVersion) (\(channel)) is up to date"
+        case .available?: return "Update available on the \(channel) — click to install"
+        case .failed(let reason)?: return "Update check failed: \(reason) Click to retry."
+        case nil: return "N2 Agents \(fullVersion) (\(channel)) — check for updates"
+        }
     }
 
     var body: some View {
         HStack(spacing: 12) {
-            Button(versionLine) { actions.checkForUpdates() }
+            Button { actions.checkForUpdates() } label: {
+                HStack(spacing: 4) {
+                    Text(versionLine)
+                    let channel = UpdateChannel.selected()
+                    Image(systemName: channel.symbol).fontWeight(.light)
+                        .accessibilityLabel("\(channel.rawValue.capitalized) channel")
+                    if let statusSymbol { Image(systemName: statusSymbol).accessibilityLabel(updateHelp) }
+                }.lineLimit(1)
+            }
                 .buttonStyle(.plain)
                 .help(updateHelp)
                 .foregroundStyle(model.updateStatus == .available ? Ink.link : Ink.secondary)
