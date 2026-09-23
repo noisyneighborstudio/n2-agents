@@ -105,21 +105,45 @@ struct Snapshot {
 
 // One row of `agents sessions --porcelain`: a resumable transcript in some
 // profile's slot for some lab, newest first.
-struct SessionInfo {
+struct SessionInfo: Identifiable {
     let profile: String
     let vendor: String
-    let id: String
+    let sessionID: String
     let mtime: Date
     let cwd: String?
     let snippet: String
+    let branch: String?
+    /// The lab's own name for it (Claude's ai-title or /rename, Codex's
+    /// thread name), when it has one.
+    let title: String?
+
+    /// A session id is only unique within one lab, and a list spans them all.
+    var id: String { "\(vendor)/\(sessionID)" }
+
+    /// Folder, branch, name and prompt — everything a search can match —
+    /// folded once, here, rather than for every row on every keystroke.
+    let searchKey: String
+
+    static func fold(_ s: String) -> String {
+        s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+    }
+
+    /// Every token appears somewhere; tokens come from fold(_:).
+    func matches(_ tokens: [Substring]) -> Bool {
+        tokens.allSatisfy { searchKey.contains($0) }
+    }
 
     static func parse(_ text: String) -> [SessionInfo] {
         text.split(separator: "\n").compactMap { line in
             let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
             guard f.count >= 6, let epoch = TimeInterval(f[3]) else { return nil }
-            return SessionInfo(profile: f[0], vendor: f[1], id: f[2],
+            func field(_ i: Int) -> String? { f.count > i && !f[i].isEmpty ? f[i] : nil }
+            let (cwd, branch, title) = (field(4), field(6), field(7))
+            return SessionInfo(profile: f[0], vendor: f[1], sessionID: f[2],
                                mtime: Date(timeIntervalSince1970: epoch),
-                               cwd: f[4].isEmpty ? nil : f[4], snippet: f[5])
+                               cwd: cwd, snippet: f[5], branch: branch, title: title,
+                               searchKey: fold([title, f[5], cwd, branch, f[0], f[1]]
+                                   .compactMap { $0 }.joined(separator: "\n")))
         }
     }
 }

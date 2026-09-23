@@ -36,15 +36,6 @@ struct Profile {
     func isActive(for vendor: String) -> Bool { slots[vendor] == "active" }
 }
 
-// Data source for the session picker table (cell-based, single column).
-final class SessionListController: NSObject, NSTableViewDataSource, NSTableViewDelegate {
-    var rows: [String] = []
-    func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
-    func tableView(_ tableView: NSTableView, objectValueFor tableColumn: NSTableColumn?, row: Int) -> Any? {
-        rows[row]
-    }
-}
-
 func appleScriptEscape(_ s: String) -> String {
     s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
 }
@@ -197,6 +188,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
             model.data = buildPanelData(porcelain: porcelain, sessions: defaults.string(forKey: CacheKey.sessions) ?? "")
         }
         refreshPanel()
+        // The first full session read indexes every transcript, which takes
+        // minutes on a big history; do it now, not when the window is opened.
+        loadAllSessions()
         Timer.scheduledTimer(withTimeInterval: 180, repeats: true) { [weak self] _ in self?.refreshPanel() }
 
         // Auto-repatch: event-driven — watch /Applications for bundle swaps
@@ -392,8 +386,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     // instead of on the next open.
     // n2agents://login-done?profile=P&vendor=v — a setup sign-in's terminal
     // finished, successful or not; the setup window decides which.
+    // n2agents://sessions — opens the sessions window.
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls where url.scheme == "n2agents" {
+            if url.host == "sessions" {
+                showAllSessions()
+                continue
+            }
             if url.host == "login-done",
                let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
                let profile = items.first(where: { $0.name == "profile" })?.value,
@@ -779,8 +778,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         task.standardOutput = pipe
         task.standardError = pipe
         do { try task.run() } catch { return (-1, error.localizedDescription) }
-        task.waitUntilExit()
+        // Read before waiting: output past the pipe's 64 KB buffer blocks the
+        // CLI until someone reads it, so waiting first never returns.
         let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        task.waitUntilExit()
         return (task.terminationStatus, out.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
@@ -1090,19 +1091,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 
     // MARK: - Sessions (listed, moved and resumed through the CLI)
 
-    private func sessions(_ args: [String]) -> [SessionInfo] {
-        let r = runCLI(["sessions", "--porcelain"] + args)
-        return r.status == 0 ? SessionInfo.parse(r.output) : []
-    }
-
-    func transferSession(profile name: String, vendor: String) {
-        dismissPanel()
-        transferUI(fromName: name, vendor: vendor)
-    }
-
     // Resume through the CLI so the pinning rules stay in one place.
     private func resumeCommand(_ s: SessionInfo, in profile: String) -> String {
-        let invoke = "\"\(cliPath)\" run \(profile) --vendor \(s.vendor) --start-from-session=\(s.id)"
+        let invoke = "\"\(cliPath)\" run \(profile) --vendor \(s.vendor) --start-from-session=\(s.sessionID)"
         return s.cwd.map { "cd \"\($0)\" && \(invoke)" } ?? invoke
     }
 
@@ -1112,121 +1103,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         launchSession(resumeCommand(s, in: s.profile), slug: "\(s.profile)-\(s.vendor)", in: preferredTerminal)
     }
 
-    // The panel shows two. The rest live in a window of their own, same rows,
-    // wide enough that the prompt is the line you read.
+    func copyResumeCommand(_ s: SessionInfo) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(resumeCommand(s, in: s.profile), forType: .string)
+    }
+
+    // The transcript moves; its place in the list doesn't (mv keeps the
+    // mtime), so the row just changes hands when the lists re-read.
+    func moveSession(_ s: SessionInfo, to profile: String) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let r = self.runCLI(["transfer", s.sessionID, "--from", s.profile, "--to", profile, "--vendor", s.vendor])
+            DispatchQueue.main.async {
+                if r.status != 0 {
+                    self.dismissPanel()
+                    self.alert("Couldn't move the session to “\(profile)”", r.output)
+                }
+                self.refreshPanel()
+                self.loadAllSessions()
+            }
+        }
+    }
+
+    // The panel shows two. The rest live in a window of their own, at a fixed
+    // size: it opens at the size it will stay, whatever the list or a search
+    // does to the number of rows.
     func showAllSessions() {
         dismissPanel()
-        model.allSessions = model.data?.sessions ?? []
+        if model.allSessions.isEmpty { model.allSessions = model.data?.sessions ?? [] }
         if sessionsWindow == nil {
             sessionsWindow = GlassWindow(rootView: SessionsWindowView(model: model, actions: self),
                                          behavior: .floating)
+            sessionsWindow?.identifier = SessionsWindowView.identifier
         }
         sessionsWindow?.present()
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self else { return }
-            let r = self.runCLI(["sessions", "--porcelain", "--limit", "50"])
-            let parsed = r.status == 0 ? SessionInfo.parse(r.output) : []
-            DispatchQueue.main.async { self.model.allSessions = parsed }
-        }
+        loadAllSessions()
     }
 
     func closeSessions() {
         sessionsWindow?.dismiss()
     }
 
-    private func sessionRowLabel(_ s: SessionInfo) -> String {
-        let df = DateFormatter()
-        df.dateStyle = .short
-        df.timeStyle = .short
-        let project = s.cwd.map { ($0 as NSString).lastPathComponent } ?? "—"
-        return "\(df.string(from: s.mtime))  ·  \(project)  ·  \(s.snippet)"
-    }
+    // Every session, not a page of them: search runs over the list in memory,
+    // and the CLI's cache makes the whole list about as cheap as fifty. Only
+    // the newest read lands, like refreshPanel.
+    private var sessionsGeneration = 0
 
-    private func transferUI(fromName: String, vendor: String) {
-        let srcLabel = fromName
-        let snap = snapshot()
-        let label = snap.vendor(vendor)?.label ?? vendor
-        let sessions = sessions([fromName, "--vendor", vendor])
-        guard !sessions.isEmpty else {
-            alert("No sessions in “\(srcLabel)”", "This profile has no \(label) sessions yet.")
-            return
-        }
-        // Only profiles that hold a slot for this lab can receive one.
-        let targets: [(name: String, label: String)] = snap.profiles
-            .filter { $0.name != fromName && $0.slots[vendor] != nil }
-            .map { ($0.name, $0.name) }
-        guard !targets.isEmpty else {
-            alert("No destination profile", "Create another profile with a \(label) slot first (N2 Agents settings → New Profile…).")
-            return
-        }
-
-        let controller = SessionListController()
-        controller.rows = sessions.map { sessionRowLabel($0) }
-        let table = NSTableView()
-        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("session"))
-        column.width = 460
-        table.addTableColumn(column)
-        table.headerView = nil
-        table.usesAlternatingRowBackgroundColors = true
-        table.allowsEmptySelection = false
-        table.dataSource = controller
-        table.delegate = controller
-        table.reloadData()
-        table.selectRowIndexes([0], byExtendingSelection: false)
-
-        // Explicit frames — an NSScrollView has no intrinsic size, so
-        // stack-view/Auto Layout collapses it to zero inside an NSAlert.
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 480, height: 262))
-        let scroll = NSScrollView(frame: NSRect(x: 0, y: 34, width: 480, height: 228))
-        scroll.documentView = table
-        scroll.hasVerticalScroller = true
-        scroll.borderType = .bezelBorder
-
-        let destLabel = NSTextField(labelWithString: "Transfer to:")
-        destLabel.sizeToFit()
-        destLabel.setFrameOrigin(NSPoint(x: 0, y: 7))
-        let popup = NSPopUpButton(frame: NSRect(x: destLabel.frame.maxX + 8, y: 1, width: 220, height: 26),
-                                  pullsDown: false)
-        popup.addItems(withTitles: targets.map { $0.label })
-        container.addSubview(scroll)
-        container.addSubview(destLabel)
-        container.addSubview(popup)
-
-        let dialog = NSAlert()
-        dialog.messageText = "Transfer a \(label) session from “\(srcLabel)”"
-        dialog.informativeText = "Moves the session (transcript + per-session data) to another profile. Resume it there from the panel's recent sessions."
-        dialog.accessoryView = container
-        dialog.addButton(withTitle: "Transfer")
-        dialog.addButton(withTitle: "Cancel")
-        NSApp.activate(ignoringOtherApps: true)
-        guard dialog.runModal() == .alertFirstButtonReturn else { return }
-
-        let session = sessions[max(0, table.selectedRow)]
-        let dest = targets[max(0, popup.indexOfSelectedItem)]
-        let result = runCLI(["transfer", session.id, "--from", srcLabel, "--to", dest.label, "--vendor", vendor])
-        guard result.status == 0 else {
-            alert("Transfer failed", result.output)
-            return
-        }
-
-        let resumeCmd = resumeCommand(session, in: dest.name)
-
-        let done = NSAlert()
-        done.messageText = "Session transferred to “\(dest.label)”"
-        done.informativeText = "Open it now, or copy the resume command for later."
-        done.addButton(withTitle: "Open Now")
-        done.addButton(withTitle: "Copy Command")
-        done.addButton(withTitle: "Done")
-        NSApp.activate(ignoringOtherApps: true)
-        switch done.runModal() {
-        case .alertFirstButtonReturn:
-            launchSession(resumeCmd, slug: dest.label, in: preferredTerminal)
-        case .alertSecondButtonReturn:
-            let pb = NSPasteboard.general
-            pb.clearContents()
-            pb.setString(resumeCmd, forType: .string)
-        default:
-            break
+    private func loadAllSessions() {
+        sessionsGeneration += 1
+        let generation = sessionsGeneration
+        model.sessionsLoading = true
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let r = self.runCLI(["sessions", "--porcelain"])
+            DispatchQueue.main.async {
+                guard generation == self.sessionsGeneration else { return }
+                self.model.sessionsLoading = false
+                if r.status == 0 { self.model.allSessions = SessionInfo.parse(r.output) }
+            }
         }
     }
 

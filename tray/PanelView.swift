@@ -792,11 +792,6 @@ private struct SlotActions: View {
                     actions.signIn(profile: profile.name, vendor: vendor.id, confirm: true)
                 }
             }
-            if vendor.hasSessions {
-                ActionRow(title: "Transfer session…", icon: "arrowshape.turn.up.right") {
-                    actions.transferSession(profile: profile.name, vendor: vendor.id)
-                }
-            }
         }
         .padding(.leading, 10)
         .overlay(alignment: .leading) {
@@ -1171,7 +1166,7 @@ private struct SessionsSection: View {
             }
             .buttonStyle(.plain)
             .help("Open all sessions")
-            ForEach(data.sessions.prefix(2), id: \.id) { s in
+            ForEach(data.sessions.prefix(2)) { s in
                 SessionRow(session: s, data: data, actions: actions)
             }
         }
@@ -1180,14 +1175,15 @@ private struct SessionsSection: View {
     }
 }
 
-// Where it was and what it was doing are two different questions, so they get
-// two lines. The tags ride with the folder; the summary — the line you
-// actually recognise a session by — gets the full width instead of the scraps
-// left over beside them.
+// A week later a session is recognised by what it was about, then where:
+// the lab's name for it (or the prompt, when it has none) leads; the folder
+// and branch say which checkout — the only way to tell apart the worktrees a
+// loop fans out into; the prompt follows when the name didn't already say it.
 private struct SessionRow: View {
     let session: SessionInfo
     let data: PanelData
     let actions: PanelActions
+    var promptLines = 1
 
     private static let age: DateComponentsFormatter = {
         let f = DateComponentsFormatter()
@@ -1197,18 +1193,31 @@ private struct SessionRow: View {
         return f
     }()
 
+    private var place: String {
+        guard let cwd = session.cwd else { return "—" }
+        let home = NSHomeDirectory()
+        return cwd.hasPrefix(home) ? "~" + cwd.dropFirst(home.count) : cwd
+    }
+
+    /// Profiles that hold a slot for this session's lab.
+    private var destinations: [String] {
+        data.profiles.filter { $0.name != session.profile && $0.slots[session.vendor] != nil }.map(\.name)
+    }
+
+    private var lab: String { data.snapshot.vendor(session.vendor)?.label ?? session.vendor }
+
     var body: some View {
         Button { actions.resumeSession(session) } label: {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 5) {
-                    Text(session.cwd.map { ($0 as NSString).lastPathComponent } ?? "—")
-                        .font(.system(size: 12.5))
-                        .lineLimit(1).truncationMode(.middle)
+                    Text(session.title ?? session.snippet)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .lineLimit(1).truncationMode(.tail)
                     Spacer(minLength: 6)
                     Chip(text: session.profile, symbol: "person.crop.circle",
                          tint: profileColor(session.profile))
                     // The logo is the lab's name; spelling it out again was
-                    // costing the summary its width.
+                    // costing the title its width.
                     if let v = data.snapshot.vendor(session.vendor) {
                         Chip(vendor: v, tint: Ink.secondary)
                     }
@@ -1216,81 +1225,182 @@ private struct SessionRow: View {
                         .font(.system(size: 11)).monospacedDigit()
                         .foregroundStyle(Ink.secondary)
                         .frame(minWidth: 22, alignment: .trailing)
+                    Color.clear.frame(width: 18, height: 1)   // under the menu button
                 }
-                Text(session.snippet)
-                    .font(.system(size: 11)).foregroundStyle(Ink.secondary)
-                    .lineLimit(2).truncationMode(.tail)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 4) {
+                    Image(systemName: "folder").font(.system(size: 9))
+                    Text(place).lineLimit(1).truncationMode(.middle)
+                    if let branch = session.branch {
+                        Image(systemName: "arrow.triangle.branch").font(.system(size: 9)).padding(.leading, 4)
+                        Text(branch).lineLimit(1).truncationMode(.middle).layoutPriority(1)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .font(.system(size: 10.5))
+                .foregroundStyle(Ink.secondary)
+                if session.title != nil {
+                    Text(session.snippet)
+                        .font(.system(size: 11)).foregroundStyle(Ink.secondary)
+                        .lineLimit(promptLines).truncationMode(.tail)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 7)
-            .frame(minHeight: 56, alignment: .top)
             .contentShape(Rectangle())
         }
         .buttonStyle(RowButtonStyle(radius: 7, resting: 0.05))
         .help("Resume in \(session.profile)")
+        // Beside the row's button, not inside it: a control nested in a
+        // button's label doesn't get its own clicks.
+        .overlay(alignment: .topTrailing) {
+            Button { popUp(menuItems) } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Ink.secondary)
+                    .frame(width: 20, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(RowButtonStyle(radius: 4))
+            .help("Move to another profile, copy the resume command")
+            .padding(.top, 6)
+            .padding(.trailing, 5)
+        }
+        .contextMenu {
+            Button { actions.resumeSession(session) } label: { Label("Resume", systemImage: "play") }
+            Menu("Move to") {
+                ForEach(destinations, id: \.self) { p in
+                    Button(p) { actions.moveSession(session, to: p) }
+                }
+            }
+            .disabled(destinations.isEmpty)
+            Button { actions.copyResumeCommand(session) } label: {
+                Label("Copy Resume Command", systemImage: "doc.on.doc")
+            }
+        }
+    }
+
+    private var menuItems: [NSMenuItem] {
+        let moves: [NSMenuItem] = destinations.isEmpty
+            ? [NSMenuItem(title: "No other profile has \(lab)", action: nil, keyEquivalent: "")]
+            : destinations.map { p in
+                ClosureItem(p, symbol: "person.crop.circle") { actions.moveSession(session, to: p) }
+            }
+        return [ClosureItem("Resume", symbol: "play") { actions.resumeSession(session) },
+                submenu("Move to", symbol: "arrowshape.turn.up.right", moves),
+                ClosureItem("Copy Resume Command", symbol: "doc.on.doc") { actions.copyResumeCommand(session) }]
     }
 }
 
-// The panel keeps two sessions. This is the rest of the list, in a window of
-// its own: same rows, wide enough that the prompt can actually be read.
+// Every session, searchable, in a window of its own. Its size is fixed: a
+// window that followed its rows would resize on every keystroke, and on
+// every open as the list arrived.
 struct SessionsWindowView: View {
     @ObservedObject var model: PanelModel
     let actions: PanelActions
+    @State private var query = ""
+    @FocusState private var searching: Bool
 
+    static let identifier = NSUserInterfaceItemIdentifier("sessions")
     private static let width: CGFloat = 560
-    private static var listLimit: CGFloat {
+    private static var listHeight: CGFloat {
         ((NSScreen.main?.visibleFrame.height ?? 800) - 44 - 48) * 0.72
     }
 
-    private var rows: [SessionInfo] {
-        model.allSessions.isEmpty ? (model.data?.sessions ?? []) : model.allSessions
+    private var trimmed: String { query.trimmingCharacters(in: .whitespaces) }
+
+    /// Once per render: every part of the window reads the same filtered list.
+    private func filtered() -> [SessionInfo] {
+        let folded = SessionInfo.fold(trimmed)
+        let tokens = folded.split(separator: " ")
+        return tokens.isEmpty ? model.allSessions : model.allSessions.filter { $0.matches(tokens) }
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "clock.arrow.circlepath")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Ink.secondary)
-                Text("Recent sessions").font(.system(size: 13, weight: .semibold))
-                Spacer()
-                if !rows.isEmpty {
-                    Text("\(rows.count)")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Ink.secondary)
+        let rows = filtered()
+        return VStack(spacing: 0) {
+            header(rows)
+            Divider()
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(Ink.secondary)
+                TextField("Search title, folder, branch, prompt", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12.5))
+                    .focused($searching)
+                    .onSubmit { if let first = rows.first { actions.resumeSession(first) } }
+                if !query.isEmpty {
+                    Button { query = "" } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 11)).foregroundStyle(Ink.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Clear")
                 }
-                Button { actions.closeSessions() } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .semibold))
-                        .frame(width: 24, height: 24)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.08)))
-                }
-                .buttonStyle(.plain)
-                .help("Close")
             }
             .padding(.horizontal, Metrics.side)
-            .frame(height: 44)
+            .frame(height: 34)
             Divider()
-            if let data = model.data, !rows.isEmpty {
-                FittingScroll(maxHeight: Self.listLimit, focus: nil) {
-                    VStack(spacing: 6) {
-                        ForEach(rows, id: \.id) { s in
-                            SessionRow(session: s, data: data, actions: actions)
-                        }
-                    }
-                    .padding(Metrics.side)
-                }
-            } else {
-                Text("No sessions yet")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Ink.secondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 28)
-            }
+            list(rows).frame(height: Self.listHeight)
         }
         .frame(width: Self.width)
+        // Typing should search without a click first, on every open. A turn
+        // late: present() clears the first responder after ordering front.
+        .onAppear(perform: focusSearch)
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
+            if (note.object as? NSWindow)?.identifier == Self.identifier { focusSearch() }
+        }
+    }
+
+    private func focusSearch() {
+        DispatchQueue.main.async { searching = true }
+    }
+
+    private func header(_ rows: [SessionInfo]) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Ink.secondary)
+            Text("Recent sessions").font(.system(size: 13, weight: .semibold))
+            Spacer()
+            if model.sessionsLoading { ProgressView().controlSize(.small) }
+            if !model.allSessions.isEmpty {
+                Text(trimmed.isEmpty ? "\(rows.count)" : "\(rows.count) of \(model.allSessions.count)")
+                    .font(.system(size: 11)).monospacedDigit()
+                    .foregroundStyle(Ink.secondary)
+            }
+            Button { actions.closeSessions() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 24, height: 24)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.08)))
+            }
+            .buttonStyle(.plain)
+            .help("Close")
+        }
+        .padding(.horizontal, Metrics.side)
+        .frame(height: 44)
+    }
+
+    @ViewBuilder private func list(_ rows: [SessionInfo]) -> some View {
+        if let data = model.data, !rows.isEmpty {
+            ScrollView(.vertical) {
+                LazyVStack(spacing: 6) {
+                    ForEach(rows) { s in
+                        SessionRow(session: s, data: data, actions: actions, promptLines: 2)
+                    }
+                }
+                .padding(Metrics.side)
+            }
+        } else {
+            VStack(spacing: 8) {
+                if model.sessionsLoading { ProgressView().controlSize(.small) }
+                Text(model.sessionsLoading ? "Reading sessions…"
+                     : trimmed.isEmpty ? "No sessions yet" : "No sessions match “\(trimmed)”")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Ink.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
 }
 
