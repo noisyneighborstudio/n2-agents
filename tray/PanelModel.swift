@@ -234,11 +234,20 @@ final class PanelModel: ObservableObject {
         Int((Double(values.reduce(0, +)) / Double(values.count)).rounded())
     }
 
-    /// Quota left across every profile, for the menu bar icon: the same
-    /// equal-weight mean as a profile's number, over all of them. Nil until
-    /// a slot has read.
+    /// Each profile's quota left — the mean over its slots — in panel order,
+    /// with how many slots it's taken over. Profiles with no reading are out.
+    private var profilesLeft: [(name: String, left: Int, slots: Int)] {
+        let byProfile = Dictionary(grouping: slotsLeft, by: \.profile)
+        return (data?.profiles ?? []).compactMap { p in
+            byProfile[p.name].map { (p.name, Self.mean($0.map(\.left)), $0.count) }
+        }
+    }
+
+    /// Quota left overall, for the menu bar icon: the mean of the profiles'
+    /// numbers, so each profile weighs the same however many labs it holds.
+    /// Nil until a slot has read.
     var remaining: Int? {
-        let left = slotsLeft.map(\.left)
+        let left = profilesLeft.map(\.left)
         return left.isEmpty ? nil : Self.mean(left)
     }
 
@@ -249,15 +258,13 @@ final class PanelModel: ObservableObject {
     /// lab in a profile. A mean over a single slot is that slot again, so
     /// it's only listed once, as the slot.
     var lowQuota: [LowQuota] {
-        let slots = slotsLeft
-        let byProfile = Dictionary(grouping: slots, by: \.profile)
-        let profiles = (data?.profiles ?? []).compactMap { p in byProfile[p.name].map { (p.name, $0.map(\.left)) } }
+        let profiles = profilesLeft
         var all: [LowQuota] = []
-        if profiles.count > 1 {
-            all.append(LowQuota(id: "*", title: "Overall", left: Self.mean(slots.map(\.left))))
+        if profiles.count > 1, let overall = remaining {
+            all.append(LowQuota(id: "*", title: "Overall", left: overall))
         }
-        all += profiles.filter { $0.1.count > 1 }.map { LowQuota(id: $0.0, title: $0.0, left: Self.mean($0.1)) }
-        all += slots.map { LowQuota(id: "\($0.profile)/\($0.vendor.id)", title: "\($0.vendor.label) · \($0.profile)", left: $0.left) }
+        all += profiles.filter { $0.slots > 1 }.map { LowQuota(id: $0.name, title: $0.name, left: $0.left) }
+        all += slotsLeft.map { LowQuota(id: "\($0.profile)/\($0.vendor.id)", title: "\($0.vendor.label) · \($0.profile)", left: $0.left) }
         return all.filter { $0.tier >= Self.lowFrom }
     }
 
