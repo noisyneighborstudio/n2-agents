@@ -40,7 +40,11 @@ echo "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-} CODEX_HOME=${CODEX_HOME:-} GROK_H
 FAKE
 # The keychain is the real user's even under a fake HOME: a stand-in
 # `security` that finds nothing keeps tests off real logins (and the network).
-printf '#!/bin/sh\nexit 44\n' > "$fake_bin/security"
+cat > "$fake_bin/security" <<'FAKE'
+#!/bin/sh
+case "$*" in *cursor-access-token*) [ -n "${FAKE_CURSOR_TOKEN:-}" ] && { echo "$FAKE_CURSOR_TOKEN"; exit 0; } ;; esac
+exit 44
+FAKE
 chmod +x "$fake_bin/security"
 fake_path="$fake_bin:/usr/bin:/bin"
 
@@ -140,7 +144,9 @@ test "$(run_agents active)" = mixed
 
 # --- porcelain contract (the tray parses this) -----------------------------
 porcelain=$(run_agents porcelain)
-print -r -- "$porcelain" | grep -q '^V	claude	1	clone	oauth	Claude Code	projects	CC	Claude Desktop	com.anthropic.claudefordesktop$'
+print -r -- "$porcelain" | grep -q '^V	claude	1	clone	oauth	Claude Code	projects	CC	Claude Desktop	com.anthropic.claudefordesktop	7d$'
+# Cursor's long window is its monthly billing cycle.
+print -r -- "$porcelain" | grep -q '^V	cursor	.*	mo$'
 print -r -- "$porcelain" | grep -q '^P	Work	'
 print -r -- "$porcelain" | grep -q '^A	'
 # One S row per slot: its directory (the tray watches it during a sign-in)
@@ -220,6 +226,27 @@ export N2_MUSE_USAGE_URL="file://$test_root/muse-usage.json"
 usage=$(run_agents best --porcelain --vendor muse)
 print -r -- "$usage" | grep -qx 'Work	7	30	2026-09-26T08:24	ok	2026-10-02T03:17'
 rm -r "$home/.n2-agents/Work/muse"
+# Cursor keeps one keychain login for the machine: Default reads it, in the
+# long-window column (a monthly cycle), and other slots say they share it.
+usage=$(run_agents best --porcelain --vendor cursor)
+print -r -- "$usage" | grep -qx 'Default	-	-	-	no-token'
+print -r -- "$usage" | grep -qx 'Work	-	-	-	shared-login'
+cursor_usage() {  # used%
+  printf '{"billingCycleEnd": "1792641563000", "planUsage": {"totalPercentUsed": %s}}' "$1" > "$test_root/cursor-usage.json"
+}
+export N2_CURSOR_USAGE_URL="file://$test_root/cursor-usage.json"
+cursor_usage 0.4
+usage=$(FAKE_CURSOR_TOKEN=t run_agents best --porcelain --vendor cursor)
+print -r -- "$usage" | grep -qx 'Default	-	0.4	-	ok	2026-10-22T03:59'
+# A slot on the shared login has Default's room: rotation reaches Work too…
+out=$(FAKE_CURSOR_TOKEN=t run_agents run --vendor cursor 2>&1; FAKE_CURSOR_TOKEN=t run_agents run --vendor cursor 2>&1)
+[[ $out == *"CURSOR_CONFIG_DIR=$home/.n2-agents/Work/cursor"* ]]
+# …and at the limit, neither runs.
+cursor_usage 99
+if FAKE_CURSOR_TOKEN=t run_agents run --vendor cursor >/dev/null 2>&1; then
+  echo "rotation ran a Cursor slot on a maxed shared login" >&2
+  exit 1
+fi
 
 # Recent sessions span labs, newest first, and skip injected context to reach
 # the first real prompt. Each carries its branch and the lab's name for it:
