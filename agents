@@ -526,8 +526,32 @@ def muse_row(r):
                      time.strftime('%Y-%m-%dT%H:%M', time.gmtime(at)) if at else '-'))
     return cols[0][0], cols[1][0], cols[0][1], cols[1][1]
 
+def cursor(name, cfg):
+    # cursor-agent keeps ONE login in the keychain whatever CURSOR_CONFIG_DIR
+    # says, so there is one account to read. It's shown once, on Default;
+    # other slots say they share it rather than repeat the numbers.
+    if name != 'Default':
+        return 'shared-login', None
+    p = subprocess.run(['security', 'find-generic-password', '-s', 'cursor-access-token',
+                        '-a', 'cursor-user', '-w'], capture_output=True, text=True)
+    if p.returncode != 0 or not p.stdout.strip():
+        return 'no-token', None
+    url = os.environ.get('N2_CURSOR_USAGE_URL',
+                         'https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage')
+    return 'ok', urllib.request.Request(url, data=b'{}', method='POST',
+        headers={'Authorization': 'Bearer ' + p.stdout.strip(), 'Content-Type': 'application/json',
+                 'Connect-Protocol-Version': '1', 'User-Agent': 'n2-agents'})
+
+def cursor_row(r):
+    # One pool per monthly billing cycle, in the long-window column; the
+    # percent is already in percent units (0.4 means 0.4%).
+    end = r.get('billingCycleEnd')
+    reset = time.strftime('%Y-%m-%dT%H:%M', time.gmtime(int(end) / 1000)) if end else '-'
+    return '-', (r.get('planUsage') or {}).get('totalPercentUsed', '-'), '-', reset
+
 request, row = {'claude': (claude, claude_row), 'codex': (codex, codex_row),
-                'grok': (grok, grok_row), 'muse': (muse, muse_row)}[sys.argv[1]]
+                'grok': (grok, grok_row), 'muse': (muse, muse_row),
+                'cursor': (cursor, cursor_row)}[sys.argv[1]]
 for pair in sys.argv[2:]:
     name, cfg = pair.split('=', 1)
     status, req = request(name, cfg)
@@ -574,7 +598,9 @@ EOF
 
 # --porcelain prints usage_table's rows untouched — the tray's quota meters
 # parse it, so like `agents porcelain` it is a contract, not a display:
-#   <profile> <5h%> <7d%> <5h-resets UTC> <note: ok|no-token|stale-token|rate-limited|fetch-error|no-usage-api> [<7d-resets UTC>]
+#   <profile> <5h%> <7d%> <5h-resets UTC> <note: ok|no-token|stale-token|rate-limited|fetch-error|no-usage-api|shared-login> [<7d-resets UTC>]
+# The 7d columns hold the lab's long window, whatever its length
+# (vendor_long_window). shared-login: the slot uses Default's login and quota.
 cmd_best() {
   vsel="" porcelain=0
   while [ $# -gt 0 ]; do
@@ -647,6 +673,8 @@ slot_has_room() {  # profile, vendor, usage rows
   vendor_has_usage "$2" || return 0
   su_row=$(printf '%s\n' "$3" | awk -F'\t' -v v="$2" -v n="$1" '$1 == v && $2 == n' | head -1)
   [ -n "$su_row" ] || return 1
+  # A slot on the lab's one shared login has Default's room.
+  case $su_row in *"	shared-login"*) slot_has_room Default "$2" "$3"; return ;; esac
   IFS="$(printf '\t')" read -r _ _ su_f su_s _ su_note _ <<EOF
 $su_row
 EOF
@@ -1530,10 +1558,10 @@ cmd_authed() {
 cmd_porcelain() {
   for v in $N2_VENDORS; do
     if vendor_installed "$v"; then i=1; else i=0; fi
-    printf 'V\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf 'V\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$v" "$i" "$(vendor_isolation "$v")" "$(vendor_desktop "$v")" \
       "$(vendor_usage "$v")" "$(vendor_label "$v")" "$(vendor_sessions "$v")" "$(vendor_monogram "$v")" \
-      "$(vendor_desktop_name "$v")" "$(vendor_desktop_bundle "$v")"
+      "$(vendor_desktop_name "$v")" "$(vendor_desktop_bundle "$v")" "$(vendor_long_window "$v")"
   done
   for n in $(all_profiles); do
     if profile_running "$n"; then r=1; else r=0; fi

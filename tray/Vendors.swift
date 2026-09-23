@@ -19,6 +19,7 @@ struct Vendor {
     let monogram: String    // two-letter tile the panel draws for the lab
     let desktopName: String // its desktop app, "" when it has none
     let desktopBundle: String // that app's bundle id
+    let longWindow: String  // how the panel tags the long usage window: "7d", Cursor's "mo"
 
     var hasUsageAPI: Bool { usage == "oauth" || usage == "ondemand" }
     /// Each read costs something, so it's never polled: read on open or retry.
@@ -77,7 +78,8 @@ struct Snapshot {
                                       sessions: f.count > 7 ? f[7] : "none",
                                       monogram: f.count > 8 ? f[8] : String(f[1].prefix(2)).uppercased(),
                                       desktopName: f.count > 9 ? f[9] : "",
-                                      desktopBundle: f.count > 10 ? f[10] : ""))
+                                      desktopBundle: f.count > 10 ? f[10] : "",
+                                      longWindow: f.count > 11 ? f[11] : "7d"))
             case "P" where f.count >= 4:
                 var slots: [String: String] = [:]
                 if f[3] != "-" {
