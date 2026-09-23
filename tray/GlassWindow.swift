@@ -176,8 +176,8 @@ final class GlassWindow: NSPanel {
         // A pointer surface: no control starts out keyboard-focused (and ringed).
         makeFirstResponder(nil)
         if case .transient = behavior, clickMonitor == nil {
-            clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
-                guard let self, !self.isOnAnchor(event.locationInWindow) else { return }
+            clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+                guard let self, !self.pointerOnAnchor else { return }
                 self.dismiss()
             }
         }
@@ -230,17 +230,16 @@ final class GlassWindow: NSPanel {
 
     override func resignKey() {
         super.resignKey()
-        guard case .transient = behavior else { return }
-        let mouseDown = [.leftMouseDown, .rightMouseDown].contains(NSApp.currentEvent?.type)
-        if !(mouseDown && isOnAnchor(NSEvent.mouseLocation)) { dismiss() }
+        if case .transient = behavior, !pointerOnAnchor { dismiss() }
     }
 
-    /// A click on the status item is its own action's to handle: it toggles
-    /// the panel shut. Were a click-away to close it first, that action would
-    /// find it closed and open it straight back up.
-    private func isOnAnchor(_ screenPoint: NSPoint) -> Bool {
+    /// The pointer is on the status item. A press there can cost the panel
+    /// key, or register as a click away, before the item's own action runs —
+    /// and if either closed the panel, that action would open it straight
+    /// back up. So both leave it to the action, which toggles it shut.
+    private var pointerOnAnchor: Bool {
         guard case .transient(let button) = behavior, let window = button.window else { return false }
-        return window.convertToScreen(button.convert(button.bounds, to: nil)).contains(screenPoint)
+        return window.convertToScreen(button.convert(button.bounds, to: nil)).contains(NSEvent.mouseLocation)
     }
 
     private func fit(recenter: Bool) {

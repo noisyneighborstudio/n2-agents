@@ -44,7 +44,7 @@ final class QuotaToast {
         self.window = window
         window.present()
         NSAccessibility.post(element: window, notification: .announcementRequested, userInfo: [
-            .announcement: "Quota running low: " + items.map { "\($0.title), \($0.left)% left" }.joined(separator: "; "),
+            .announcement: "N2 Agents usage warning: " + items.map { "\($0.title), \($0.left)% left" }.joined(separator: "; "),
             .priority: NSAccessibilityPriorityLevel.high.rawValue,
         ])
         let expiry = DispatchWorkItem { [weak self] in self?.dismiss() }
@@ -57,25 +57,24 @@ private struct QuotaToastView: View {
     let items: [LowQuota]
     let open: () -> Void
 
+    // Laid out like a system notification: whose it is, then what.
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(ink(items.map(\.tier).max() ?? .orange))
-                Text("Quota running low")
-            }
-            .font(.system(size: 12, weight: .semibold))
-            ForEach(items, id: \.id) { item in
-                HStack {
-                    Text(verbatim: item.title).font(.system(size: 11.5)).lineLimit(1).truncationMode(.tail)
-                    Spacer(minLength: 12)
-                    Text(verbatim: "\(item.left)% left").font(.system(size: 11, weight: .medium)).monospacedDigit()
-                        .foregroundStyle(ink(item.tier))
+        HStack(alignment: .top, spacing: 10) {
+            Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 28, height: 28)
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Usage warning").font(.system(size: 13, weight: .semibold))
+                ForEach(items, id: \.id) { item in
+                    HStack {
+                        Text(verbatim: item.title).font(.system(size: 11.5)).lineLimit(1).truncationMode(.tail)
+                        Spacer(minLength: 12)
+                        Text(verbatim: "\(item.left)% left").font(.system(size: 11, weight: .medium)).monospacedDigit()
+                            .foregroundStyle(ink(item.tier))
+                    }
                 }
             }
         }
         .padding(12)
-        .frame(width: 260, alignment: .leading)
+        .frame(width: 290, alignment: .leading)
         .contentShape(Rectangle())
         .onTapGesture(perform: open)
     }
