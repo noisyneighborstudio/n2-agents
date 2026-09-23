@@ -1,9 +1,9 @@
 import AppKit
 import Carbon
 
-// A user-assignable, system-wide shortcut that pops the menu at the pointer —
-// the status item can be pushed behind the notch, so the icon is not a
-// reliable way in. Carbon's RegisterEventHotKey needs no Accessibility grant.
+// A user-assignable, system-wide shortcut that opens the panel — the status
+// item can be pushed behind the notch, so the icon is not a reliable way in.
+// Carbon's RegisterEventHotKey needs no Accessibility grant.
 
 struct Shortcut: Equatable {
     let keyCode: UInt32
@@ -15,7 +15,7 @@ struct Shortcut: Equatable {
                                    modifiers: UInt32(controlKey | optionKey | cmdKey),
                                    display: "⌃⌥⌘N")
 
-    private static let key = "menuShortcut"
+    private static let key = "panelShortcut"
 
     // nil = the user cleared it; absent = never set, so the fallback applies.
     static func load(_ defaults: UserDefaults = .standard) -> Shortcut? {
@@ -82,7 +82,7 @@ final class GlobalHotKey {
     }
 }
 
-// Accessory view for the "Menu Shortcut…" alert: focus it and press a combo.
+// Accessory view for the "Keyboard Shortcut…" alert: focus it and press a combo.
 final class ShortcutRecorderView: NSView {
     private(set) var recorded: Shortcut?
     private let label = NSTextField(labelWithString: "")

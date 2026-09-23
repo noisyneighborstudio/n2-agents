@@ -15,13 +15,33 @@ export SWIFT_MODULECACHE_PATH="$test_root/cache/swift"
 # from touching a real login.
 fake_bin="$test_root/fake-bin"
 mkdir -p "$fake_bin"
-for v in claude codex grok gemini cursor-agent opencode; do
+for v in claude codex grok gemini cursor-agent opencode muse; do
   cat > "$fake_bin/$v" <<'FAKE'
 #!/bin/sh
-echo "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-} CODEX_HOME=${CODEX_HOME:-} GROK_HOME=${GROK_HOME:-} CURSOR_CONFIG_DIR=${CURSOR_CONFIG_DIR:-} XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-} ARGS=$*"
+echo "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-} CODEX_HOME=${CODEX_HOME:-} GROK_HOME=${GROK_HOME:-} CURSOR_CONFIG_DIR=${CURSOR_CONFIG_DIR:-} XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-} TBH_CREDENTIAL_BACKEND=${TBH_CREDENTIAL_BACKEND:-}"
 FAKE
   chmod +x "$fake_bin/$v"
 done
+# Grok's usage comes from `grok agent stdio` (ACP). The fake answers the two
+# calls, with billing read from the GROK_HOME it was pinned to.
+cat > "$fake_bin/grok" <<'FAKE'
+#!/bin/sh
+if [ "${1:-} ${2:-}" = "agent stdio" ]; then
+  while IFS= read -r line; do
+    case $line in
+      *'"id": 1'*) echo 'notice: MCP env would print here' ;
+                   echo '{"jsonrpc": "2.0", "id": 1, "result": {}}' ;;
+      *'"_x.ai/billing"'*) printf '{"jsonrpc": "2.0", "id": 2, "result": %s}\n' "$(cat "$GROK_HOME/billing.json")" ;;
+    esac
+  done
+  exit 0
+fi
+echo "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-} CODEX_HOME=${CODEX_HOME:-} GROK_HOME=${GROK_HOME:-} CURSOR_CONFIG_DIR=${CURSOR_CONFIG_DIR:-} XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-} TBH_CREDENTIAL_BACKEND=${TBH_CREDENTIAL_BACKEND:-}"
+FAKE
+# The keychain is the real user's even under a fake HOME: a stand-in
+# `security` that finds nothing keeps tests off real logins (and the network).
+printf '#!/bin/sh\nexit 44\n' > "$fake_bin/security"
+chmod +x "$fake_bin/security"
 fake_path="$fake_bin:/usr/bin:/bin"
 
 # --- syntax ----------------------------------------------------------------
@@ -31,11 +51,20 @@ zsh -n install.sh uninstall.sh make-claude-profile.sh repatch-claude-profiles.sh
   scripts/publish-appcast.sh shell/agents.zsh
 bash -n shell/agents.bash
 command -v fish >/dev/null && fish -n shell/agents.fish
-swiftc -typecheck tray/main.swift tray/UpdateChannel.swift tray/Vendors.swift tray/Hotkey.swift
+swiftc -typecheck tray/main.swift tray/UpdateChannel.swift tray/Vendors.swift tray/ProfileColor.swift tray/StatusIcon.swift tray/QuotaToast.swift tray/Ink.swift tray/LabMark.swift \
+  tray/PanelModel.swift tray/PanelView.swift tray/ProfileSetup.swift tray/GlassWindow.swift tray/ShellPath.swift tray/Hotkey.swift
+swiftc -typecheck tray/icon-badge/main.swift tray/ProfileColor.swift
 swiftc -typecheck scripts/make-icon.swift
+swiftc -typecheck scripts/verify-signature.swift
 channel_test=$(mktemp -d "$TMPDIR/channel.XXXXXX")/update-channel-tests
 swiftc tray/UpdateChannel.swift tests/UpdateChannelTests.swift -o "$channel_test"
 "$channel_test"
+path_test=$(mktemp -d "$TMPDIR/shellpath.XXXXXX")/shell-path-tests
+swiftc tray/ShellPath.swift tests/ShellPathTests.swift -o "$path_test"
+"$path_test"
+icon_test=$(mktemp -d "$TMPDIR/statusicon.XXXXXX")/status-icon-tests
+swiftc tray/StatusIcon.swift tests/StatusIconTests.swift -o "$icon_test"
+"$icon_test"
 
 # --- vendor adapter table --------------------------------------------------
 # The isolation tier is the single most load-bearing fact in the app: an `env`
@@ -48,14 +77,17 @@ print -r -- "$adapter" | grep -qx 'codex env CODEX_HOME'
 print -r -- "$adapter" | grep -qx 'grok env GROK_HOME'
 print -r -- "$adapter" | grep -qx 'cursor env CURSOR_CONFIG_DIR'
 print -r -- "$adapter" | grep -qx 'opencode env XDG_CONFIG_HOME'
+print -r -- "$adapter" | grep -qx 'muse env XDG_CONFIG_HOME'
 # Gemini reads GEMINI_DIR as a source constant (".gemini"), never from the
 # environment — so it must stay swap-only until that changes upstream.
 print -r -- "$adapter" | grep -qx 'gemini swap '
 
-# opencode is the one vendor whose env var names the PARENT of its config dir.
+# opencode and muse are the vendors whose env var names the PARENT of their config dir.
 slot=$(sh -c '. ./vendors.sh; vendor_slot_name opencode')
 test "$slot" = "opencode/opencode"
 test "$(sh -c '. ./vendors.sh; vendor_env_value opencode /root/P/opencode/opencode')" = "/root/P/opencode"
+test "$(sh -c '. ./vendors.sh; vendor_slot_name muse')" = "muse/muse"
+test "$(sh -c '. ./vendors.sh; vendor_env_value muse /root/P/muse/muse')" = "/root/P/muse"
 test "$(sh -c '. ./vendors.sh; vendor_env_value claude /root/P/claude')" = "/root/P/claude"
 
 # --- profile lifecycle, multi-vendor ---------------------------------------
@@ -80,12 +112,12 @@ out=$(run_agents run Work --vendor codex)
 out=$(run_agents run Work --vendor grok)
 [[ $out == *"GROK_HOME=$home/.n2-agents/Work/grok"* ]]
 
-# `login` runs the vendor's own sign-in under the same pin, so credentials land
-# in the profile's slot — two-word flows (`auth login`) must survive intact.
-out=$(run_agents login Work --vendor codex)
-[[ $out == *"CODEX_HOME=$home/.n2-agents/Work/codex"* && $out == *"ARGS=login" ]]
-out=$(run_agents login Work --vendor claude)
-[[ $out == *"CLAUDE_CONFIG_DIR=$home/.n2-agents/Work/claude"* && $out == *"ARGS=auth login" ]]
+# A sign-in names the profile and slot it writes to before the vendor's own
+# prompt appears; ordinary runs stay quiet.
+err=$(run_agents run Work --vendor codex login 2>&1 >/dev/null)
+[[ $err == *"login for profile 'Work' (CODEX_HOME=$home/.n2-agents/Work/codex)"* ]]
+err=$(run_agents run Work --vendor codex exec hi 2>&1 >/dev/null)
+[[ -z $err ]]
 
 # A swap-only vendor must refuse to run as a non-active profile without
 # --switch, because there is no way to pin it per process. The slot exists, so
@@ -121,29 +153,210 @@ test "$(run_agents active)" = mixed
 
 # --- porcelain contract (the tray parses this) -----------------------------
 porcelain=$(run_agents porcelain)
-print -r -- "$porcelain" | grep -q '^V	claude	1	env	clone	oauth	Claude Code$'
+print -r -- "$porcelain" | grep -q '^V	claude	1	env	clone	oauth	Claude Code	projects	CC	Claude Desktop	com.anthropic.claudefordesktop$'
 print -r -- "$porcelain" | grep -q '^P	Work	'
 print -r -- "$porcelain" | grep -q '^A	'
+# One S row per slot: its directory (the tray watches it during a sign-in)
+# and the account read from the vendor's own files.
+print -r -- "$porcelain" | grep -qx "S	Work	codex	$home/.n2-agents/Work/codex		no"
 # Every P row lists its vendors as comma-separated <vendor>:<state> pairs.
 print -r -- "$porcelain" | awk -F'\t' '$1=="P" && $4!="-" {print $4}' \
   | grep -qE '^[a-z]+:(active|ok)(,[a-z]+:(active|ok))*$'
 
+# The quota meters parse `best --porcelain`: five tab-separated fields, and a
+# vendor with no usage API says so per row instead of printing an empty table.
+printf '{"oauthAccount": {"emailAddress": "work@example.com"}}' > "$home/.n2-agents/Work/claude/.claude.json"
+porcelain=$(run_agents porcelain)
+print -r -- "$porcelain" | grep -qx "S	Work	claude	$home/.n2-agents/Work/claude	work@example.com	no"
+# Signed in = the slot holds the lab's own credential file (codex: auth.json);
+# cursor keeps its login outside the slot, so it can only say unknown.
+echo '{}' > "$home/.n2-agents/Work/codex/auth.json"
+authed=$(run_agents authed Work)
+print -r -- "$authed" | grep -qx 'codex	yes'
+print -r -- "$authed" | grep -qx 'grok	no'
+print -r -- "$authed" | grep -qx 'cursor	unknown'
+rm "$home/.n2-agents/Work/codex/auth.json"
+usage=$(run_agents best --porcelain --vendor gemini)
+print -r -- "$usage" | grep -qx 'Work	-	-	-	no-usage-api'
+# Codex reports quota too. Signed out says so; signed in, each window lands in
+# the column for its length (a weekly-only plan has no 5h figure), and a
+# reached limit reads as full whatever the percentage.
+usage=$(run_agents best --porcelain --vendor codex)
+print -r -- "$usage" | grep -qx 'Work	-	-	-	no-token'
+codex_usage() {  # used%, limit reached
+  printf '{"rate_limit": {"limit_reached": %s, "primary_window": {"used_percent": %s, "limit_window_seconds": 604800, "reset_at": 1790411072}, "secondary_window": null}}' \
+    "$2" "$1" > "$test_root/codex-usage.json"
+}
+export N2_CODEX_USAGE_URL="file://$test_root/codex-usage.json"
+codex_auth='{"tokens": {"access_token": "t", "account_id": "a"}}'
+echo "$codex_auth" > "$home/.n2-agents/Work/codex/auth.json"
+codex_usage 44 false
+usage=$(run_agents best --porcelain --vendor codex)
+print -r -- "$usage" | grep -qx 'Work	-	44	-	ok	2026-09-26T08:24'
+codex_usage 80 true
+usage=$(run_agents best --porcelain --vendor codex)
+print -r -- "$usage" | grep -qx 'Work	-	100	-	ok	2026-09-26T08:24'
+rm "$home/.n2-agents/Work/codex/auth.json"
+# Grok has one weekly credit pool: its percent fills the 7d column, reset at
+# the period's end in UTC. Signed in = an auth.x.ai entry in auth.json.
+usage=$(run_agents best --porcelain --vendor grok)
+print -r -- "$usage" | grep -qx 'Work	-	-	-	no-token'
+grok_usage() {  # used%
+  printf '{"config": {"creditUsagePercent": %s, "currentPeriod": {"type": "USAGE_PERIOD_TYPE_WEEKLY", "start": "2026-09-22T09:51:31.674043+00:00", "end": "2026-09-29T09:51:31.674043+00:00"}}}' \
+    "$1" > "$home/.n2-agents/Work/grok/billing.json"
+}
+grok_auth='{"https://auth.x.ai::u1": {"key": "t", "email": "work@example.com"}}'
+echo "$grok_auth" > "$home/.n2-agents/Work/grok/auth.json"
+grok_usage 12.5
+usage=$(run_agents best --porcelain --vendor grok)
+print -r -- "$usage" | grep -qx 'Work	-	12.5	-	ok	2026-09-29T09:51'
+rm "$home/.n2-agents/Work/grok/auth.json" "$home/.n2-agents/Work/grok/billing.json"
+# Muse keeps one keychain login whatever XDG_CONFIG_HOME says, so a profile's
+# runs pin the file backend and its login lands in the slot. Default keeps the
+# keychain: it's the one a plain `muse` finds.
+muse_slot="$home/.n2-agents/Work/muse/muse"
+mkdir -p "$muse_slot"
+out=$(run_agents run Work --vendor muse)
+[[ $out == *"XDG_CONFIG_HOME=$home/.n2-agents/Work/muse TBH_CREDENTIAL_BACKEND=file"* ]]
+test -z "$(sh -c '. ./vendors.sh; vendor_env_extra muse Default')"
+# An auth.json that points at the keychain is Default's login, not the profile's.
+echo '{"providers": {"meta": {"storage": "keychain"}}}' > "$muse_slot/auth.json"
+run_agents authed Work | grep -qx 'muse	no'
+usage=$(run_agents best --porcelain --vendor muse)
+print -r -- "$usage" | grep -qx 'Work	-	-	-	no-token'
+# Signed in, both windows come back: `window` is the 5-hour one.
+echo '{"providers": {"meta": {"storage": "file", "access_token": "dca:t"}}}' > "$muse_slot/auth.json"
+run_agents authed Work | grep -qx 'muse	yes'
+printf '{"is_subs_active": true, "subs_usage": {"window": {"used_percent": 7, "window_duration_mins": 300, "resets_at": 1790411072}, "weekly": {"used_percent": 30, "resets_at": 1790911072}}}' \
+  > "$test_root/muse-usage.json"
+export N2_MUSE_USAGE_URL="file://$test_root/muse-usage.json"
+usage=$(run_agents best --porcelain --vendor muse)
+print -r -- "$usage" | grep -qx 'Work	7	30	2026-09-26T08:24	ok	2026-10-02T03:17'
+rm -r "$home/.n2-agents/Work/muse"
+
+# Recent sessions span labs, newest first, and skip injected context to reach
+# the first real prompt. Each carries its branch and the lab's name for it:
+# Claude's latest ai-title, overruled by a /rename; Codex's thread index.
+mkdir -p "$home/.n2-agents/Work/claude/projects/p" "$home/.n2-agents/Work/codex/sessions/2026/01/01"
+cat > "$home/.n2-agents/Work/claude/projects/p/c1.jsonl" <<'JSONL'
+{"type":"ai-title","aiTitle":"Parser work"}
+{"type":"user","cwd":"/src/alpha","isMeta":true,"message":{"role":"user","content":"Caveat: injected"}}
+{"type":"user","cwd":"/src/alpha","gitBranch":"main","entrypoint":"cli","message":{"role":"user","content":[{"type":"text","text":"fix the parser"}]}}
+{"type":"ai-title","aiTitle":"Fix the \"parser\""}
+{"type":"user","cwd":"/src/alpha","gitBranch":"seth/parser","entrypoint":"cli","message":{"role":"user","content":"more"}}
+JSONL
+cat > "$home/.n2-agents/Work/codex/sessions/2026/01/01/rollout-2026-01-01T00-00-00-x1.jsonl" <<'JSONL'
+{"type":"session_meta","payload":{"cwd":"/src/beta","source":"cli","git":{"commit_hash":"abc","branch":"release"}}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>x</environment_context>"}]}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /src/beta"}]}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"ship the release"}]}}
+JSONL
+print -r -- '{"id":"x1","thread_name":"Ship it","updated_at":"2026-01-01T00:00:00Z"}' \
+  > "$home/.n2-agents/Work/codex/session_index.jsonl"
+# Background transcripts leave files too — Codex's helpers (the tool-call
+# reviewer) and `codex exec`, Claude's subagents and `claude -p` — and each
+# is newer than the real ones here: none shows, and none uses up the limit.
+cat > "$home/.n2-agents/Work/codex/sessions/2026/01/01/rollout-2026-01-01T00-00-01-g1.jsonl" <<'JSONL'
+{"type":"session_meta","payload":{"cwd":"/src/beta","source":{"subagent":{"other":"guardian"}}}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"The following is the Codex agent history"}]}}
+JSONL
+print -r -- '{"type":"session_meta","payload":{"cwd":"/src/beta","source":"exec"}}' \
+  > "$home/.n2-agents/Work/codex/sessions/2026/01/01/rollout-2026-01-01T00-00-02-e1.jsonl"
+print -r -- '{"type":"user","cwd":"/tmp/t","entrypoint":"sdk-cli","message":{"role":"user","content":"Generate a title"}}' \
+  > "$home/.n2-agents/Work/claude/projects/p/p1.jsonl"
+mkdir -p "$home/.n2-agents/Work/claude/projects/p/c1/subagents"
+print -r -- '{"type":"user","cwd":"/src/alpha","isSidechain":true,"entrypoint":"cli","message":{"role":"user","content":"research"}}' \
+  > "$home/.n2-agents/Work/claude/projects/p/c1/subagents/agent-a1.jsonl"
+touch -t 202601010000 "$home/.n2-agents/Work/claude/projects/p/c1.jsonl"
+touch -t 202601010100 "$home/.n2-agents/Work/codex/sessions/2026/01/01/rollout-2026-01-01T00-00-00-x1.jsonl"
+for f in codex/sessions/2026/01/01/rollout-2026-01-01T00-00-01-g1.jsonl codex/sessions/2026/01/01/rollout-2026-01-01T00-00-02-e1.jsonl \
+         claude/projects/p/p1.jsonl claude/projects/p/c1/subagents/agent-a1.jsonl; do
+  touch -t 202601020000 "$home/.n2-agents/Work/$f"
+done
+recent=$(run_agents sessions --porcelain --limit 2)
+test "$(print -r -- "$recent" | sed -n 1p | cut -f1-3,5-)" = "Work	codex	x1	/src/beta	ship the release	release	Ship it"
+test "$(print -r -- "$recent" | sed -n 2p | cut -f1-3,5-)" = 'Work	claude	c1	/src/alpha	fix the parser	seth/parser	Fix the "parser"'
+test "$(run_agents sessions --porcelain Work --vendor claude | wc -l | tr -d ' ')" = 1
+# A second listing reads the cache, and a transcript that changed is read again.
+test "$(run_agents sessions --porcelain --limit 2)" = "$recent"
+print -r -- '{"type":"custom-title","customTitle":"Renamed"}' >> "$home/.n2-agents/Work/claude/projects/p/c1.jsonl"
+touch -t 202601010000 "$home/.n2-agents/Work/claude/projects/p/c1.jsonl"
+touch -t 202601010001 "$home/.n2-agents/Work/claude/projects/p/c1.jsonl"
+test "$(run_agents sessions --porcelain Work --vendor claude | cut -f8)" = "Renamed"
+
+# login signs the pinned slot out and back in through the CLI's own commands.
+out=$(run_agents login Work --vendor codex 2>&1)
+# A fresh slot has nothing to sign out of: login, then status.
+test "$(print -r -- "$out" | grep -c "CODEX_HOME=$home/.n2-agents/Work/codex")" = 2
+# A signed-in one signs out first: logout, login, status — each pinned.
+echo '{}' > "$home/.n2-agents/Work/codex/auth.json"
+out=$(run_agents login Work --vendor codex 2>&1)
+test "$(print -r -- "$out" | grep -c "CODEX_HOME=$home/.n2-agents/Work/codex")" = 3
+rm "$home/.n2-agents/Work/codex/auth.json"
+# A swap lab without its own logout clears the saved credentials instead — and
+# like `run`, only once the profile is allowed to become the active one.
+echo creds > "$home/.n2-agents/Work/gemini/oauth_creds.json"
+if run_agents login Work --vendor gemini >/dev/null 2>&1; then
+  echo "login switched a swap vendor without --switch" >&2
+  exit 1
+fi
+test -f "$home/.n2-agents/Work/gemini/oauth_creds.json"
+run_agents login Work --vendor gemini --switch >/dev/null 2>&1
+test ! -e "$home/.n2-agents/Work/gemini/oauth_creds.json"
+
+# --- next best: no lab is anyone's default -------------------------------
+# Cursor and opencode keep their logins out of sight, so a slot of theirs can
+# only be taken at its word; drop theirs so every slot here is checkable.
+rm -rf "$home"/.n2-agents/{Default,Work}/{cursor,opencode}
+# Nothing signed in: nothing to guess.
+if run_agents run >/dev/null 2>&1; then echo "run picked a slot with nothing signed in" >&2; exit 1; fi
+# Commands that act on one lab ask rather than defaulting to the first.
+if run_agents login Work >/dev/null 2>&1; then echo "login guessed a lab" >&2; exit 1; fi
+rm -f "$home/.n2-agents/.last-slot"
+echo "$codex_auth" > "$home/.n2-agents/Work/codex/auth.json"
+codex_usage 10 false
+echo "$grok_auth" > "$home/.n2-agents/Work/grok/auth.json"
+grok_usage 10
+# The only signed-in slots are Work's Codex and Grok, so that's where it goes…
+out=$(run_agents run 2>&1)
+[[ $out == *"CODEX_HOME=$home/.n2-agents/Work/codex"* ]]
+test "$(cat "$home/.n2-agents/.last-slot")" = "Work:codex"
+# …then on round the rotation, skipping what isn't signed in…
+out=$(run_agents run 2>&1)
+[[ $out == *"GROK_HOME=$home/.n2-agents/Work/grok"* ]]
+out=$(run_agents run 2>&1)
+[[ $out == *"CODEX_HOME=$home/.n2-agents/Work/codex"* ]]
+# …and a profile alone, or a lab alone, fills in the other half the same way.
+out=$(run_agents run Work 2>&1)
+[[ $out == *"GROK_HOME=$home/.n2-agents/Work/grok"* ]]
+out=$(run_agents run --vendor codex 2>&1)
+[[ $out == *"CODEX_HOME=$home/.n2-agents/Work/codex"* ]]
+porcelain=$(run_agents porcelain)
+print -r -- "$porcelain" | grep -qx "L	Work	codex"
+# A lab at its limit is passed over, every time round.
+codex_usage 100 true
+out=$(run_agents run 2>&1)
+[[ $out == *"GROK_HOME=$home/.n2-agents/Work/grok"* ]]
+out=$(run_agents run 2>&1)
+[[ $out == *"GROK_HOME=$home/.n2-agents/Work/grok"* ]]
+rm "$home/.n2-agents/Work/codex/auth.json" "$home/.n2-agents/Work/grok/auth.json" "$home/.n2-agents/Work/grok/billing.json"
+
 # --- adopt: shares claudes state, never copies it --------------------------
 adopt_home="$test_root/adopt-home"
-mkdir -p "$adopt_home/.claude-profiles/Default" "$adopt_home/.claude-profiles/Client"
-echo token > "$adopt_home/.claude-profiles/Client/.credentials.json"
+mkdir -p "$adopt_home/.claude-profiles/Default" "$adopt_home/.claude-profiles/ExpoIO"
+echo token > "$adopt_home/.claude-profiles/ExpoIO/.credentials.json"
 HOME="$adopt_home" PATH="$fake_path" ./agents adopt --yes >/dev/null 2>&1
 # A symlink, so both apps read one login; a copy would force a re-login because
 # Claude Code keys its keychain entry to the config dir path.
-test -L "$adopt_home/.n2-agents/Client/claude"
-test "$(readlink "$adopt_home/.n2-agents/Client/claude")" = "$adopt_home/.claude-profiles/Client"
-test "$(cat "$adopt_home/.n2-agents/Client/claude/.credentials.json")" = token
+test -L "$adopt_home/.n2-agents/ExpoIO/claude"
+test "$(readlink "$adopt_home/.n2-agents/ExpoIO/claude")" = "$adopt_home/.claude-profiles/ExpoIO"
+test "$(cat "$adopt_home/.n2-agents/ExpoIO/claude/.credentials.json")" = token
 # The legacy tree is untouched — `claudes` must keep working.
-test -d "$adopt_home/.claude-profiles/Client"
+test -d "$adopt_home/.claude-profiles/ExpoIO"
 
 # Adopted profiles resolve as active through the symlink indirection.
-HOME="$adopt_home" PATH="$fake_path" ./agents use Client --vendor claude >/dev/null
-test "$(HOME="$adopt_home" PATH="$fake_path" ./agents active --vendor claude)" = Client
+HOME="$adopt_home" PATH="$fake_path" ./agents use ExpoIO --vendor claude >/dev/null
+test "$(HOME="$adopt_home" PATH="$fake_path" ./agents active --vendor claude)" = ExpoIO
 
 # --- reserved and invalid names --------------------------------------------
 for bad in As default; do
@@ -171,10 +384,10 @@ clone_error=$(N2_CLAUDE_APP="$missing_app" ./make-claude-profile.sh Work 2>&1 ||
 shim_home="$test_root/shim-home"
 shim_bin="$shim_home/.local/bin"
 foreign_bin="$test_root/foreign-bin"
-mkdir -p "$shim_home/.n2-agents/Client/claude" "$shim_home/.n2-agents/Client/codex" \
+mkdir -p "$shim_home/.n2-agents/Expo/claude" "$shim_home/.n2-agents/Expo/codex" \
   "$shim_bin" "$foreign_bin" "$test_root/foreign"
-ln -s /usr/bin/false "$foreign_bin/claude-client"
-ln -s "$test_root/foreign/agent-as" "$shim_bin/claude-outside"
+ln -s /usr/bin/false "$foreign_bin/claude-expo"
+ln -s "$test_root/foreign/agent-as" "$shim_bin/claude-client"
 ln -s "$PWD/agents" "$shim_bin/agents"
 
 HOME="$shim_home" PATH="/usr/bin:/bin" sh -c '
@@ -187,13 +400,18 @@ test "$(cat "$shim_home/.n2-agents/.bin-dir")" = "$shim_bin"
 HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" ./agents shims >/dev/null
 
 # Shims exist per (vendor, profile) that actually has a slot…
-for name in claude-as codex-as claude-client codex-client; do
+for name in claude-as codex-as claude-expo codex-expo; do
   test "$(readlink "$shim_bin/$name")" = "$PWD/shell/agent-as"
 done
 # …and not for vendors the profile has no slot for.
-test ! -e "$shim_bin/grok-client"
+test ! -e "$shim_bin/grok-expo"
 # Foreign links are never clobbered.
-test "$(readlink "$shim_bin/claude-outside")" = "$test_root/foreign/agent-as"
+test "$(readlink "$shim_bin/claude-client")" = "$test_root/foreign/agent-as"
+
+# A shim left pointing into the pre-rename N2Agents.app is ours: re-pointed.
+ln -sf "/Applications/N2Agents.app/Contents/Resources/agent-as" "$shim_bin/claude-expo"
+HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" ./agents shims >/dev/null
+test "$(readlink "$shim_bin/claude-expo")" = "$PWD/shell/agent-as"
 
 # Concurrent syncs must not leave the lock behind.
 HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" TMPDIR="$test_root/one" ./agents shims >/dev/null &
@@ -205,12 +423,12 @@ wait $second
 test ! -e "$shim_home/.n2-agents/.shims.lock"
 
 # A shim dispatches to the right vendor: the name carries both halves.
-HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" "$shim_bin/codex-client" \
-  | grep -q "CODEX_HOME=$shim_home/.n2-agents/Client/codex"
+HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" "$shim_bin/codex-expo" \
+  | grep -q "CODEX_HOME=$shim_home/.n2-agents/Expo/codex"
 
 HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" ./agents shims --remove >/dev/null
-test ! -e "$shim_bin/claude-client"
-test "$(readlink "$shim_bin/claude-outside")" = "$test_root/foreign/agent-as"
+test ! -e "$shim_bin/claude-expo"
+test "$(readlink "$shim_bin/claude-client")" = "$test_root/foreign/agent-as"
 
 # --- shell helpers load ----------------------------------------------------
 HOME="$shim_home" PATH="/usr/bin:/bin" zsh -c 'source shell/agents.zsh; command -v agents >/dev/null'
@@ -220,35 +438,66 @@ if command -v fish >/dev/null; then
 fi
 
 # --- release plumbing ------------------------------------------------------
+# One appcast per channel, with the enclosure URL publish-appcast.sh builds
+# from updates.env, and the version pair Sparkle orders by.
+source ./updates.env
 appcast_test=$(mktemp -d "$TMPDIR/appcast.XXXXXX")
-printf artifact > "$appcast_test/N2Agents-continuous-deadbeef.zip"
 signature=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
-./scripts/make-appcast.sh continuous 0.0.1-continuous.deadbeef 1001 \
-  https://github.com/noisyneighborstudio/n2-agents/releases/download/continuous-deadbeef/N2Agents-continuous-deadbeef.zip \
-  "$appcast_test/N2Agents-continuous-deadbeef.zip" "$signature" "$appcast_test/appcast.xml"
-grep -q 'sparkle:channel>continuous<' "$appcast_test/appcast.xml"
-grep -q 'sparkle:edSignature=' "$appcast_test/appcast.xml"
-if ./scripts/make-appcast.sh stable 1.0 1 https://example.invalid/N2Agents-continuous-deadbeef.zip \
-  "$appcast_test/N2Agents-continuous-deadbeef.zip" "$signature" "$appcast_test/bad.xml" 2>/dev/null; then
+for channel version in continuous 1.4.0-continuous.3 stable 1.4.0; do
+  zip_name="N2Agents-$channel-$version.zip"
+  printf artifact > "$appcast_test/$zip_name"
+  url="https://github.com/$N2_UPDATES_REPO/releases/download/v$version/$zip_name"
+  ./scripts/make-appcast.sh "$channel" "$version" 1001 "$url" \
+    "$appcast_test/$zip_name" "$signature" "$appcast_test/$channel.xml"
+  xml=$(<"$appcast_test/$channel.xml")
+  [[ $xml == *"<sparkle:channel>$channel</sparkle:channel>"* ]]
+  [[ $xml == *"<enclosure url=\"$url\" sparkle:version=\"1001\" sparkle:shortVersionString=\"$version\" length=\"8\""* ]]
+  [[ $xml == *"sparkle:edSignature=\"$signature\""* ]]
+  xmllint --noout "$appcast_test/$channel.xml"
+done
+if ./scripts/make-appcast.sh stable 1.0 1 https://example.invalid/N2Agents-continuous-1.4.0-continuous.3.zip \
+  "$appcast_test/N2Agents-continuous-1.4.0-continuous.3.zip" "$signature" "$appcast_test/bad.xml" 2>/dev/null; then
   echo "Wrong-channel appcast was accepted" >&2
   exit 1
 fi
 
-grep -Fq 'branches: [main, release]' .github/workflows/release.yml
+# Update hosting has one source: updates.env. install.sh runs piped, so it
+# carries a copy of the repo, which must match.
+grep -Fqx "UPDATES_REPO=\"$N2_UPDATES_REPO\"" install.sh
+grep -Fq 'source ../updates.env' tray/build.sh
+grep -Fq 'source ./updates.env' scripts/publish-appcast.sh
+# (`! grep` would never trip set -e, hence the explicit exits.)
+grep -Fq 'FeedURL</key>' tray/Info.plist && { echo "feed URL hard-coded in Info.plist" >&2; exit 1 }
+# No leftovers from the claudes fork in the release path.
+grep -in claudes .github/workflows/release.yml .releaserc.json scripts/release-*.sh \
+  scripts/publish-appcast.sh scripts/make-appcast.sh tray/build.sh docs/releases.md \
+  && { echo "claudes-era names left in the release path" >&2; exit 1 }
+
+grep -Fq 'branches: [main, stable]' .github/workflows/release.yml
 grep -Fq 'refs/heads/main) channel=continuous' .github/workflows/release.yml
-grep -Fq 'refs/heads/release) channel=stable' .github/workflows/release.yml
+grep -Fq 'refs/heads/stable) channel=stable' .github/workflows/release.yml
+grep -Fq 'N2_BUILD_NUMBER: ${{ github.run_number }}' .github/workflows/release.yml
 grep -Fq 'npx semantic-release' .github/workflows/release.yml
-grep -Fq '"branches": ["release", { "name": "main", "prerelease": "continuous" }]' .releaserc.json
+grep -Fq '"branches": ["stable", { "name": "main", "prerelease": "continuous" }]' .releaserc.json
 grep -Fq 'release-prepare.sh ${nextRelease.version}' .releaserc.json
 grep -Fq 'publish-appcast.sh ${nextRelease.version} ${nextRelease.gitTag}' .releaserc.json
 grep -Fq 'cp N2Agents.zip "N2Agents-${channel}-${version}.zip"' scripts/release-prepare.sh
 grep -Fq '@executable_path/../Frameworks' Package.swift
-grep -Fq 'push origin HEAD:appcasts' scripts/publish-appcast.sh
+grep -Fq 'push --quiet "$remote" HEAD:appcasts' scripts/publish-appcast.sh
 grep -Fq 'allowedChannels' tray/main.swift
 grep -Fq 'UpdateChannel.preferenceKey' tray/main.swift
 
 # The tray must not re-implement profile discovery: it parses the CLI instead.
 grep -Fq 'Snapshot.parse' tray/main.swift
 grep -Fq 'runCLI(["porcelain"])' tray/main.swift
+
+# Every bundled script runs with the login shell's PATH: under launchd's four
+# directories the CLI finds no lab installed and the panel comes back empty.
+[ "$(grep -c 'task.environment = Self.scriptEnvironment' tray/main.swift)" = "$(grep -c 'task.arguments = \[\(cliPath\|scriptsDir\)' tray/main.swift)" ]
+
+# The window server shades the window's alpha: the glass sits in a rounded
+# clip, or its rectangular backing layer casts a square shadow.
+grep -Fq 'clip.layer?.masksToBounds = true' tray/GlassWindow.swift
+grep -Fq 'hasShadow = true' tray/GlassWindow.swift
 
 echo "All tests passed"

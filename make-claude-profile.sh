@@ -54,7 +54,7 @@ pb ":CFBundleDisplayName" "Claude $name"
 # Badge the icon: colored ribbon with the profile name, so Dock/Cmd-Tab icons
 # are distinguishable. Best-effort — a profile without a badge still works.
 badge="${0:A:h}/icon-badge"
-[[ -x $badge ]] || badge="${0:A:h}/tray/build/N2Agents.app/Contents/Resources/icon-badge"  # dev-tree fallback
+[[ -x $badge ]] || badge="${0:A:h}/tray/build/N2 Agents.app/Contents/Resources/icon-badge"  # dev-tree fallback
 iconfile=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIconFile" "$plist" 2>/dev/null || echo electron)
 iconfile="${iconfile%.icns}.icns"
 if [[ -x $badge && -f "$dst/Contents/Resources/$iconfile" ]]; then

@@ -3,7 +3,7 @@
 #
 #   claude-as <Profile|--next|--best> [claude args…]
 #   codex-as  <Profile|--next|--best> [codex args…]
-#   <vendor>-<profile> [args…]          e.g. claude-work, codex-client, grok-personal
+#   <vendor>-<profile> [args…]          e.g. claude-work, codex-expo, grok-personal
 #
 # Every one of those names is a symlink to this file. They are real executables
 # on PATH, not shell functions, so editors, GUI apps, scripts and

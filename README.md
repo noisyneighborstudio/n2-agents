@@ -7,7 +7,7 @@
 <p align="center">
   <strong>One identity, every lab.</strong><br>
   Work · personal · client — each profile holds its own Claude, Codex, Grok, Gemini,
-  Cursor and opencode login, switched together or pinned one at a time.<br>
+  Cursor, opencode and Muse login, switched together or pinned one at a time.<br>
   A menu bar app plus a small CLI.
 </p>
 
@@ -83,7 +83,7 @@ preference — it is whatever that CLI actually supports:
 
 | Tier | What it means | Labs |
 |---|---|---|
-| `env` | The CLI reads a config-dir environment variable, so a profile can be pinned **per process**. Two profiles run side by side, and a running session keeps its profile no matter what you switch to later. | Claude, Codex, Grok, Cursor, opencode |
+| `env` | The CLI reads a config-dir environment variable, so a profile can be pinned **per process**. Two profiles run side by side, and a running session keeps its profile no matter what you switch to later. | Claude, Codex, Grok, Cursor, opencode, Muse |
 | `swap` | No such variable exists, so the only lever is swapping the dot dir symlink. **One profile at a time**, and switching is global. | Gemini |
 
 `agents vendors` prints the live table. A `swap` lab refuses to run as a
@@ -102,7 +102,7 @@ codex-work                      # run Codex as Work
 grok-personal                   # run Grok as Personal
 
 agents run Work --vendor codex  # the long form of the same thing
-agents run --best               # whichever profile has the most Claude quota left
+agents run --best               # whichever profile has the most quota left
 ```
 
 The `<vendor>-<profile>` commands are real executables on `PATH`, not shell
@@ -113,10 +113,11 @@ functions, so editors, GUI apps and scripts get them too.
 | Lab | CLI | Config home | Isolation | Desktop app | Usage API | Sessions |
 |---|---|---|---|---|---|---|
 | Claude | `claude` | `~/.claude` | `CLAUDE_CONFIG_DIR` | cloned per profile | ✅ | ✅ |
-| Codex | `codex` | `~/.codex` | `CODEX_HOME` | `codex app` | — | ✅ |
-| Grok | `grok` | `~/.grok` | `GROK_HOME` | — | — | — |
+| Codex | `codex` | `~/.codex` | `CODEX_HOME` | `codex app` | ✅ | ✅ |
+| Grok | `grok` | `~/.grok` | `GROK_HOME` | — | ✅ (weekly) | — |
 | Cursor | `cursor-agent` | `~/.cursor` | `CURSOR_CONFIG_DIR` | — | — | — |
 | opencode | `opencode` | `~/.config/opencode` | `XDG_CONFIG_HOME` | — | — | — |
+| Muse (Meta) | `muse` | `~/.config/muse` | `XDG_CONFIG_HOME` + file credentials | — | ✅ (on demand) | — |
 | Gemini | `gemini` | `~/.gemini` | *none* | — | — | — |
 
 Every one of those isolation levers was verified against the shipped binary
@@ -124,8 +125,17 @@ rather than taken from documentation. Gemini's `GEMINI_DIR` looks like an
 environment variable but is a source constant equal to `".gemini"`, which is
 why it is the one `swap` lab.
 
-Only Claude currently exposes a server-side quota endpoint, so `agents best`
-works for Claude and tells you plainly that the others have nothing to rank.
+Claude, Codex, Grok and Muse expose a server-side quota endpoint, so `agents best`
+works for those four and tells you plainly that the others have nothing to rank.
+Grok has one weekly credit pool and no 5-hour window. Each Muse read mints an
+inference key, so the menu bar app reads Muse only when you open the panel or
+press retry, never on its timer. Muse reports numbers only while a 5-hour
+window is open; between windows its row says "no reading".
+
+Muse keeps its sign-in in one keychain item whatever `XDG_CONFIG_HOME` says, so
+every profile but Default runs it with `TBH_CREDENTIAL_BACKEND=file` and keeps
+its login in its own slot. Default keeps the keychain login a plain `muse` uses.
+A profile set up before this has to sign in to Muse once more.
 
 **Adding a lab** means adding one `case` arm to each accessor in
 [`vendors.sh`](vendors.sh). Nothing in `agents` or the menu bar app needs to
@@ -164,8 +174,8 @@ agents transfer <id> --to Personal --vendor codex
 agents run Personal --vendor codex --start-from-session=<id>
 ```
 
-`--best` picks the profile with the most Claude quota left (from the same OAuth
-endpoint the CLI's own `/usage` screen reads — real server-side numbers, not a
+`--best` picks the profile with the most quota left (from the same endpoint
+the lab's own CLI reads for its usage screen — real server-side numbers, not a
 local guess). `--next` round-robins.
 
 ## Coming from Claudes
@@ -187,7 +197,7 @@ account.
 Add other labs to an adopted profile with:
 
 ```sh
-agents new Client --vendors codex,grok
+agents new ExpoIO --vendors codex,grok
 ```
 
 ## The menu bar app
@@ -219,12 +229,13 @@ allowed. `agents list` shows which is where; `agents use <Profile>` realigns the
 
 ```sh
 ./scripts/test.sh      # syntax, adapter table, profile lifecycle, shims, release plumbing
-./tray/build.sh        # builds tray/build/N2Agents.app
+./tray/build.sh        # builds "tray/build/N2 Agents.app"
 ```
 
-The bundle is `N2Agents.app` on disk with `CFBundleDisplayName` set to
-"N2 Agents" — Finder and the menu bar show the pretty name while no script has
-to deal with a space in the path.
+The app is `N2 Agents.app`, with the same bundle and executable name, so
+Finder, Activity Monitor and Login Items all agree. Installs made before the
+rename live at `N2Agents.app`; Sparkle updates keep that path, and `install.sh`
+moves them (and re-points the PATH links) to the new name.
 
 ## License
 

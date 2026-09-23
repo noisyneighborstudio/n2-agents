@@ -2,7 +2,7 @@ import AppKit
 
 // icon-badge <in.icns> <out.png> <label>
 // Renders the base icon at 1024px with a colored ribbon carrying the label.
-// Color is a stable hash of the label, so a profile keeps its color everywhere.
+// Color comes from ProfileColor, so the ribbon matches the tray panel.
 
 let args = CommandLine.arguments
 guard args.count >= 4 else {
@@ -23,18 +23,7 @@ canvas.lockFocus()
 base.draw(in: NSRect(x: 0, y: 0, width: size, height: size),
           from: .zero, operation: .sourceOver, fraction: 1.0)
 
-let palette: [NSColor] = [
-    NSColor(calibratedRed: 0.20, green: 0.47, blue: 0.96, alpha: 0.94), // blue
-    NSColor(calibratedRed: 0.55, green: 0.36, blue: 0.96, alpha: 0.94), // purple
-    NSColor(calibratedRed: 0.10, green: 0.63, blue: 0.52, alpha: 0.94), // teal
-    NSColor(calibratedRed: 0.91, green: 0.30, blue: 0.47, alpha: 0.94), // pink
-    NSColor(calibratedRed: 0.93, green: 0.58, blue: 0.05, alpha: 0.94), // amber
-    NSColor(calibratedRed: 0.33, green: 0.69, blue: 0.23, alpha: 0.94), // green
-    NSColor(calibratedRed: 0.82, green: 0.22, blue: 0.20, alpha: 0.94), // red
-]
-var hash: UInt64 = 5381
-for byte in label.utf8 { hash = hash &* 33 &+ UInt64(byte) }
-let color = palette[Int(hash % UInt64(palette.count))]
+let color = ProfileColor.of(label).withAlphaComponent(0.94)
 
 let ribbonHeight = size * 0.26
 let ribbon = NSRect(x: size * 0.055, y: size * 0.04, width: size * 0.89, height: ribbonHeight)

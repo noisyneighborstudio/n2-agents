@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Removes N2Agents.app and everything install.sh / the tray wired up: shell
+# Removes "N2 Agents.app" (and a pre-rename N2Agents.app) and everything install.sh / the tray wired up: shell
 # helper lines (zsh/bash), the fish conf.d stub, the `agents` PATH symlink,
 # Warp launch configs, tray defaults — and un-migrates every vendor dot dir
 # that `agents use` turned into a symlink, so plain `claude`/`codex`/… keep
@@ -22,9 +22,15 @@ cleanup_shim_lock() { rm -f "$shim_lock" }
 trap cleanup_shim_lock EXIT
 trap 'exit 1' HUP INT TERM
 
+# N2Agents.app is the pre-rename bundle; Sparkle updates keep an install there.
+apps_dirs=("/Applications/N2 Agents.app" "/Applications/N2Agents.app")
+pkill -f '/Contents/MacOS/N2 Agents$' 2>/dev/null || true
 pkill -f N2AgentsTray 2>/dev/null || true
-rm -rf /Applications/N2Agents.app
-echo "✓ Removed N2Agents.app"
+for a in $apps_dirs; do
+  [[ -e $a ]] || continue
+  rm -rf "$a"
+  echo "✓ Removed ${a:t}"
+done
 
 # Un-migrate the global switch for every vendor: put the real dot dir back.
 #
@@ -39,11 +45,12 @@ vendor_dots=(
   gemini   "$HOME/.gemini"
   cursor   "$HOME/.cursor"
   opencode "$HOME/.config/opencode"
+  muse     "$HOME/.config/muse"
 )
 for vendor dot in ${(kv)vendor_dots}; do
   [[ -L $dot ]] || continue
   slot="$HOME/.n2-agents/Default/$vendor"
-  [[ $vendor == opencode ]] && slot="$HOME/.n2-agents/Default/opencode/opencode"
+  [[ $vendor == (opencode|muse) ]] && slot="$HOME/.n2-agents/Default/$vendor/$vendor"
   rm "$dot"
   if [[ -L $slot ]]; then
     echo "✓ Removed $dot symlink (Default was adopted from another tool; left its dir alone)"
@@ -59,16 +66,23 @@ done
 # Filter the exact installed helper lines via a temp file + `cat >`. This writes
 # through rc files that are symlinks into a dotfiles repo, which BSD `sed -i`
 # refuses to edit.
-res="/Applications/N2Agents.app/Contents/Resources"
-zsh_line='[[ -f "'"$res"'/agents.zsh" ]] && source "'"$res"'/agents.zsh"  # n2agents'
-bash_line='[ -f "'"$res"'/agents.bash" ] && . "'"$res"'/agents.bash"  # n2agents'
+# Helper lines for either bundle name, plus the PATH line.
+drop=()
+for a in $apps_dirs; do
+  res="$a/Contents/Resources"
+  drop+=(-e '[[ -f "'"$res"'/agents.zsh" ]] && source "'"$res"'/agents.zsh"  # n2agents'
+         -e '[ -f "'"$res"'/agents.bash" ] && . "'"$res"'/agents.bash"  # n2agents')
+done
 path_line='export PATH="$HOME/.local/bin:$PATH"  # n2agents-path'
-fish_line='test -f "'"$res"'/agents.fish"; and source "'"$res"'/agents.fish"  # n2agents'
-fish_path_line='fish_add_path "$HOME/.local/bin"  # n2agents-path'
+fish_drop=(-e 'fish_add_path "$HOME/.local/bin"  # n2agents-path')
+for a in $apps_dirs; do
+  res="$a/Contents/Resources"
+  fish_drop+=(-e 'test -f "'"$res"'/agents.fish"; and source "'"$res"'/agents.fish"  # n2agents')
+done
 for rc in "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.bashrc"; do
-  if grep -qxF -e "$zsh_line" -e "$bash_line" -e "$path_line" "$rc" 2>/dev/null; then
+  if grep -qxF $drop -e "$path_line" "$rc" 2>/dev/null; then
     tmp=$(mktemp)
-    grep -vxF -e "$zsh_line" -e "$bash_line" -e "$path_line" "$rc" > "$tmp" || true
+    grep -vxF $drop -e "$path_line" "$rc" > "$tmp" || true
     cat "$tmp" > "$rc"
     rm -f "$tmp"
     echo "✓ Removed shell helper line from ${rc/#$HOME/~}"
@@ -76,9 +90,9 @@ for rc in "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.bashrc"; do
 done
 
 fish_stub="$HOME/.config/fish/conf.d/n2agents.fish"
-if grep -qxF -e "$fish_line" -e "$fish_path_line" "$fish_stub" 2>/dev/null; then
+if grep -qxF $fish_drop "$fish_stub" 2>/dev/null; then
   tmp=$(mktemp)
-  grep -vxF -e "$fish_line" -e "$fish_path_line" "$fish_stub" > "$tmp" || true
+  grep -vxF $fish_drop "$fish_stub" > "$tmp" || true
   if [[ -s $tmp ]]; then
     cat "$tmp" > "$fish_stub"
   else
@@ -89,16 +103,16 @@ if grep -qxF -e "$fish_line" -e "$fish_path_line" "$fish_stub" 2>/dev/null; then
 fi
 
 # PATH symlinks — the CLI plus the claude-as / claude-<profile> shims, only
-# where they actually point into N2Agents.app.
-cli_target="/Applications/N2Agents.app/Contents/Resources/agents"
-shim_target="/Applications/N2Agents.app/Contents/Resources/agent-as"
+# where they actually point into either bundle.
+targets=()
+for a in $apps_dirs; do targets+=("$a/Contents/Resources/agents" "$a/Contents/Resources/agent-as"); done
 for bindir in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin"; do
   # Shims are named <vendor>-<profile>, which we can't enumerate here, so
   # ownership is decided by the symlink TARGET rather than by the name.
   for link in "$bindir"/*(N); do
     [[ -L $link ]] || continue
     target=$(readlink "$link")
-    [[ $target == "$cli_target" || $target == "$shim_target" ]] || continue
+    (( ${targets[(Ie)$target]} )) || continue
     rm "$link"
     echo "✓ Removed $link"
   done
