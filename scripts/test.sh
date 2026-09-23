@@ -235,31 +235,54 @@ print -r -- "$usage" | grep -qx 'Work	7	30	2026-09-26T08:24	ok	2026-10-02T03:17'
 rm -r "$home/.n2-agents/Work/muse"
 
 # Recent sessions span labs, newest first, and skip injected context to reach
-# the first real prompt.
+# the first real prompt. Each carries its branch and the lab's name for it:
+# Claude's latest ai-title, overruled by a /rename; Codex's thread index.
 mkdir -p "$home/.n2-agents/Work/claude/projects/p" "$home/.n2-agents/Work/codex/sessions/2026/01/01"
 cat > "$home/.n2-agents/Work/claude/projects/p/c1.jsonl" <<'JSONL'
+{"type":"ai-title","aiTitle":"Parser work"}
 {"type":"user","cwd":"/src/alpha","isMeta":true,"message":{"role":"user","content":"Caveat: injected"}}
-{"type":"user","cwd":"/src/alpha","message":{"role":"user","content":[{"type":"text","text":"fix the parser"}]}}
+{"type":"user","cwd":"/src/alpha","gitBranch":"main","entrypoint":"cli","message":{"role":"user","content":[{"type":"text","text":"fix the parser"}]}}
+{"type":"ai-title","aiTitle":"Fix the \"parser\""}
+{"type":"user","cwd":"/src/alpha","gitBranch":"seth/parser","entrypoint":"cli","message":{"role":"user","content":"more"}}
 JSONL
 cat > "$home/.n2-agents/Work/codex/sessions/2026/01/01/rollout-2026-01-01T00-00-00-x1.jsonl" <<'JSONL'
-{"type":"session_meta","payload":{"cwd":"/src/beta"}}
+{"type":"session_meta","payload":{"cwd":"/src/beta","source":"cli","git":{"commit_hash":"abc","branch":"release"}}}
 {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>x</environment_context>"}]}}
 {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /src/beta"}]}}
 {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"ship the release"}]}}
 JSONL
-# Codex's own helpers (the tool-call reviewer) leave transcripts too; the
-# newest file here is one, and it neither shows nor uses up the limit.
+print -r -- '{"id":"x1","thread_name":"Ship it","updated_at":"2026-01-01T00:00:00Z"}' \
+  > "$home/.n2-agents/Work/codex/session_index.jsonl"
+# Background transcripts leave files too — Codex's helpers (the tool-call
+# reviewer) and `codex exec`, Claude's subagents and `claude -p` — and each
+# is newer than the real ones here: none shows, and none uses up the limit.
 cat > "$home/.n2-agents/Work/codex/sessions/2026/01/01/rollout-2026-01-01T00-00-01-g1.jsonl" <<'JSONL'
 {"type":"session_meta","payload":{"cwd":"/src/beta","source":{"subagent":{"other":"guardian"}}}}
 {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"The following is the Codex agent history"}]}}
 JSONL
+print -r -- '{"type":"session_meta","payload":{"cwd":"/src/beta","source":"exec"}}' \
+  > "$home/.n2-agents/Work/codex/sessions/2026/01/01/rollout-2026-01-01T00-00-02-e1.jsonl"
+print -r -- '{"type":"user","cwd":"/tmp/t","entrypoint":"sdk-cli","message":{"role":"user","content":"Generate a title"}}' \
+  > "$home/.n2-agents/Work/claude/projects/p/p1.jsonl"
+mkdir -p "$home/.n2-agents/Work/claude/projects/p/c1/subagents"
+print -r -- '{"type":"user","cwd":"/src/alpha","isSidechain":true,"entrypoint":"cli","message":{"role":"user","content":"research"}}' \
+  > "$home/.n2-agents/Work/claude/projects/p/c1/subagents/agent-a1.jsonl"
 touch -t 202601010000 "$home/.n2-agents/Work/claude/projects/p/c1.jsonl"
 touch -t 202601010100 "$home/.n2-agents/Work/codex/sessions/2026/01/01/rollout-2026-01-01T00-00-00-x1.jsonl"
-touch -t 202601020000 "$home/.n2-agents/Work/codex/sessions/2026/01/01/rollout-2026-01-01T00-00-01-g1.jsonl"
+for f in codex/sessions/2026/01/01/rollout-2026-01-01T00-00-01-g1.jsonl codex/sessions/2026/01/01/rollout-2026-01-01T00-00-02-e1.jsonl \
+         claude/projects/p/p1.jsonl claude/projects/p/c1/subagents/agent-a1.jsonl; do
+  touch -t 202601020000 "$home/.n2-agents/Work/$f"
+done
 recent=$(run_agents sessions --porcelain --limit 2)
-test "$(print -r -- "$recent" | sed -n 1p | cut -f1-3,5,6)" = "Work	codex	x1	/src/beta	ship the release"
-test "$(print -r -- "$recent" | sed -n 2p | cut -f1-3,5,6)" = "Work	claude	c1	/src/alpha	fix the parser"
+test "$(print -r -- "$recent" | sed -n 1p | cut -f1-3,5-)" = "Work	codex	x1	/src/beta	ship the release	release	Ship it"
+test "$(print -r -- "$recent" | sed -n 2p | cut -f1-3,5-)" = 'Work	claude	c1	/src/alpha	fix the parser	seth/parser	Fix the "parser"'
 test "$(run_agents sessions --porcelain Work --vendor claude | wc -l | tr -d ' ')" = 1
+# A second listing reads the cache, and a transcript that changed is read again.
+test "$(run_agents sessions --porcelain --limit 2)" = "$recent"
+print -r -- '{"type":"custom-title","customTitle":"Renamed"}' >> "$home/.n2-agents/Work/claude/projects/p/c1.jsonl"
+touch -t 202601010000 "$home/.n2-agents/Work/claude/projects/p/c1.jsonl"
+touch -t 202601010001 "$home/.n2-agents/Work/claude/projects/p/c1.jsonl"
+test "$(run_agents sessions --porcelain Work --vendor claude | cut -f8)" = "Renamed"
 
 # login signs the pinned slot out and back in through the CLI's own commands.
 out=$(run_agents login Work --vendor codex 2>&1)
