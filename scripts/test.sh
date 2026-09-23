@@ -35,7 +35,7 @@ zsh -n install.sh uninstall.sh make-claude-profile.sh repatch-claude-profiles.sh
   scripts/publish-appcast.sh shell/agents.zsh
 bash -n shell/agents.bash
 command -v fish >/dev/null && fish -n shell/agents.fish
-swiftc -typecheck tray/main.swift tray/UpdateChannel.swift tray/Vendors.swift tray/ProfileColor.swift tray/Ink.swift tray/LabMark.swift \
+swiftc -typecheck tray/main.swift tray/UpdateChannel.swift tray/Vendors.swift tray/ProfileColor.swift tray/StatusIcon.swift tray/QuotaToast.swift tray/Ink.swift tray/LabMark.swift \
   tray/PanelModel.swift tray/PanelView.swift tray/ProfileSetup.swift tray/GlassWindow.swift tray/ShellPath.swift
 swiftc -typecheck tray/icon-badge/main.swift tray/ProfileColor.swift
 swiftc -typecheck scripts/make-icon.swift
@@ -46,6 +46,9 @@ swiftc tray/UpdateChannel.swift tests/UpdateChannelTests.swift -o "$channel_test
 path_test=$(mktemp -d "$TMPDIR/shellpath.XXXXXX")/shell-path-tests
 swiftc tray/ShellPath.swift tests/ShellPathTests.swift -o "$path_test"
 "$path_test"
+icon_test=$(mktemp -d "$TMPDIR/statusicon.XXXXXX")/status-icon-tests
+swiftc tray/StatusIcon.swift tests/StatusIconTests.swift -o "$icon_test"
+"$icon_test"
 
 # --- vendor adapter table --------------------------------------------------
 # The isolation tier is the single most load-bearing fact in the app: an `env`

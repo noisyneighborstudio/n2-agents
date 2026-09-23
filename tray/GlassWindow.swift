@@ -11,6 +11,9 @@ final class GlassWindow: NSPanel {
         /// The menu bar panel: pinned under the status item, and gone on Esc,
         /// a click elsewhere, or another window taking focus — a popover's job.
         case transient(anchor: NSStatusBarButton)
+        /// A notice under the status item: shown without taking focus or
+        /// activating the app, and gone when its owner dismisses it.
+        case toast(anchor: NSStatusBarButton)
         /// The setup window: floats above everything, including the terminal
         /// that takes focus mid-sign-in, until it is closed.
         case floating
@@ -47,7 +50,10 @@ final class GlassWindow: NSPanel {
         content = hosting
         self.behavior = behavior
         self.cornerRadius = cornerRadius
-        super.init(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: true)
+        var style: NSWindow.StyleMask = [.borderless]
+        // Clickable without pulling the app forward over what you're doing.
+        if case .toast = behavior { style.insert(.nonactivatingPanel) }
+        super.init(contentRect: .zero, styleMask: style, backing: .buffered, defer: true)
         isOpaque = false
         backgroundColor = .clear
         // The window server traces the shadow from the window's alpha, which
@@ -56,7 +62,7 @@ final class GlassWindow: NSPanel {
         isReleasedWhenClosed = false
         hidesOnDeactivate = false
         switch behavior {
-        case .transient:
+        case .transient, .toast:
             level = .popUpMenu
             collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
         case .floating:
@@ -140,16 +146,19 @@ final class GlassWindow: NSPanel {
         alphaValue = 1
         fit(recenter: !isVisible)
         let target = frame
-        NSApp.activate(ignoringOtherApps: true)
+        let toast: Bool
+        if case .toast = behavior { toast = true } else { toast = false }
+        if !toast { NSApp.activate(ignoringOtherApps: true) }
+        let show = { toast ? self.orderFrontRegardless() : self.makeKeyAndOrderFront(nil) }
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || target.isEmpty {
-            makeKeyAndOrderFront(nil)
+            show()
         } else {
             setFrame(furled(target), display: false)
             alphaValue = 0
             // The window server can't retrace a shadow every frame of a moving
             // window; it comes back, fitted to the glass, once the frame lands.
             hasShadow = false
-            makeKeyAndOrderFront(nil)
+            show()
             unfurling = true
             let generation = generation
             NSAnimationContext.runAnimationGroup { context in
@@ -168,7 +177,8 @@ final class GlassWindow: NSPanel {
         makeFirstResponder(nil)
         if case .transient = behavior, clickMonitor == nil {
             clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-                self?.dismiss()
+                guard let self, !self.pointerOnAnchor else { return }
+                self.dismiss()
             }
         }
     }
@@ -180,15 +190,15 @@ final class GlassWindow: NSPanel {
         return NSRect(x: full.midX - width / 2, y: full.maxY - height, width: width, height: height)
     }
 
-    /// Transient: furls back up and hides, ready to show again (160 ms).
-    /// Floating: close for good.
+    /// Transient and toast: furls back up and hides, ready to show again
+    /// (160 ms). Floating: close for good.
     func dismiss() {
         guard isShowing else { return }
         if let monitor = clickMonitor {
             NSEvent.removeMonitor(monitor)
             clickMonitor = nil
         }
-        guard case .transient = behavior else {
+        if case .floating = behavior {
             close()
             return
         }
@@ -220,7 +230,16 @@ final class GlassWindow: NSPanel {
 
     override func resignKey() {
         super.resignKey()
-        if case .transient = behavior { dismiss() }
+        if case .transient = behavior, !pointerOnAnchor { dismiss() }
+    }
+
+    /// The pointer is on the status item. A press there can cost the panel
+    /// key, or register as a click away, before the item's own action runs —
+    /// and if either closed the panel, that action would open it straight
+    /// back up. So both leave it to the action, which toggles it shut.
+    private var pointerOnAnchor: Bool {
+        guard case .transient(let button) = behavior, let window = button.window else { return false }
+        return window.convertToScreen(button.convert(button.bounds, to: nil)).contains(NSEvent.mouseLocation)
     }
 
     private func fit(recenter: Bool) {
@@ -228,7 +247,7 @@ final class GlassWindow: NSPanel {
         let size = measured.size == .zero ? content.intrinsicContentSize : measured.size
         guard size.width > 0, size.height > 0 else { return }
         switch behavior {
-        case .transient(let button):
+        case .transient(let button), .toast(let button):
             guard let buttonWindow = button.window else { return }
             let anchor = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
             var x = anchor.midX - size.width / 2
