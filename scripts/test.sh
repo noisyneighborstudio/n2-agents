@@ -18,7 +18,7 @@ mkdir -p "$fake_bin"
 for v in claude codex grok gemini cursor-agent opencode; do
   cat > "$fake_bin/$v" <<'FAKE'
 #!/bin/sh
-echo "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-} CODEX_HOME=${CODEX_HOME:-} GROK_HOME=${GROK_HOME:-} CURSOR_CONFIG_DIR=${CURSOR_CONFIG_DIR:-} XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-}"
+echo "CLAUDE_CONFIG_DIR=${CLAUDE_CONFIG_DIR:-} CODEX_HOME=${CODEX_HOME:-} GROK_HOME=${GROK_HOME:-} CURSOR_CONFIG_DIR=${CURSOR_CONFIG_DIR:-} XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-} ARGS=$*"
 FAKE
   chmod +x "$fake_bin/$v"
 done
@@ -31,7 +31,7 @@ zsh -n install.sh uninstall.sh make-claude-profile.sh repatch-claude-profiles.sh
   scripts/publish-appcast.sh shell/agents.zsh
 bash -n shell/agents.bash
 command -v fish >/dev/null && fish -n shell/agents.fish
-swiftc -typecheck tray/main.swift tray/UpdateChannel.swift tray/Vendors.swift
+swiftc -typecheck tray/main.swift tray/UpdateChannel.swift tray/Vendors.swift tray/Hotkey.swift
 swiftc -typecheck scripts/make-icon.swift
 channel_test=$(mktemp -d "$TMPDIR/channel.XXXXXX")/update-channel-tests
 swiftc tray/UpdateChannel.swift tests/UpdateChannelTests.swift -o "$channel_test"
@@ -80,6 +80,13 @@ out=$(run_agents run Work --vendor codex)
 out=$(run_agents run Work --vendor grok)
 [[ $out == *"GROK_HOME=$home/.n2-agents/Work/grok"* ]]
 
+# `login` runs the vendor's own sign-in under the same pin, so credentials land
+# in the profile's slot — two-word flows (`auth login`) must survive intact.
+out=$(run_agents login Work --vendor codex)
+[[ $out == *"CODEX_HOME=$home/.n2-agents/Work/codex"* && $out == *"ARGS=login" ]]
+out=$(run_agents login Work --vendor claude)
+[[ $out == *"CLAUDE_CONFIG_DIR=$home/.n2-agents/Work/claude"* && $out == *"ARGS=auth login" ]]
+
 # A swap-only vendor must refuse to run as a non-active profile without
 # --switch, because there is no way to pin it per process. The slot exists, so
 # this can only be the isolation guard talking.
@@ -123,20 +130,20 @@ print -r -- "$porcelain" | awk -F'\t' '$1=="P" && $4!="-" {print $4}' \
 
 # --- adopt: shares claudes state, never copies it --------------------------
 adopt_home="$test_root/adopt-home"
-mkdir -p "$adopt_home/.claude-profiles/Default" "$adopt_home/.claude-profiles/ExpoIO"
-echo token > "$adopt_home/.claude-profiles/ExpoIO/.credentials.json"
+mkdir -p "$adopt_home/.claude-profiles/Default" "$adopt_home/.claude-profiles/Client"
+echo token > "$adopt_home/.claude-profiles/Client/.credentials.json"
 HOME="$adopt_home" PATH="$fake_path" ./agents adopt --yes >/dev/null 2>&1
 # A symlink, so both apps read one login; a copy would force a re-login because
 # Claude Code keys its keychain entry to the config dir path.
-test -L "$adopt_home/.n2-agents/ExpoIO/claude"
-test "$(readlink "$adopt_home/.n2-agents/ExpoIO/claude")" = "$adopt_home/.claude-profiles/ExpoIO"
-test "$(cat "$adopt_home/.n2-agents/ExpoIO/claude/.credentials.json")" = token
+test -L "$adopt_home/.n2-agents/Client/claude"
+test "$(readlink "$adopt_home/.n2-agents/Client/claude")" = "$adopt_home/.claude-profiles/Client"
+test "$(cat "$adopt_home/.n2-agents/Client/claude/.credentials.json")" = token
 # The legacy tree is untouched — `claudes` must keep working.
-test -d "$adopt_home/.claude-profiles/ExpoIO"
+test -d "$adopt_home/.claude-profiles/Client"
 
 # Adopted profiles resolve as active through the symlink indirection.
-HOME="$adopt_home" PATH="$fake_path" ./agents use ExpoIO --vendor claude >/dev/null
-test "$(HOME="$adopt_home" PATH="$fake_path" ./agents active --vendor claude)" = ExpoIO
+HOME="$adopt_home" PATH="$fake_path" ./agents use Client --vendor claude >/dev/null
+test "$(HOME="$adopt_home" PATH="$fake_path" ./agents active --vendor claude)" = Client
 
 # --- reserved and invalid names --------------------------------------------
 for bad in As default; do
@@ -164,10 +171,10 @@ clone_error=$(N2_CLAUDE_APP="$missing_app" ./make-claude-profile.sh Work 2>&1 ||
 shim_home="$test_root/shim-home"
 shim_bin="$shim_home/.local/bin"
 foreign_bin="$test_root/foreign-bin"
-mkdir -p "$shim_home/.n2-agents/Expo/claude" "$shim_home/.n2-agents/Expo/codex" \
+mkdir -p "$shim_home/.n2-agents/Client/claude" "$shim_home/.n2-agents/Client/codex" \
   "$shim_bin" "$foreign_bin" "$test_root/foreign"
-ln -s /usr/bin/false "$foreign_bin/claude-expo"
-ln -s "$test_root/foreign/agent-as" "$shim_bin/claude-client"
+ln -s /usr/bin/false "$foreign_bin/claude-client"
+ln -s "$test_root/foreign/agent-as" "$shim_bin/claude-outside"
 ln -s "$PWD/agents" "$shim_bin/agents"
 
 HOME="$shim_home" PATH="/usr/bin:/bin" sh -c '
@@ -180,13 +187,13 @@ test "$(cat "$shim_home/.n2-agents/.bin-dir")" = "$shim_bin"
 HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" ./agents shims >/dev/null
 
 # Shims exist per (vendor, profile) that actually has a slot…
-for name in claude-as codex-as claude-expo codex-expo; do
+for name in claude-as codex-as claude-client codex-client; do
   test "$(readlink "$shim_bin/$name")" = "$PWD/shell/agent-as"
 done
 # …and not for vendors the profile has no slot for.
-test ! -e "$shim_bin/grok-expo"
+test ! -e "$shim_bin/grok-client"
 # Foreign links are never clobbered.
-test "$(readlink "$shim_bin/claude-client")" = "$test_root/foreign/agent-as"
+test "$(readlink "$shim_bin/claude-outside")" = "$test_root/foreign/agent-as"
 
 # Concurrent syncs must not leave the lock behind.
 HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" TMPDIR="$test_root/one" ./agents shims >/dev/null &
@@ -198,12 +205,12 @@ wait $second
 test ! -e "$shim_home/.n2-agents/.shims.lock"
 
 # A shim dispatches to the right vendor: the name carries both halves.
-HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" "$shim_bin/codex-expo" \
-  | grep -q "CODEX_HOME=$shim_home/.n2-agents/Expo/codex"
+HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" "$shim_bin/codex-client" \
+  | grep -q "CODEX_HOME=$shim_home/.n2-agents/Client/codex"
 
 HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" ./agents shims --remove >/dev/null
-test ! -e "$shim_bin/claude-expo"
-test "$(readlink "$shim_bin/claude-client")" = "$test_root/foreign/agent-as"
+test ! -e "$shim_bin/claude-client"
+test "$(readlink "$shim_bin/claude-outside")" = "$test_root/foreign/agent-as"
 
 # --- shell helpers load ----------------------------------------------------
 HOME="$shim_home" PATH="/usr/bin:/bin" zsh -c 'source shell/agents.zsh; command -v agents >/dev/null'

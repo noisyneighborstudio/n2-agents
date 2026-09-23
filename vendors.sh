@@ -20,6 +20,7 @@
 #   usage       oauth  — server-side quota we can query (Claude only, today)
 #               none
 #   sessions    layout of resumable transcripts, for list/transfer
+#   login       args that start the CLI's own sign-in flow
 #
 # POSIX sh on purpose — sourced by `agents`, which any shell may invoke.
 
@@ -129,6 +130,17 @@ vendor_sessions() {
     claude) echo projects ;;   # projects/<slug>/<uuid>.jsonl
     codex)  echo sessions ;;   # sessions/<y>/<m>/<d>/rollout-*.jsonl
     *)      echo none ;;
+  esac
+}
+
+# Arguments that start the vendor's sign-in flow, run under the profile's pin.
+# Empty means the CLI has no login subcommand: it authenticates interactively on
+# launch (gemini — `/auth` switches account once signed in).
+vendor_login() {
+  case $1 in
+    claude|opencode)     echo "auth login" ;;
+    codex|grok|cursor)   echo "login" ;;
+    *)                   echo "" ;;
   esac
 }
 

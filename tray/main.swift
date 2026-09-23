@@ -107,6 +107,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
     )
 #endif
 
+    private lazy var hotKey = GlobalHotKey { [weak self] in self?.popMenuAtPointer() }
+
     private var autoRepatchEnabled: Bool {
         get { UserDefaults.standard.object(forKey: "autoRepatch") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "autoRepatch") }
@@ -152,6 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
+        hotKey.register(Shortcut.load())
 
         // Auto-repatch: event-driven — watch /Applications for bundle swaps
         // (Claude's updater renames the new version into place, which modifies
@@ -241,6 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
                 }
                 sub.addItem(actionItem("Copy Command:  \(v.id)-\(profile.name.lowercased())",
                                        #selector(copyVendorCommand(_:)), "\(profile.name)|\(v.id)"))
+                sub.addItem(actionItem("Log In to \(v.label)…", #selector(loginVendor(_:)), "\(profile.name)|\(v.id)"))
                 if v.id == "claude" {
                     if profile.hasApp && claudeInstalled {
                         sub.addItem(actionItem("Open Claude Desktop",
@@ -292,6 +296,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
             termItem.submenu = termMenu
             menu.addItem(termItem)
         }
+        menu.addItem(actionItem("Menu Shortcut: \(Shortcut.load()?.display ?? "None")…",
+                                #selector(setMenuShortcut(_:)), nil))
         menu.addItem(.separator())
         menu.addItem(actionItem("Report a Bug…", #selector(reportBug(_:)), nil))
         let versionItem = NSMenuItem(title: "N2 Agents v\(currentVersion)", action: nil, keyEquivalent: "")
@@ -639,6 +645,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Update
               let spec = terminalSpecs.first(where: { $0.bundleId == id }) else { return }
         launchSession(sessionCommand(profile: t.profile, vendor: t.vendor),
                       slug: "\(t.profile)-\(t.vendor.id)", in: spec)
+    }
+
+    // The vendor's own sign-in, pinned to this profile's slot by the CLI.
+    @objc private func loginVendor(_ sender: NSMenuItem) {
+        guard let t = parseTarget(sender) else { return }
+        var cmd = "\"\(cliPath)\" login \(t.profile) --vendor \(t.vendor.id)"
+        if t.vendor.isolation == "swap" { cmd += " --switch" }
+        launchSession(cmd, slug: "\(t.profile)-\(t.vendor.id)-login", in: preferredTerminal)
+    }
+
+    // MARK: - Global menu shortcut
+
+    private func popMenuAtPointer() {
+        NSApp.activate(ignoringOtherApps: true)
+        statusItem.menu?.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+
+    @objc private func setMenuShortcut(_ sender: NSMenuItem) {
+        let current = Shortcut.load()
+        let recorder = ShortcutRecorderView(current: current)
+        let dialog = NSAlert()
+        dialog.messageText = "Menu shortcut"
+        dialog.informativeText = "Press a combination with ⌘, ⌥ or ⌃. It opens the N2 Agents menu at the pointer from any app — handy when the icon is hidden behind the notch."
+        dialog.accessoryView = recorder
+        dialog.addButton(withTitle: "Save")
+        dialog.addButton(withTitle: "Clear")
+        dialog.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        dialog.window.initialFirstResponder = recorder
+        let choice = dialog.runModal()
+        guard choice != .alertThirdButtonReturn else { return }
+
+        let picked = choice == .alertFirstButtonReturn ? (recorder.recorded ?? current) : nil
+        guard hotKey.register(picked) else {
+            hotKey.register(current)
+            alert("Shortcut unavailable", "\(picked?.display ?? "That shortcut") is already taken by another app. Pick a different one.")
+            return
+        }
+        Shortcut.save(picked)
     }
 
     @objc private func copyVendorCommand(_ sender: NSMenuItem) {

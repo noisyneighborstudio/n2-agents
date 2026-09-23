@@ -7,6 +7,7 @@
 #   agents active [--vendor <v>]          print the active profile
 #   agents use <Profile|Default> [--vendor <v>]
 #   agents run <Profile|--next|--best> [--vendor <v>] [--start-from-session=<id>] [args]
+#   agents login <Profile> [--vendor <v>] [--switch]   sign a profile's slot in
 #   agents best [--vendor <v>]            per-profile usage (5h/7d windows)
 #   agents new <Name> [--vendors a,b] [--cli-only]
 #   agents delete <Name> [--everything] [--yes]
@@ -527,6 +528,29 @@ cmd_run() {
     exec_vendor "$v" "$cfg" "$cli" "$(resume_flag "$v")" "$sess" "$@"
   fi
   exec_vendor "$v" "$cfg" "$cli" "$@"
+}
+
+# --- login -----------------------------------------------------------------
+
+# The vendor's own sign-in flow, pinned to the profile like any `run` — so the
+# credentials land in that profile's slot and nowhere else.
+cmd_login() {
+  name="" vsel="" sw=""
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --vendor) vsel=${2:-}; shift 2 ;;
+      --vendor=*) vsel=${1#--vendor=}; shift ;;
+      --switch) sw=--switch; shift ;;
+      -*) die "unknown flag: $1" ;;
+      *) [ -z "$name" ] || die "usage: agents login <Profile> [--vendor <v>] [--switch]"; name=$1; shift ;;
+    esac
+  done
+  [ -n "$name" ] || die "usage: agents login <Profile> [--vendor <v>] [--switch]"
+  v=$(one_vendor "$vsel")
+  args=$(vendor_login "$v")
+  [ -n "$args" ] || echo "agents: $(vendor_label "$v") has no login command — it prompts on launch; use /auth to switch accounts" >&2
+  # $sw and $args unquoted on purpose: empty vanishes, "auth login" is two words.
+  cmd_run "$name" --vendor "$v" $sw $args
 }
 
 resume_flag() {
@@ -1100,7 +1124,7 @@ cmd_porcelain() {
 }
 
 cmd_help() {
-  sed -n '3,21p' "$self" | sed 's/^# \{0,3\}//'
+  sed -n '3,22p' "$self" | sed 's/^# \{0,3\}//'
 }
 
 cmd=${1:-help}
@@ -1111,6 +1135,7 @@ case $cmd in
   active)   cmd_active "$@" ;;
   use)      cmd_use "$@" ;;
   run)      cmd_run "$@" ;;
+  login)    cmd_login "$@" ;;
   best)     cmd_best "$@" ;;
   new)      cmd_new "$@" ;;
   delete)   cmd_delete "$@" ;;
