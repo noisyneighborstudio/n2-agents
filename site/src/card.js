@@ -11,7 +11,7 @@ const LABS = [
   ['Claude', '#18E4CC'],
   ['Codex', '#7848C0'],
   ['Grok', '#F09C24'],
-  ['Gemini', '#0CB490'],
+  ['Muse', '#8CD43C'],
   ['Cursor', '#1884E4'],
   ['opencode', '#FC6054'],
 ];
@@ -22,7 +22,7 @@ const PROFILES = { work: '#FFEA00', personal: '#EDEDE6', client: '#FF3D00' };
 const DEFAULTS = {
   label: 'Six tenants, one lease',
   title: 'One identity.|Every lab.',
-  text: 'Each profile holds its own Claude, Codex, Grok, Gemini, Cursor and opencode login.',
+  text: 'Each profile holds its own Claude, Codex, Grok, Cursor, opencode and Muse login.',
 };
 
 /* satori's HTML parser decodes no entities at all: "&amp;" renders as the

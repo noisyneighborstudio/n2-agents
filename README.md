@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>One identity, every lab.</strong><br>
-  Work · personal · client — each profile holds its own Claude, Codex, Grok, Gemini,
+  Work · personal · client — each profile holds its own Claude, Codex, Grok,
   Cursor, opencode and Muse login, switched together or pinned one at a time.<br>
   A menu bar app plus a small CLI.
 </p>
@@ -78,17 +78,10 @@ A profile is an **identity**, not a login. `Work` holds one slot per lab:
 So `agents use Work` moves Claude, Codex and Grok in one step, instead of
 switching each tool by hand and hoping you got them all.
 
-Underneath there are **two isolation tiers**, and which one a lab gets is not a
-preference — it is whatever that CLI actually supports:
-
-| Tier | What it means | Labs |
-|---|---|---|
-| `env` | The CLI reads a config-dir environment variable, so a profile can be pinned **per process**. Two profiles run side by side, and a running session keeps its profile no matter what you switch to later. | Claude, Codex, Grok, Cursor, opencode, Muse |
-| `swap` | No such variable exists, so the only lever is swapping the dot dir symlink. **One profile at a time**, and switching is global. | Gemini |
-
-`agents vendors` prints the live table. A `swap` lab refuses to run as a
-non-active profile unless you pass `--switch`, because that switch is a global
-side effect you should see coming.
+Underneath, every lab reads a config-dir environment variable, so a profile is
+pinned **per process**. Two profiles run side by side, and a running session
+keeps its profile no matter what you switch to later. `agents vendors` prints
+the live table.
 
 ## Everyday use
 
@@ -118,12 +111,15 @@ functions, so editors, GUI apps and scripts get them too.
 | Cursor | `cursor-agent` | `~/.cursor` | `CURSOR_CONFIG_DIR` | — | — | — |
 | opencode | `opencode` | `~/.config/opencode` | `XDG_CONFIG_HOME` | — | — | — |
 | Muse (Meta) | `muse` | `~/.config/muse` | `XDG_CONFIG_HOME` + file credentials | — | ✅ (on demand) | — |
-| Gemini | `gemini` | `~/.gemini` | *none* | — | — | — |
 
 Every one of those isolation levers was verified against the shipped binary
-rather than taken from documentation. Gemini's `GEMINI_DIR` looks like an
-environment variable but is a source constant equal to `".gemini"`, which is
-why it is the one `swap` lab.
+rather than taken from documentation.
+
+Gemini is no longer supported. Gemini CLI stopped serving personal accounts on
+June 18, 2026, and its successor, Antigravity CLI (`agy`), keeps its login in
+the macOS Keychain, where no profile switch can reach it. On first launch after
+the update, a `~/.gemini` that N2 Agents had linked into a profile turns back
+into a plain directory with the same contents.
 
 Claude, Codex, Grok and Muse expose a server-side quota endpoint, so `agents best`
 works for those four and tells you plainly that the others have nothing to rank.
@@ -215,9 +211,6 @@ agents new ExpoIO --vendors codex,grok
 
 **A lab shows `-` for every profile** — its CLI isn't on `PATH`. `agents vendors`
 prints the install command.
-
-**Gemini won't run as a profile** — Gemini is `swap`-only. Either
-`agents use <Profile> --vendor gemini` first, or pass `--switch` to `agents run`.
 
 **`agents active` says `mixed`** — your labs are on different profiles, which is
 allowed. `agents list` shows which is where; `agents use <Profile>` realigns them.
