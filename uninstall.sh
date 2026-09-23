@@ -42,7 +42,7 @@ vendor_dots=(
   claude   "$HOME/.claude"
   codex    "$HOME/.codex"
   grok     "$HOME/.grok"
-  gemini   "$HOME/.gemini"
+  gemini   "$HOME/.gemini"   # retired lab; an older install may still link it
   cursor   "$HOME/.cursor"
   opencode "$HOME/.config/opencode"
   muse     "$HOME/.config/muse"

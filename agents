@@ -12,7 +12,7 @@
 #   agents delete <Name> [--everything] [--yes]
 #   agents repatch [Name]                 rebuild Claude clone(s) after an update
 #   agents adopt [--yes]                  import existing `claudes` profiles (shared, not copied)
-#   agents login <Profile> [--vendor <v>] [--switch]  sign that slot out and back in
+#   agents login <Profile> [--vendor <v>]  sign that slot out and back in
 #   agents authed <Profile>               per slot: signed in yes|no|unknown
 #   agents sessions [Profile] [--vendor <v>] [--porcelain [--limit N]]  newest first; no helpers or one-shots
 #   agents transfer <id> --to <Profile>|--next|--best [--from <Profile>] [--vendor <v>]
@@ -24,10 +24,9 @@
 # A profile is an IDENTITY, not a login: "Work" holds one slot per vendor, so
 # `agents use Work` moves Claude, Codex, Grok and the rest in one step.
 #
-# Two isolation tiers, decided by whether the vendor reads a config-dir env var
-# (see vendors.sh). `env` vendors also run concurrently — a pinned process keeps
-# its profile no matter what the global switch does later. `swap` vendors have
-# no such lever, so for them only one profile can be live at a time.
+# Every vendor reads a config-dir env var (see vendors.sh), so profiles run
+# concurrently — a pinned process keeps its profile no matter what the global
+# switch does later.
 #
 # POSIX sh on purpose — no zsh/bashisms; callers can be any shell.
 set -eu
@@ -217,16 +216,13 @@ profile_running() {  # profile
 # --- list / vendors --------------------------------------------------------
 
 cmd_vendors() {
-  printf '%-10s %-14s %-11s %-9s %-8s %s\n' "VENDOR" "CLI" "ISOLATION" "DESKTOP" "USAGE" "STATUS"
+  printf '%-10s %-14s %-19s %-9s %-8s %s\n' "VENDOR" "CLI" "PINNED BY" "DESKTOP" "USAGE" "STATUS"
   for v in $N2_VENDORS; do
     if vendor_installed "$v"; then status="installed"; else status="missing — $(vendor_install_hint "$v")"; fi
-    printf '%-10s %-14s %-11s %-9s %-8s %s\n' \
-      "$v" "$(vendor_cli "$v")" "$(vendor_isolation "$v")" \
+    printf '%-10s %-14s %-19s %-9s %-8s %s\n' \
+      "$v" "$(vendor_cli "$v")" "$(vendor_env "$v")" \
       "$(vendor_desktop "$v")" "$(vendor_usage "$v")" "$status"
   done
-  echo ""
-  echo "isolation=env   profiles run concurrently; each process is pinned via \$$(echo VAR)."
-  echo "isolation=swap  no config-dir env var exists, so one profile at a time."
 }
 
 cmd_list() {
@@ -313,7 +309,6 @@ cmd_use() {
   echo "New sessions everywhere use it; running sessions keep the profile they started with."
   for v in $targets; do
     env_var=$(vendor_env "$v")
-    [ -n "$env_var" ] || continue
     eval "cur=\${$env_var:-}"
     [ -n "$cur" ] && echo "note: $env_var is set in this shell and overrides the global switch for $v."
   done
@@ -698,12 +693,11 @@ session_vendor() {  # id, [profile]
 
 cmd_run() {
   usage="usage: agents run [Profile|--next|--best] [--vendor <v>] [--start-from-session=<id>] [args...]"
-  name="" sess="" rotate=0 best=0 vsel="" switch=0
+  name="" sess="" rotate=0 best=0 vsel=""
   while [ $# -gt 0 ]; do
     case $1 in
       --next) rotate=1; shift ;;
       --best) best=1; shift ;;
-      --switch) switch=1; shift ;;
       --vendor) vsel=${2:-}; shift 2 ;;
       --vendor=*) vsel=${1#--vendor=}; shift ;;
       --start-from-session=*) sess=${1#--start-from-session=}; shift ;;
@@ -754,7 +748,6 @@ cmd_run() {
   cfg=$(config_dir "$name" "$v")
   [ -d "$cfg" ] || die "profile '$name' has no $v slot — create it: agents new $name --vendors $v"
 
-  pin_swap_vendor "$name" "$v" "$switch" run
   remember_slot "$name" "$v"
 
   announce_auth "$v" "$name" "$cfg" "${1:-}"
@@ -772,27 +765,12 @@ cmd_run() {
   exec_vendor "$v" "$name" "$cfg" "$cli" "$@"
 }
 
-# A swap-only vendor cannot be pinned per-process: there is no env var to set,
-# so the only way to run it as this profile is to make the profile active.
-# That is a global side effect, so it needs an explicit --switch.
-pin_swap_vendor() {  # profile, vendor, switch 0|1, command name for the hint
-  [ "$(vendor_isolation "$2")" = swap ] || return 0
-  ps_cur=$(active_profile "$2")
-  [ "$ps_cur" != "$1" ] || return 0
-  [ "$3" = 1 ] || die "$(vendor_label "$2") has no config-dir env var, so '$1' must be the active profile (currently '$ps_cur').
-  Switch globally and run:  agents $4 $1 --vendor $2 --switch
-  Or switch on its own:     agents use $1 --vendor $2"
-  switch_vendor "$1" "$2" >&2
-}
-
 # A sign-in writes a credential into whichever slot the process was pinned to, and the
 # vendor's own login output never says which profile that is. Say it first, so a
 # browser prompt cannot be answered with the wrong account for the wrong profile.
 announce_auth() {  # vendor, profile, slot-dir, first vendor arg
   case ${4:-} in login|logout|auth) ;; *) return 0 ;; esac
-  aa_var=$(vendor_env "$1")
-  if [ -n "$aa_var" ]; then aa_where="$aa_var=$(vendor_env_value "$1" "$3")"; else aa_where=$3; fi
-  echo "agents: $(vendor_label "$1") $4 for profile '$2' ($aa_where)" >&2
+  echo "agents: $(vendor_label "$1") $4 for profile '$2' ($(vendor_env "$1")=$(vendor_env_value "$1" "$3"))" >&2
 }
 
 resume_flag() {
@@ -802,18 +780,13 @@ resume_flag() {
   esac
 }
 
-# Launch a vendor CLI pinned to a config dir. `env` vendors get their variable
-# (and any extra the lab needs to keep its login in the slot); `swap` vendors
-# were already pointed at the profile by the caller.
+# Launch a vendor CLI pinned to a config dir through its env var (and any
+# extra the lab needs to keep its login in the slot).
 exec_vendor() {  # vendor, profile, cfg, cli, args...
   ev_vendor=$1 ev_profile=$2 ev_cfg=$3; shift 3
-  ev_env=$(vendor_env "$ev_vendor")
-  if [ -n "$ev_env" ]; then
-    # shellcheck disable=SC2046
-    exec env "$ev_env=$(vendor_env_value "$ev_vendor" "$ev_cfg")" \
-      $(vendor_env_extra "$ev_vendor" "$ev_profile") "$@"
-  fi
-  exec "$@"
+  # shellcheck disable=SC2046
+  exec env "$(vendor_env "$ev_vendor")=$(vendor_env_value "$ev_vendor" "$ev_cfg")" \
+    $(vendor_env_extra "$ev_vendor" "$ev_profile") "$@"
 }
 
 # --- login -----------------------------------------------------------------
@@ -823,11 +796,10 @@ exec_vendor() {  # vendor, profile, cfg, cli, args...
 # `run` pins it, so the new credentials land where that CLI will look for them.
 # Interactive (browser OAuth), so it belongs in a terminal.
 cmd_login() {
-  usage="usage: agents login <Profile> [--vendor <v>] [--switch]"
-  name="" vsel="" switch=0
+  usage="usage: agents login <Profile> [--vendor <v>]"
+  name="" vsel=""
   while [ $# -gt 0 ]; do
     case $1 in
-      --switch) switch=1; shift ;;
       --vendor) vsel=${2:-}; shift 2 ;;
       --vendor=*) vsel=${1#--vendor=}; shift ;;
       -*) die "unknown flag: $1" ;;
@@ -844,20 +816,15 @@ cmd_login() {
     die "$(vendor_label "$v") CLI not found — install it: $(vendor_install_hint "$v")"
   cfg=$(config_dir "$name" "$v")
   [ -d "$cfg" ] || die "profile '$name' has no $v slot — create it: agents new $name --vendors $v"
-  pin_swap_vendor "$name" "$v" "$switch" login
 
   out_args=$(vendor_logout "$v")
   if vendor_authed "$v" "$cfg" "$name"; then authed=0; else authed=$?; fi
-  if [ "$authed" = 1 ]; then
-    :  # nothing to sign out of — a slot being set up for the first time
-  elif [ -n "$out_args" ]; then
+  # authed=1: nothing to sign out of — a slot being set up for the first time
+  if [ "$authed" != 1 ] && [ -n "$out_args" ]; then
     echo "Signing $(vendor_label "$v") out of '$name'…"
     # shellcheck disable=SC2086
     ( exec_vendor "$v" "$name" "$cfg" "$cli" $out_args ) || \
       echo "agents: '$cli $out_args' reported an error — signing in anyway" >&2
-  else
-    echo "Signing $(vendor_label "$v") out of '$name'…"
-    for f in $(vendor_cred_files "$v"); do rm -f "$cfg/$f"; done
   fi
   echo "Now sign in with the account '$name' should use."
   in_args=$(vendor_login "$v")
@@ -964,7 +931,7 @@ cmd_shims() {
   # removes stale commands after the preferred PATH directory changes, and
   # cleans up shims for vendors or profiles that have gone away.
   for prune_dir in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin"; do
-    for v in $N2_VENDORS; do
+    for v in $N2_VENDORS $N2_RETIRED_VENDORS; do
       for f in "$prune_dir/$v"-*; do
         [ -L "$f" ] || continue
         our_shim "$f" || continue
@@ -975,6 +942,7 @@ cmd_shims() {
       done
     done
   done
+  release_retired_dots
   [ "$remove" = 1 ] && return 0
 
   printf '%s\n' "$wanted" | while IFS= read -r b; do
@@ -993,6 +961,21 @@ cmd_shims() {
     ln -sf "$src" "$dir/$b"
   done
   echo "✓ <vendor>-as and <vendor>-<profile> linked in $dir"
+}
+
+# A retired lab's dot dir may still be our symlink into a profile slot. Turn it
+# back into a real dir holding that slot's contents, so the lab's successor
+# keeps its settings and deleting the profile can't pull them out from under it.
+release_retired_dots() {
+  for v in $N2_RETIRED_VENDORS; do
+    rd_dot="$HOME/.$v"
+    [ -L "$rd_dot" ] || continue
+    rd_slot=$(readlink "$rd_dot")
+    case $rd_slot in "$root"/*) ;; *) continue ;; esac
+    rm "$rd_dot"
+    if [ -d "$rd_slot" ]; then cp -Rp "$rd_slot" "$rd_dot"; else mkdir -p "$rd_dot"; fi
+    echo "✓ $rd_dot is a plain directory again ($(vendor_label "$v") is no longer managed)"
+  done
 }
 
 # Profile list changed: keep PATH in step, but never fail the operation over it.
@@ -1057,7 +1040,7 @@ cmd_new() {
   for v in $created; do
     slot="$root/$name/$(vendor_slot_name "$v")"
     printf '  %-9s %s-%s   (or %s)\n' "$v" "$v" "$(lower "$name")" \
-      "$(e=$(vendor_env "$v"); [ -n "$e" ] && echo "$e=$(vendor_env_value "$v" "$slot") $(vendor_env_extra "$v" "$name") $(vendor_cli "$v")" | tr -s ' ' || echo "agents use $name --vendor $v")"
+      "$(echo "$(vendor_env "$v")=$(vendor_env_value "$v" "$slot") $(vendor_env_extra "$v" "$name") $(vendor_cli "$v")" | tr -s ' ')"
   done
   echo "  Sign in to each one once."
 }
@@ -1584,7 +1567,7 @@ cmd_authed() {
 # above. Padding and emoji belong to the human-facing commands; this one is a
 # contract, and it is the only thing the Swift side parses.
 #
-#   V <vendor> <installed 0|1> <isolation> <desktop> <usage> <label> <sessions> <monogram> <desktop app name> <desktop bundle id>
+#   V <vendor> <installed 0|1> <desktop> <usage> <label> <sessions> <monogram> <desktop app name> <desktop bundle id>
 #   P <profile> <desktop-running 0|1> <vendor,vendor,…  or "-">
 #   S <profile> <vendor> <slot-dir> <account or ""> <signed in: yes|no|unknown>   one per slot
 #   L <profile> <vendor>        the last slot `run` started ("next best" starts after it)
@@ -1592,8 +1575,8 @@ cmd_authed() {
 cmd_porcelain() {
   for v in $N2_VENDORS; do
     if vendor_installed "$v"; then i=1; else i=0; fi
-    printf 'V\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "$v" "$i" "$(vendor_isolation "$v")" "$(vendor_desktop "$v")" \
+    printf 'V\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$v" "$i" "$(vendor_desktop "$v")" \
       "$(vendor_usage "$v")" "$(vendor_label "$v")" "$(vendor_sessions "$v")" "$(vendor_monogram "$v")" \
       "$(vendor_desktop_name "$v")" "$(vendor_desktop_bundle "$v")"
   done

@@ -780,9 +780,7 @@ private struct SlotActions: View {
 
             group("Configure", "slider.horizontal.3")
             if !profile.isActive(for: vendor.id) {
-                ActionRow(title: vendor.isolation == "swap" ? "Switch to this profile" : "Use for new sessions",
-                          icon: vendor.isolation == "swap" ? "arrow.left.arrow.right" : "checkmark.circle",
-                          trailing: vendor.isolation == "swap" ? "changes it everywhere" : nil) {
+                ActionRow(title: "Use for new sessions", icon: "checkmark.circle") {
                     actions.setActive(profile: profile.name, vendor: vendor.id)
                 }
             }
