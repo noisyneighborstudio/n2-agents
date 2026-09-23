@@ -681,6 +681,10 @@ private struct SlotRow: View {
                 .foregroundStyle(u.maxed ? maxedRed : .primary)
                 .frame(width: 56, alignment: .trailing)
             meta(u, b)
+        } else if usage?.note == .ok {
+            // Read cleanly with nothing to show: no window open (Muse between
+            // its 5-hour windows). Normal, so not amber.
+            flat(nil, "idle", Ink.secondary)
         } else if let note = usage?.note {
             if note == .sharedLogin {
                 flat("link", label(for: note), Ink.secondary)
@@ -866,7 +870,7 @@ private struct MeterRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(label).foregroundStyle(Ink.secondary).frame(width: 15, alignment: .leading)
+            Text(label).foregroundStyle(Ink.secondary).frame(width: 18, alignment: .leading)
             GeometryReader { g in
                 ZStack(alignment: .leading) {
                     if let p = percent {
