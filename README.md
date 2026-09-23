@@ -193,7 +193,7 @@ account.
 Add other labs to an adopted profile with:
 
 ```sh
-agents new ExpoIO --vendors codex,grok
+agents new Client --vendors codex,grok
 ```
 
 ## The menu bar app

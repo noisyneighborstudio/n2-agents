@@ -320,20 +320,20 @@ rm "$home/.n2-agents/Work/codex/auth.json" "$home/.n2-agents/Work/grok/auth.json
 
 # --- adopt: shares claudes state, never copies it --------------------------
 adopt_home="$test_root/adopt-home"
-mkdir -p "$adopt_home/.claude-profiles/Default" "$adopt_home/.claude-profiles/ExpoIO"
-echo token > "$adopt_home/.claude-profiles/ExpoIO/.credentials.json"
+mkdir -p "$adopt_home/.claude-profiles/Default" "$adopt_home/.claude-profiles/Client"
+echo token > "$adopt_home/.claude-profiles/Client/.credentials.json"
 HOME="$adopt_home" PATH="$fake_path" ./agents adopt --yes >/dev/null 2>&1
 # A symlink, so both apps read one login; a copy would force a re-login because
 # Claude Code keys its keychain entry to the config dir path.
-test -L "$adopt_home/.n2-agents/ExpoIO/claude"
-test "$(readlink "$adopt_home/.n2-agents/ExpoIO/claude")" = "$adopt_home/.claude-profiles/ExpoIO"
-test "$(cat "$adopt_home/.n2-agents/ExpoIO/claude/.credentials.json")" = token
+test -L "$adopt_home/.n2-agents/Client/claude"
+test "$(readlink "$adopt_home/.n2-agents/Client/claude")" = "$adopt_home/.claude-profiles/Client"
+test "$(cat "$adopt_home/.n2-agents/Client/claude/.credentials.json")" = token
 # The legacy tree is untouched — `claudes` must keep working.
-test -d "$adopt_home/.claude-profiles/ExpoIO"
+test -d "$adopt_home/.claude-profiles/Client"
 
 # Adopted profiles resolve as active through the symlink indirection.
-HOME="$adopt_home" PATH="$fake_path" ./agents use ExpoIO --vendor claude >/dev/null
-test "$(HOME="$adopt_home" PATH="$fake_path" ./agents active --vendor claude)" = ExpoIO
+HOME="$adopt_home" PATH="$fake_path" ./agents use Client --vendor claude >/dev/null
+test "$(HOME="$adopt_home" PATH="$fake_path" ./agents active --vendor claude)" = Client
 
 # --- reserved and invalid names --------------------------------------------
 for bad in As default; do
@@ -361,10 +361,10 @@ clone_error=$(N2_CLAUDE_APP="$missing_app" ./make-claude-profile.sh Work 2>&1 ||
 shim_home="$test_root/shim-home"
 shim_bin="$shim_home/.local/bin"
 foreign_bin="$test_root/foreign-bin"
-mkdir -p "$shim_home/.n2-agents/Expo/claude" "$shim_home/.n2-agents/Expo/codex" \
+mkdir -p "$shim_home/.n2-agents/Client/claude" "$shim_home/.n2-agents/Client/codex" \
   "$shim_bin" "$foreign_bin" "$test_root/foreign"
-ln -s /usr/bin/false "$foreign_bin/claude-expo"
-ln -s "$test_root/foreign/agent-as" "$shim_bin/claude-client"
+ln -s /usr/bin/false "$foreign_bin/claude-client"
+ln -s "$test_root/foreign/agent-as" "$shim_bin/claude-outside"
 ln -s "$PWD/agents" "$shim_bin/agents"
 
 HOME="$shim_home" PATH="/usr/bin:/bin" sh -c '
@@ -377,27 +377,27 @@ test "$(cat "$shim_home/.n2-agents/.bin-dir")" = "$shim_bin"
 HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" ./agents shims >/dev/null
 
 # Shims exist per (vendor, profile) that actually has a slot…
-for name in claude-as codex-as claude-expo codex-expo; do
+for name in claude-as codex-as claude-client codex-client; do
   test "$(readlink "$shim_bin/$name")" = "$PWD/shell/agent-as"
 done
 # …and not for vendors the profile has no slot for.
-test ! -e "$shim_bin/grok-expo"
+test ! -e "$shim_bin/grok-client"
 # Foreign links are never clobbered.
-test "$(readlink "$shim_bin/claude-client")" = "$test_root/foreign/agent-as"
+test "$(readlink "$shim_bin/claude-outside")" = "$test_root/foreign/agent-as"
 
 # A shim left pointing into the pre-rename N2Agents.app is ours: re-pointed.
-ln -sf "/Applications/N2Agents.app/Contents/Resources/agent-as" "$shim_bin/claude-expo"
+ln -sf "/Applications/N2Agents.app/Contents/Resources/agent-as" "$shim_bin/claude-client"
 HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" ./agents shims >/dev/null
-test "$(readlink "$shim_bin/claude-expo")" = "$PWD/shell/agent-as"
+test "$(readlink "$shim_bin/claude-client")" = "$PWD/shell/agent-as"
 
 # A retired lab (Gemini) leaves nothing of ours behind: its shims go, and its
 # dot dir stops being a symlink into a profile slot but keeps the contents.
-mkdir -p "$shim_home/.n2-agents/Expo/gemini"
-echo keep > "$shim_home/.n2-agents/Expo/gemini/settings.json"
-ln -s "$shim_home/.n2-agents/Expo/gemini" "$shim_home/.gemini"
-ln -s "$PWD/shell/agent-as" "$shim_bin/gemini-expo"
+mkdir -p "$shim_home/.n2-agents/Client/gemini"
+echo keep > "$shim_home/.n2-agents/Client/gemini/settings.json"
+ln -s "$shim_home/.n2-agents/Client/gemini" "$shim_home/.gemini"
+ln -s "$PWD/shell/agent-as" "$shim_bin/gemini-client"
 HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" ./agents shims >/dev/null
-test ! -e "$shim_bin/gemini-expo"
+test ! -e "$shim_bin/gemini-client"
 test ! -L "$shim_home/.gemini"
 test "$(cat "$shim_home/.gemini/settings.json")" = keep
 
@@ -411,12 +411,12 @@ wait $second
 test ! -e "$shim_home/.n2-agents/.shims.lock"
 
 # A shim dispatches to the right vendor: the name carries both halves.
-HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" "$shim_bin/codex-expo" \
-  | grep -q "CODEX_HOME=$shim_home/.n2-agents/Expo/codex"
+HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" "$shim_bin/codex-client" \
+  | grep -q "CODEX_HOME=$shim_home/.n2-agents/Client/codex"
 
 HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" ./agents shims --remove >/dev/null
-test ! -e "$shim_bin/claude-expo"
-test "$(readlink "$shim_bin/claude-client")" = "$test_root/foreign/agent-as"
+test ! -e "$shim_bin/claude-client"
+test "$(readlink "$shim_bin/claude-outside")" = "$test_root/foreign/agent-as"
 
 # --- shell helpers load ----------------------------------------------------
 HOME="$shim_home" PATH="/usr/bin:/bin" zsh -c 'source shell/agents.zsh; command -v agents >/dev/null'
