@@ -84,6 +84,19 @@ struct StatusIcon {
         }
     }
 
+    /// A QA build's icon carries an orange "QA" tag, so it can't be mistaken
+    /// for the installed app beside it.
+    static func taggedQA(_ icon: NSImage) -> NSImage {
+        let tag = NSAttributedString(string: "QA", attributes: [
+            .font: NSFont.systemFont(ofSize: 10, weight: .heavy), .foregroundColor: NSColor.systemOrange])
+        let t = tag.size()
+        return NSImage(size: NSSize(width: icon.size.width + t.width + 2, height: icon.size.height), flipped: false) { rect in
+            icon.draw(in: NSRect(origin: .zero, size: icon.size))
+            tag.draw(at: NSPoint(x: icon.size.width + 1, y: (rect.height - t.height) / 2))
+            return true
+        }
+    }
+
     /// Lifts the foreground off the ground by brightness: the ground peaks
     /// near 15% and the dimmest node near 75%. The ramp starts past the hub's
     /// halo, which in solid ink would smudge.

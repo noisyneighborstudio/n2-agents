@@ -232,6 +232,7 @@ private struct PanelFooter: View {
     private var versionLine: LocalizedStringKey {
         let build = (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String) ?? "0"
         let version = "\(fullVersion.prefix { $0 != "-" }) (\(build))"
+        if UpdateChannel.isQABuild { return "\(version) · QA build" }
         let channel = UpdateChannel.selected().rawValue.capitalized
         switch model.updateStatus {
         case .upToDate: return "\(version) · \(channel) · up to date"
@@ -242,6 +243,7 @@ private struct PanelFooter: View {
     }
 
     private var updateHelp: String {
+        if UpdateChannel.isQABuild { return "Local QA build — never updates itself" }
         if case .failed(let reason)? = model.updateStatus { return "Update check failed: \(reason) Click to retry." }
         return "N2 Agents \(fullVersion) — check for updates"
     }

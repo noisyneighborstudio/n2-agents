@@ -41,6 +41,12 @@ source ../updates.env
 for channel key in stable N2AgentsStableFeedURL continuous N2AgentsContinuousFeedURL; do
   /usr/libexec/PlistBuddy -c "Add :$key string $N2_FEED_BASE_URL/$channel/appcast.xml" "$app/Contents/Info.plist"
 done
+# A QA build is tagged in the menu bar and never updates itself (see
+# UpdateChannel.isQABuild), so it can sit beside the installed app safely.
+if [[ ${N2_QA:-} == 1 ]]; then
+  /usr/libexec/PlistBuddy -c "Add :N2QABuild bool true" "$app/Contents/Info.plist"
+  echo "QA build"
+fi
 echo "Version: $ver ($build_ver)"
 cp ../make-claude-profile.sh ../repatch-claude-profiles.sh ../agents ../vendors.sh "$app/Contents/Resources/"
 cp ../shell/agents.zsh ../shell/agents.bash ../shell/agents.fish ../shell/agent-as "$app/Contents/Resources/"
