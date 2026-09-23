@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 #if canImport(Sparkle)
 import Sparkle
@@ -85,7 +86,11 @@ let terminalSpecs: [TerminalSpec] = [
 final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtocol, PanelActions, SetupHost {
     private var statusItem: NSStatusItem!
     private let model = PanelModel()
-    // Built on first open: it anchors to the status item's button.
+    private var baseIcon: NSImage?
+    private var quotaWatch: AnyCancellable?
+    private lazy var quotaToast = QuotaToast(anchor: statusItem.button!) { [weak self] in self?.togglePanel() }
+    // Built on first use (an open, or the first quota reading): it anchors to
+    // the status item's button.
     private lazy var panel = GlassWindow(rootView: PanelView(model: model, actions: self),
                                          behavior: .transient(anchor: statusItem.button!))
     /// Recent sessions, opened out of the panel into its own window.
@@ -162,14 +167,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let r = Bundle.main.resourcePath, let icon = NSImage(contentsOfFile: r + "/n2agents.icns") {
-            icon.size = NSSize(width: 20, height: 20)
-            statusItem.button?.image = icon
+            baseIcon = icon
+            statusItem.button?.image = StatusIcon.image(base: icon, remaining: nil)
             statusItem.button?.imagePosition = .imageLeft
         } else {
             statusItem.button?.title = "🤖"
         }
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePanel)
+        // @Published fires before the store, so read the model a turn later.
+        quotaWatch = model.$data.combineLatest(model.$usage)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.quotaChanged() }
 
 
         // The panel is ready before anyone clicks: it starts from the last
@@ -204,6 +213,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 #endif
     }
 
+    // The icon is a gauge of quota left, and anything newly low gets a toast.
+    private func quotaChanged() {
+        if let base = baseIcon {
+            statusItem.button?.image = StatusIcon.image(base: base, remaining: model.remaining)
+        }
+        quotaToast.update(model.lowQuota, quiet: panel.isShowing)
+    }
+
     // MARK: - Panel (re-read every time it opens)
 
     @objc private func togglePanel() {
@@ -211,6 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
             panel.dismiss()
             return
         }
+        quotaToast.dismiss()
         var still = Transaction()
         still.disablesAnimations = true
         withTransaction(still) { model.presented = false }
