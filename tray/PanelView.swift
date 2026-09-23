@@ -210,6 +210,9 @@ private struct PanelHeader: View {
             }
             items.append(ClosureItem("Locate \(clone.desktopName)…", symbol: "folder.badge.questionmark") { actions.locateClaude() })
         }
+        items.append(ClosureItem("Keyboard Shortcut: \(actions.panelShortcut ?? "None")…", symbol: "keyboard") {
+            actions.setPanelShortcut()
+        })
         items.append(.separator())
         items.append(ClosureItem("Check for Updates…", symbol: "arrow.down.circle") { actions.checkForUpdates() })
         popUp(items)

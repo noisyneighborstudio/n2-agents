@@ -335,6 +335,8 @@ protocol PanelActions: AnyObject {
     var autoRepatch: Bool { get }
     func setPreferredTerminal(_ name: String)
     func setUpdateChannel(_ channel: UpdateChannel)
+    var panelShortcut: String? { get }
+    func setPanelShortcut()
     func checkForUpdates()
     func reportBug()
     func quit()

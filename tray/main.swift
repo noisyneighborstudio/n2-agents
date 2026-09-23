@@ -85,6 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     // the status item's button.
     private lazy var panel = GlassWindow(rootView: PanelView(model: model, actions: self),
                                          behavior: .transient(anchor: statusItem.button!))
+    private lazy var hotKey = GlobalHotKey { [weak self] in self?.togglePanel() }
     /// Recent sessions, opened out of the panel into its own window.
     private var sessionsWindow: GlassWindow?
     private let fm = FileManager.default
@@ -167,6 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         }
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePanel)
+        hotKey.register(Shortcut.load())
         // @Published fires before the store, so read the model a turn later.
         quotaWatch = model.$data.combineLatest(model.$usage)
             .receive(on: DispatchQueue.main)
@@ -612,6 +614,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 #if canImport(Sparkle)
         updaterController.updater.resetUpdateCycle()
 #endif
+    }
+
+    // MARK: - Global shortcut
+
+    var panelShortcut: String? { Shortcut.load()?.display }
+
+    func setPanelShortcut() {
+        dismissPanel()
+        let current = Shortcut.load()
+        let recorder = ShortcutRecorderView(current: current)
+        let dialog = NSAlert()
+        dialog.messageText = "Keyboard shortcut"
+        dialog.informativeText = "Press a combination with ⌘, ⌥ or ⌃. It opens N2 Agents from any app — handy when the icon is hidden behind the notch."
+        dialog.accessoryView = recorder
+        dialog.addButton(withTitle: "Save")
+        dialog.addButton(withTitle: "Clear")
+        dialog.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        dialog.window.initialFirstResponder = recorder
+        let choice = dialog.runModal()
+        guard choice != .alertThirdButtonReturn else { return }
+
+        let picked = choice == .alertFirstButtonReturn ? (recorder.recorded ?? current) : nil
+        guard hotKey.register(picked) else {
+            hotKey.register(current)
+            alert("Shortcut unavailable", "\(picked?.display ?? "That shortcut") is already taken by another app. Pick a different one.")
+            return
+        }
+        Shortcut.save(picked)
     }
 
     func checkForUpdates() {
