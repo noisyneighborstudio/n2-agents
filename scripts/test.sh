@@ -169,7 +169,7 @@ print -r -- "$authed" | grep -qx 'codex	yes'
 print -r -- "$authed" | grep -qx 'grok	no'
 print -r -- "$authed" | grep -qx 'cursor	unknown'
 rm "$home/.n2-agents/Work/codex/auth.json"
-usage=$(run_agents best --porcelain --vendor cursor)
+usage=$(run_agents best --porcelain --vendor opencode)
 print -r -- "$usage" | grep -qx 'Work	-	-	-	no-usage-api'
 # Codex reports quota too. Signed out says so; signed in, each window lands in
 # the column for its length (a weekly-only plan has no 5h figure), and a

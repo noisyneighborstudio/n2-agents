@@ -127,7 +127,7 @@ nothing to rank.
 Grok has one weekly credit pool and no 5-hour window. Each Muse read mints an
 inference key, so the menu bar app reads Muse only when you open the panel or
 press retry, never on its timer. Muse reports numbers only while a 5-hour
-window is open; between windows its row says "no reading".
+window is open; between windows its row says "idle".
 
 Muse keeps its sign-in in one keychain item whatever `XDG_CONFIG_HOME` says, so
 every profile but Default runs it with `TBH_CREDENTIAL_BACKEND=file` and keeps
