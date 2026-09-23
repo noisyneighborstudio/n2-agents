@@ -14,7 +14,7 @@
 #   agents adopt [--yes]                  import existing `claudes` profiles (shared, not copied)
 #   agents login <Profile> [--vendor <v>] [--switch]  sign that slot out and back in
 #   agents authed <Profile>               per slot: signed in yes|no|unknown
-#   agents sessions [Profile] [--vendor <v>] [--porcelain [--limit N]]
+#   agents sessions [Profile] [--vendor <v>] [--porcelain [--limit N]]  newest first; no helpers or one-shots
 #   agents transfer <id> --to <Profile>|--next|--best [--from <Profile>] [--vendor <v>]
 #   agents desktop [Name|--next|--best] [--vendor <v>] [--switch]
 #   agents shims [--remove]               sync <vendor>-<profile> commands on PATH
@@ -669,7 +669,7 @@ cmd_run() {
   if [ -n "$sess" ]; then
     [ "$src" = "$name" ] || cmd_transfer "$sess" --from "$src" --to "$name" --vendor "$v" >&2
     hit=$(find_session "$sess" "$v" "$name") || die "session $sess missing after transfer"
-    cwd=$(session_meta "$(printf '%s\n' "$hit" | cut -f3)" | cut -f1)
+    cwd=$(session_cwd "$(printf '%s\n' "$hit" | cut -f3)")
     if [ -n "$cwd" ] && [ -d "$cwd" ]; then
       cd "$cwd"
     elif [ -n "$cwd" ]; then
@@ -1083,26 +1083,54 @@ warn_unadopted() {
 
 # --- sessions --------------------------------------------------------------
 
-# Working dir and first real prompt of a transcript. Both labs record cwd in
-# their opening records. The prompt is the first text on a user-role line that
-# isn't injected context — Claude's meta lines and <system-reminder>s, Codex's
-# <environment_context>, AGENTS.md and file mentions — and Codex can put 100 KB of setup before it, so this
-# scans whole lines rather than a fixed head.
-session_meta() {  # path -> cwd \t snippet
-  cwd=$(grep -m1 -o '"cwd":"[^"]*"' "$1" 2>/dev/null | sed 's/^"cwd":"//; s/"$//' || true)
+# Working dir of a transcript: both labs record it in their opening records.
+session_cwd() {  # path
+  grep -m1 -o '"cwd":"[^"]*"' "$1" 2>/dev/null | sed 's/^"cwd":"//; s/"$//' || true
+}
+
+# A JSON string's body as plain text: escapes out, and the runs of space the
+# stripping leaves behind squeezed.
+json_text() {
+  sed 's/\\[nt]/ /g; s/\\"/"/g; s/\\\\/\\/g' | tr -s ' '
+}
+
+# What it takes to recognise a transcript a week later: where it ran, on which
+# branch, what it's called, and the first real prompt.
+#
+# The prompt is the first text on a user-role line that isn't injected context
+# — Claude's meta lines and <system-reminder>s, Codex's <environment_context>,
+# AGENTS.md and file mentions — and Codex can put 100 KB of setup before it, so
+# this scans whole lines rather than a fixed head.
+#
+# Claude records the branch on every line and names the session as it goes
+# (ai-title, and custom-title from /rename, which wins): the last of each is
+# the current one. Codex records git once, in its opening line, and keeps its
+# names in an index beside the sessions directory.
+session_meta() {  # path -> cwd \t snippet \t branch \t title
   snippet=$(grep -m 40 '"role":"user"' "$1" 2>/dev/null | grep -v '"isMeta":true' \
     | grep -o '"\(text\|content\)":"[^"]*' | sed 's/^"[a-z]*":"//' \
     | grep -v -e '^\(\\n\| \)*<' -e '^\(\\n\| \)*# AGENTS.md instructions' \
              -e '^\(\\n\| \)*# Files mentioned by the user' -e '^\[Request interrupted' | head -1 || true)
-  # Escapes out, and a markdown link reads as its text ([$skill](/path) -> $skill).
-  # Cut generously: this is one tab-separated field, and the panel decides how
-  # much of it fits. Trimming to a line's worth here meant the tray could never
-  # show more than a fragment however wide its row got.
-  # Squeeze the runs the escape-stripping leaves behind, then trim whatever the
+  # A markdown link reads as its text ([$skill](/path) -> $skill). Cut
+  # generously: the panel decides how much of it fits. Then trim whatever the
   # cut lands mid-token on — a dangling backslash reads as a rendering bug.
-  snippet=$(printf '%s' "$snippet" | sed 's/\\[nt]/ /g; s/\\"/"/g; s/\[\([^]]*\)\]([^)]*)/\1/g' \
-    | tr -s ' ' | cut -c1-240 | sed 's/[\\ ]*$//')
-  printf '%s\t%s\n' "$cwd" "${snippet:-(no prompt)}"
+  snippet=$(printf '%s' "$snippet" | json_text | sed 's/\[\([^]]*\)\]([^)]*)/\1/g' \
+    | cut -c1-240 | sed 's/[\\ ]*$//')
+  str='\([^"\\]\|\\.\)*'
+  case $1 in
+    */rollout-*.jsonl)
+      branch=$(head -1 "$1" | grep -o '"git":{[^}]*}' | grep -o '"branch":"[^"]*"' \
+        | sed 's/^"branch":"//; s/"$//' || true)
+      title=$(grep -F "\"id\":\"$(session_id_of "$1")\"" "${1%%/sessions/*}/session_index.jsonl" 2>/dev/null \
+        | tail -1 | grep -o "\"thread_name\":\"$str\"" | sed 's/^"thread_name":"//; s/"$//' || true) ;;
+    *)
+      tags=$(grep -o -e "\"gitBranch\":\"$str\"" -e "\"customTitle\":\"$str\"" -e "\"aiTitle\":\"$str\"" "$1" 2>/dev/null || true)
+      branch=$(printf '%s\n' "$tags" | sed -n 's/^"gitBranch":"\(.*\)"$/\1/p' | tail -1)
+      title=$(printf '%s\n' "$tags" | sed -n 's/^"customTitle":"\(.*\)"$/\1/p' | tail -1)
+      [ -n "$title" ] || title=$(printf '%s\n' "$tags" | sed -n 's/^"aiTitle":"\(.*\)"$/\1/p' | tail -1) ;;
+  esac
+  printf '%s\t%s\t%s\t%s\n' "$(session_cwd "$1")" "${snippet:-(no prompt)}" "$branch" \
+    "$(printf '%s' "$title" | json_text)"
 }
 
 # Where one (profile, vendor) keeps its transcripts; nothing if it keeps none.
@@ -1121,10 +1149,17 @@ session_files() {  # profile, vendor
   find "$sf_dir" -type f -name '*.jsonl' 2>/dev/null
 }
 
-# Codex records its own helpers (the guardian that reviews tool calls, spawned
-# agents) as transcripts too, marked in their opening record. Not yours.
-session_is_subagent() {  # path
-  head -1 "$1" 2>/dev/null | grep -q '"source":{"subagent"'
+# Not every transcript is a conversation you had. Codex records its own
+# helpers (the guardian that reviews tool calls, spawned agents) and `codex
+# exec` one-shots; Claude keeps subagents under <session>/subagents/ and marks
+# `claude -p` runs sdk-cli. Scripts and loops start these by the dozen, and
+# none of them is worth resuming.
+session_is_background() {  # path
+  case $1 in
+    */subagents/*) return 0 ;;
+    */rollout-*.jsonl) head -1 "$1" 2>/dev/null | grep -q -e '"source":{"subagent"' -e '"source":"exec"' ;;
+    *) [ "$(grep -m1 -o '"entrypoint":"[^"]*"' "$1" 2>/dev/null)" = '"entrypoint":"sdk-cli"' ] ;;
+  esac
 }
 
 # Codex names files rollout-<timestamp>-<uuid>.jsonl; Claude names them <uuid>.jsonl.
@@ -1149,11 +1184,21 @@ find_session() {  # id, vendor, [profile]
   done | head -1 | grep . || return 1
 }
 
+# Reading a transcript's metadata means grepping all of it, and profiles hold
+# thousands running to gigabytes. So each reading is kept, keyed by path and
+# mtime, and a listing only opens what changed since the last one:
+#   <path> <mtime> <background 0|1> [<session-id> <cwd> <prompt> <branch> <title>]
+# Entries for transcripts that moved or changed drop out on the next write.
+sessions_cache="$root/.sessions.v1.tsv"
+
 # Machine-readable, newest first, across every profile and every lab whose
-# transcripts we can read unless narrowed. Transcript heads are read only for
-# the rows that survive --limit. A contract for the tray, like `porcelain`:
-#   <profile> <vendor> <session-id> <mtime epoch> <cwd> <first prompt>
+# transcripts we can read unless narrowed. A contract for the tray, like
+# `porcelain`:
+#   <profile> <vendor> <session-id> <mtime epoch> <cwd> <first prompt> <branch> <title>
 sessions_porcelain() {  # profiles, vendors, limit ("" = all)
+  mkdir -p "$root"
+  touch "$sessions_cache"
+  sp_list=$(mktemp) sp_new=$(mktemp) tab=$(printf '\t')
   for sp_n in $1; do
     for sp_v in $2; do
       sp_dir=$(session_root "$sp_n" "$sp_v")
@@ -1161,14 +1206,40 @@ sessions_porcelain() {  # profiles, vendors, limit ("" = all)
       # One stat per batch of files, not per file: profiles hold thousands.
       find "$sp_dir" -type f -name '*.jsonl' -exec stat -f "%m%t$sp_n%t$sp_v%t%N" {} + 2>/dev/null
     done
-  done | sort -rn | {
+  done | sort -rn > "$sp_list"
+  # Rows already read come out finished (H), background ones not at all, and
+  # the rest (M) are read below — only as many as --limit still wants.
+  awk -F '\t' 'FILENAME == ARGV[1] { k = $1 FS $2; bg[k] = $3; id[k] = $4
+                           meta[k] = substr($0, length($1 $2 $3 $4) + 5); next }
+               { k = $4 FS $1
+                 if (!(k in bg)) print "M" FS $0
+                 else if (bg[k] == 0) print "H" FS $2 FS $3 FS id[k] FS $1 FS meta[k] }' \
+    "$sessions_cache" "$sp_list" | {
     sp_left=${3:--1}
-    while [ "$sp_left" != 0 ] && IFS="$(printf '\t')" read -r sp_m sp_n sp_v sp_f; do
-      session_is_subagent "$sp_f" && continue
-      printf '%s\t%s\t%s\t%s\t%s\n' "$sp_n" "$sp_v" "$(session_id_of "$sp_f")" "$sp_m" "$(session_meta "$sp_f")"
+    while [ "$sp_left" != 0 ] && IFS= read -r sp_row; do
+      case $sp_row in
+        "H$tab"*) printf '%s\n' "${sp_row#H"$tab"}" ;;
+        *)
+          # mtime, profile, vendor, path: none empty, so splitting on tabs is safe.
+          set -f; IFS=$tab; set -- $sp_row; IFS=' 	
+'
+          if session_is_background "$5"; then
+            printf '%s\t%s\t1\n' "$5" "$2" >> "$sp_new"
+            continue
+          fi
+          sp_id=$(session_id_of "$5") sp_meta=$(session_meta "$5")
+          printf '%s\t%s\t0\t%s\t%s\n' "$5" "$2" "$sp_id" "$sp_meta" >> "$sp_new"
+          printf '%s\t%s\t%s\t%s\t%s\n' "$3" "$4" "$sp_id" "$2" "$sp_meta" ;;
+      esac
       sp_left=$((sp_left - 1))
     done
   }
+  # What's still current plus what was just read, swapped in whole: two
+  # listings at once can't interleave a file, and the last one simply wins.
+  { awk -F '\t' 'FILENAME == ARGV[1] { now[$4 FS $1]; next } ($1 FS $2) in now' "$sp_list" "$sessions_cache"
+    cat "$sp_new"; } > "$sessions_cache.$$"
+  mv "$sessions_cache.$$" "$sessions_cache"
+  rm -f "$sp_list" "$sp_new"
 }
 
 cmd_sessions() {
@@ -1217,23 +1288,14 @@ cmd_sessions() {
     die "$(vendor_label "$v") stores sessions in a format agents doesn't read yet"
   name=$(resolve_profile "${name:-Default}") || die "no profile named '$name'"
 
-  found=0
-  for f in $(session_files "$name" "$v"); do
-    found=1
-    stat -f '%m %N' "$f"
-  done | sort -rn | while IFS= read -r line; do
-    f=${line#* }
-    session_is_subagent "$f" && continue
-    meta=$(session_meta "$f")
-    cwd=${meta%%	*}
-    if [ -n "$cwd" ]; then proj=$(basename "$cwd"); else proj=$(basename "$(dirname "$f")"); fi
-    printf '%s  %s  %-20s  %s\n' \
-      "$(session_id_of "$f")" \
-      "$(date -r "${line%% *}" '+%Y-%m-%d %H:%M')" \
-      "$proj" \
-      "${meta#*	}"
-  done
-  [ -n "$(session_files "$name" "$v")" ] || die "no $v sessions in '$name'"
+  # The same rows the tray reads, as a table: its title when it has one.
+  rows=$(sessions_porcelain "$name" "$v" "")
+  [ -n "$rows" ] || die "no $v sessions in '$name'"
+  printf '%s\n' "$rows" | awk -F '\t' '{
+    cmd = "date -r " $4 " \"+%Y-%m-%d %H:%M\""; cmd | getline when; close(cmd)
+    n = split($5, dirs, "/"); proj = n ? dirs[n] : "—"
+    printf "%s  %s  %-20s  %s%s\n", $3, when, proj, ($8 != "" ? $8 : $6), ($7 != "" ? "  [" $7 "]" : "")
+  }'
 }
 
 cmd_transfer() {
@@ -1308,7 +1370,7 @@ cmd_transfer() {
     mv "$f" "$dst_cfg/todos/" 2>/dev/null || true
   done
 
-  cwd=$(session_meta "$dst" | cut -f1)
+  cwd=$(session_cwd "$dst")
   echo "Moved $v session $id: $from -> $to"
   invoke="agents run $to --vendor $v --start-from-session=$id"
   if [ -n "$cwd" ]; then

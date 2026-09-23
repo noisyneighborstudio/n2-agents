@@ -165,9 +165,10 @@ final class PanelModel: ObservableObject {
     @Published var updateStatus: UpdateStatus?
     /// Profiles whose setup was left unfinished: profile -> the labs it set up.
     @Published var pendingSetups: [String: [String]] = [:]
-    /// The full recent-sessions list for the standalone window. The panel
-    /// itself only keeps the two newest.
+    /// Every session, for the standalone window; the panel itself keeps the
+    /// two newest. Kept between opens, so the window never starts empty.
     @Published var allSessions: [SessionInfo] = []
+    @Published var sessionsLoading = false
 
     /// A profile's status and its capacity, read together because they answer
     /// halves of the same question.
@@ -252,10 +253,11 @@ protocol PanelActions: AnyObject {
     func setActive(profile: String, vendor: String?)
     func copyCommand(profile: String, vendor: String)
     func openDesktop(profile: String, vendor: String)
-    func transferSession(profile: String, vendor: String)
     func signIn(profile: String, vendor: String, confirm: Bool)
     func finishSetup(profile: String)
     func resumeSession(_ session: SessionInfo)
+    func moveSession(_ session: SessionInfo, to profile: String)
+    func copyResumeCommand(_ session: SessionInfo)
     func showAllSessions()
     func closeSessions()
     func addVendor(profile: String)
