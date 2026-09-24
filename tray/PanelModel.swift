@@ -13,6 +13,8 @@ struct Usage {
         case rateLimited = "rate-limited"
         case fetchError = "fetch-error"
         case noUsageAPI = "no-usage-api"
+        /// The lab has one login for the machine; Default's row carries it.
+        case sharedLogin = "shared-login"
     }
 
     let fiveHour: Int?
@@ -20,6 +22,8 @@ struct Usage {
     let resets: Date?       // when the 5h window resets
     let note: Note
     let sevenResets: Date?  // when the 7d window resets
+    /// What the long window is for this lab ("7d", or Cursor's "mo").
+    var longWindow = "7d"
     var fetchedAt = Date()
 
     /// Used in whichever window is tighter — the one that stops you first.
@@ -40,7 +44,7 @@ struct Usage {
         guard note == .ok else { return nil }
         let f = fiveHour ?? -1, d = sevenDay ?? -1
         guard f >= 0 || d >= 0 else { return nil }
-        return f >= d ? ("5h", max(f, 0), resets) : ("7d", max(d, 0), sevenResets)
+        return f >= d ? ("5h", max(f, 0), resets) : (longWindow, max(d, 0), sevenResets)
     }
 
     /// When a maxed lab comes back: the latest reset among the maxed windows.
@@ -59,7 +63,7 @@ struct Usage {
     }()
 
     /// profile -> usage. Unknown notes are dropped: a newer CLI may add some.
-    static func parse(_ text: String) -> [String: Usage] {
+    static func parse(_ text: String, longWindow: String = "7d") -> [String: Usage] {
         var rows: [String: Usage] = [:]
         for line in text.split(separator: "\n") {
             let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
@@ -68,7 +72,8 @@ struct Usage {
                                sevenDay: Double(f[2]).map { Int($0.rounded()) },
                                resets: resetFormat.date(from: f[3]),
                                note: note,
-                               sevenResets: f.count > 5 ? resetFormat.date(from: f[5]) : nil)
+                               sevenResets: f.count > 5 ? resetFormat.date(from: f[5]) : nil,
+                               longWindow: longWindow)
         }
         return rows
     }
@@ -286,7 +291,8 @@ final class PanelModel: ObservableObject {
                 if usageLoading { return nil }
                 continue
             }
-            guard let u = rows[profile] else { continue }
+            guard var u = rows[profile] else { continue }
+            if u.note == .sharedLogin, let shared = rows["Default"] { u = shared }
             guard u.note == .ok else { continue }
             if u.maxed {
                 sawMaxed = true

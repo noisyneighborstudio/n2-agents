@@ -14,7 +14,8 @@
 #   desktop     instance — the stock desktop app, run as one more instance per
 #                          profile with that profile's data dir and config
 #               none
-#   usage       oauth    — server-side quota we can query (Claude, Codex, Grok)
+#   usage       oauth    — server-side quota we can query (Claude, Codex, Grok,
+#                          Cursor)
 #               ondemand — the same, but each read has a cost (Muse mints an
 #                          inference key per read), so the tray never polls it:
 #                          it reads when the panel opens or on retry
@@ -173,9 +174,18 @@ vendor_desktop_env() {  # vendor, slot dir, data dir
 
 vendor_usage() {
   case $1 in
-    claude|codex|grok) echo oauth ;;
+    claude|codex|grok|cursor) echo oauth ;;
     muse)   echo ondemand ;;
     *)      echo none ;;
+  esac
+}
+
+# What the long usage window is, as the panel tags it: a week for most labs,
+# Cursor's monthly billing cycle for Cursor.
+vendor_long_window() {
+  case $1 in
+    cursor) echo mo ;;
+    *)      echo 7d ;;
   esac
 }
 

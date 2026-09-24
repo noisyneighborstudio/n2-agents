@@ -108,7 +108,7 @@ functions, so editors, GUI apps and scripts get them too.
 | Claude | `claude` | `~/.claude` | `CLAUDE_CONFIG_DIR` | an instance per profile | ✅ | ✅ |
 | Codex | `codex` | `~/.codex` | `CODEX_HOME` | an instance per profile | ✅ | ✅ |
 | Grok | `grok` | `~/.grok` | `GROK_HOME` | — | ✅ (weekly) | — |
-| Cursor | `cursor-agent` | `~/.cursor` | `CURSOR_CONFIG_DIR` | — | — | — |
+| Cursor | `cursor-agent` | `~/.cursor` | `CURSOR_CONFIG_DIR` (settings only) | — | ✅ (monthly, one login) | — |
 | opencode | `opencode` | `~/.config/opencode` | `XDG_CONFIG_HOME` | — | — | — |
 | Muse (Meta) | `muse` | `~/.config/muse` | `XDG_CONFIG_HOME` + file credentials | — | ✅ (on demand) | — |
 
@@ -130,17 +130,24 @@ updates. Default is the app as you normally open it. The catch is identity:
 every instance has the stock app's name and Dock icon, and `claude://` or
 `codex://` links go to whichever instance macOS picks.
 
-Claude, Codex, Grok and Muse expose a server-side quota endpoint, so `agents best`
-works for those four and tells you plainly that the others have nothing to rank.
+Claude, Codex, Grok, Muse and Cursor expose a server-side quota endpoint, so
+`agents best` works for those five and tells you plainly that the others have
+nothing to rank.
 Grok has one weekly credit pool and no 5-hour window. Each Muse read mints an
 inference key, so the menu bar app reads Muse only when you open the panel or
 press retry, never on its timer. Muse reports numbers only while a 5-hour
-window is open; between windows its row says "no reading".
+window is open; between windows its row says "idle".
 
 Muse keeps its sign-in in one keychain item whatever `XDG_CONFIG_HOME` says, so
 every profile but Default runs it with `TBH_CREDENTIAL_BACKEND=file` and keeps
 its login in its own slot. Default keeps the keychain login a plain `muse` uses.
 A profile set up before this has to sign in to Muse once more.
+
+Cursor has no such switch: `cursor-agent` keeps one keychain login for the
+machine, and `CURSOR_CONFIG_DIR` moves only its settings. Every profile's
+Cursor is the same account, so its usage (a monthly billing cycle, tagged "mo")
+shows once, on Default; other profiles' Cursor rows say "shared login" and
+share Default's room in rotation.
 
 **Adding a lab** means adding one `case` arm to each accessor in
 [`vendors.sh`](vendors.sh). Nothing in `agents` or the menu bar app needs to

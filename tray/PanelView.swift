@@ -23,9 +23,11 @@ private func meterColor(_ percent: Int) -> Color {
 private let maxedRed = Ink.red
 
 /// "3:20 PM" today, "Fri 3:20 PM" further out — a weekly window resets days away.
+// A weekday names a day only within the week: a monthly reset gets its date.
 private func clockTime(_ date: Date) -> String {
-    date.formatted(Calendar.current.isDateInToday(date) ? .dateTime.hour().minute()
-                                                        : .dateTime.weekday(.abbreviated).hour().minute())
+    if Calendar.current.isDateInToday(date) { return date.formatted(.dateTime.hour().minute()) }
+    if date.timeIntervalSinceNow > 6 * 86400 { return date.formatted(.dateTime.month(.abbreviated).day()) }
+    return date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
 }
 
 // MARK: - Root
@@ -613,8 +615,16 @@ private struct SlotRow: View {
                 .foregroundStyle(u.maxed ? maxedRed : .primary)
                 .frame(width: 56, alignment: .trailing)
             meta(u, b)
+        } else if usage?.note == .ok {
+            // Read cleanly with nothing to show: no window open (Muse between
+            // its 5-hour windows). Normal, so not amber.
+            flat(nil, "idle", Ink.secondary)
         } else if let note = usage?.note {
-            flat(note == .staleToken ? "exclamationmark.triangle" : "arrow.clockwise", label(for: note), Ink.amber)
+            if note == .sharedLogin {
+                flat("link", label(for: note), Ink.secondary)
+            } else {
+                flat(note == .staleToken ? "exclamationmark.triangle" : "arrow.clockwise", label(for: note), Ink.amber)
+            }
         } else if model.usageSlow {
             flat(nil, "checking…", Ink.secondary)
         } else {
@@ -657,6 +667,7 @@ private struct SlotRow: View {
         case .staleToken:  return "token expired"
         case .rateLimited: return "rate-limited"
         case .fetchError:  return "check failed"
+        case .sharedLogin: return "shared login"
         default:           return "no reading"
         }
     }
@@ -690,7 +701,7 @@ private struct SlotActions: View {
                              meta: u.resets.map(clockTime) ?? "", delay: 0)
                 }
                 if let seven = u.sevenDay {
-                    MeterRow(label: "7d", percent: seven,
+                    MeterRow(label: u.longWindow, percent: seven,
                              meta: u.sevenResets.map(clockTime) ?? "", delay: 0)
                 }
             }
@@ -812,7 +823,7 @@ private struct MeterRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(label).foregroundStyle(Ink.secondary).frame(width: 15, alignment: .leading)
+            Text(label).foregroundStyle(Ink.secondary).frame(width: 18, alignment: .leading)
             GeometryReader { g in
                 ZStack(alignment: .leading) {
                     if let p = percent {
