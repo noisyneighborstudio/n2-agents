@@ -1485,7 +1485,7 @@ cmd_transfer() {
 
 # A profile's desktop app is the stock app, run as one more instance with the
 # profile's data dir and config — every entitlement intact, nothing to copy or
-# rebuild. Default is the stock app as installed. An instance already open is
+# rebuild. Default is the stock app on its stock data dir. An instance already open is
 # brought forward instead: Claude doesn't stop a second instance on the same
 # data dir, and two would corrupt it.
 cmd_desktop() {
@@ -1524,20 +1524,20 @@ cmd_desktop() {
       die "$dname is open as '$name' but couldn't be brought forward"
     return 0
   fi
-  if [ "$name" = Default ]; then
-    open -n -a "$app"
-    return 0
-  fi
   slot=$(config_dir "$name" "$v")
   [ -d "$slot" ] || die "profile '$name' has no $v slot — create it: agents new $name --vendors $v"
   data=$(vendor_desktop_data "$v" "$name")
   mkdir -p "$data"
   chmod 700 "$data"
+  # Default is pinned too: bare, the app reads the dot dir, which follows
+  # whichever profile `use` made active.
   set --
   while IFS= read -r kv; do set -- "$@" --env "$kv"; done <<EOF
-$(vendor_desktop_env "$v" "$slot" "$data")
+$(vendor_desktop_env "$v" "$slot" "$data" "$name")
 EOF
-  open -n -a "$app" "$@" --args --user-data-dir="$data"
+  # Default's data dir is the stock one; no flag keeps desktop_pid finding it.
+  [ "$name" = Default ] || set -- "$@" --args --user-data-dir="$data"
+  open -n -a "$app" "$@"
 }
 
 # --- misc ------------------------------------------------------------------

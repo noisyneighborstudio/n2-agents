@@ -372,8 +372,11 @@ support="$desk_home/Library/Application Support"
 mkdir -p "$support/Claude-Work" "$support/Codex-Work" "$support/Claude-WorkIO"
 
 # An instance is pinned by its env and told apart by its data dir.
-test "$(. ./vendors.sh; vendor_desktop_env codex /slot "/data dir")" = "$(printf '%s\n' \
+test "$(. ./vendors.sh; vendor_desktop_env codex /slot "/data dir" Work)" = "$(printf '%s\n' \
   CODEX_HOME=/slot "CODEX_ELECTRON_USER_DATA_PATH=/data dir" CODEX_SPARKLE_ENABLED=false)"
+# Default is pinned too, but keeps updating the bundle.
+test "$(. ./vendors.sh; vendor_desktop_env codex /slot /data Default)" = "$(printf '%s\n' \
+  CODEX_HOME=/slot CODEX_ELECTRON_USER_DATA_PATH=/data)"
 test "$(. ./vendors.sh; vendor_desktop_env claude /slot /data)" = CLAUDE_CONFIG_DIR=/slot
 
 # The exact data dir, not a prefix: WorkIO open doesn't make Work look open. A
