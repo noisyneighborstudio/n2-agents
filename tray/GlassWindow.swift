@@ -40,10 +40,12 @@ final class GlassWindow: NSPanel {
 
     /// The SwiftUI content's ideal size, as SwiftUI itself last measured it.
     private let measured = MeasuredSize()
+    /// Whether the window is ordered in, for content that animates forever.
+    private let onScreen = OnScreen()
 
     init<Root: View>(rootView: Root, behavior: Behavior, cornerRadius: CGFloat = 16) {
-        let measured = self.measured
-        let hosting = NSHostingView(rootView: Measured(root: rootView) { measured.update($0) })
+        let (measured, onScreen) = (self.measured, self.onScreen)
+        let hosting = NSHostingView(rootView: Measured(root: rootView, onScreen: onScreen) { measured.update($0) })
         // Intrinsic size gives the first measurement, before the view has a
         // frame to lay out in; SwiftUI's own reports take over from there.
         hosting.sizingOptions = [.intrinsicContentSize]
@@ -141,6 +143,7 @@ final class GlassWindow: NSPanel {
     // squeezed. Reduce Motion gets a plain appearance.
     func present() {
         generation += 1          // strands any furl still running
+        onScreen.value = true
         dismissing = false
         unfurling = false
         alphaValue = 1
@@ -227,6 +230,11 @@ final class GlassWindow: NSPanel {
     }
 
     override func cancelOperation(_ sender: Any?) { dismiss() }
+
+    override func orderOut(_ sender: Any?) {
+        super.orderOut(sender)
+        onScreen.value = false
+    }
 
     override func resignKey() {
         super.resignKey()
@@ -349,12 +357,24 @@ private final class MeasuredSize {
 
 /// Lays the root out at its ideal height, pinned to the top, and reports that
 /// size on every SwiftUI update.
+extension EnvironmentValues {
+    /// False while the window is ordered out: SwiftUI keeps ticking a hidden
+    /// window's TimelineView, so endless animations pause on this.
+    @Entry var windowOnScreen = true
+}
+
+private final class OnScreen: ObservableObject {
+    @Published var value = false
+}
+
 private struct Measured<Root: View>: View {
     let root: Root
+    @ObservedObject var onScreen: OnScreen
     let report: (CGSize) -> Void
 
     var body: some View {
         root
+            .environment(\.windowOnScreen, onScreen.value)
             .fixedSize(horizontal: false, vertical: true)
             .onGeometryChange(for: CGSize.self, of: { $0.size }, action: report)
             .frame(maxHeight: .infinity, alignment: .top)
