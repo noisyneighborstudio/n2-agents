@@ -563,7 +563,11 @@ swiftc -parse-as-library ${(f)"$(ls loop/*.swift | grep -v main.swift)"} tests/L
 
 # Then end to end: the real CLI, real git and the real engine, with a fake
 # agent playing every role (tests/fake-loop-agent.sh) on two Codex slots.
-swift build -c release --product n2-loop >/dev/null
+# The package also contains the tray app and its Sparkle dependency. Compile
+# the standalone loop executable directly so this test doesn't resolve the
+# app's binary resources just to exercise the loop engine.
+mkdir -p .build/release
+swiftc -O loop/*.swift -o "$PWD/.build/release/n2-loop"
 n2_root=$PWD
 loop_root="$test_root/loop"
 mkdir -p "$loop_root/home" "$loop_root/bin"
