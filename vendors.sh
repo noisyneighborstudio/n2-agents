@@ -164,11 +164,13 @@ vendor_desktop_data() {  # vendor, profile
 
 # The environment that pins an instance to a profile, one VAR=value per line.
 # Codex's own multi-instance launch takes its data dir from the environment
-# too, and only the stock instance may update the shared bundle.
-vendor_desktop_env() {  # vendor, slot dir, data dir
+# too — and it only keeps our CODEX_HOME over the login shell's when that is
+# set. Only the stock (Default) instance may update the shared bundle.
+vendor_desktop_env() {  # vendor, slot dir, data dir, profile
   case $1 in
     claude) echo "CLAUDE_CONFIG_DIR=$2" ;;
-    codex)  printf '%s\n' "CODEX_HOME=$2" "CODEX_ELECTRON_USER_DATA_PATH=$3" "CODEX_SPARKLE_ENABLED=false" ;;
+    codex)  printf '%s\n' "CODEX_HOME=$2" "CODEX_ELECTRON_USER_DATA_PATH=$3"
+            [ "$4" = Default ] || echo "CODEX_SPARKLE_ENABLED=false" ;;
   esac
 }
 
