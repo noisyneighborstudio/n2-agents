@@ -162,6 +162,9 @@ final class PanelModel: ObservableObject {
     /// A fetch has run 3 s with nothing to show: sweeps give way to a label,
     /// because motion that outlives its welcome reads as a hang.
     @Published var usageSlow = false
+    /// The only time a missing reading sweeps: a fetch in flight, under 3 s.
+    /// With no fetch running nothing is on its way, so nothing moves.
+    var usageSweeping: Bool { usageLoading && !usageSlow }
     /// Flips false → true on every open; the content rises into place off it.
     @Published var presented = true
     /// The one profile showing its labs. One at a time keeps the panel's

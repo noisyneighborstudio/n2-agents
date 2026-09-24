@@ -629,14 +629,14 @@ private struct SlotRow: View {
             } else {
                 flat(note == .staleToken ? "exclamationmark.triangle" : "arrow.clockwise", label(for: note), Ink.amber)
             }
-        } else if model.usageSlow {
-            flat(nil, "checking…", Ink.secondary)
-        } else {
+        } else if model.usageSweeping {
             Sweep().clipShape(Capsule())
                 .frame(height: 4)
                 .matchedGeometryEffect(id: SlotID.gauge(profile.name, vendor.id), in: namespace)
             Text(verbatim: "").frame(width: 30)
             Text(verbatim: "").frame(width: 88)
+        } else {
+            flat(nil, model.usageLoading ? "checking…" : "no reading", Ink.secondary)
         }
     }
 
@@ -960,13 +960,13 @@ private struct InlineStatus: View {
 // chips wrapped and needed a +N to hide the rest.
 // One lab at depth 1: its mark over its headroom. Four pictures that never look
 // alike — a reading, no quota API at all (dashed), signed out (amber), and a
-// reading still on its way (sweep).
+// reading on its way (sweep, only while a fetch is running).
 private struct CapacitySegment: View {
     let profile: String
     let vendor: Vendor
     let usage: Usage?
     let signedOut: Bool
-    let slow: Bool
+    let sweeping: Bool
     let namespace: Namespace.ID
 
     private var used: Int? { usage?.used }
@@ -1002,10 +1002,10 @@ private struct CapacitySegment: View {
                 .overlay(Capsule().strokeBorder(Ink.amber.opacity(0.45)))
         } else if let u = used {
             Gauge(percent: u)
-        } else if slow {
-            Capsule().fill(Color.primary.opacity(0.16))
-        } else {
+        } else if sweeping {
             Sweep().clipShape(Capsule())
+        } else {
+            Capsule().fill(Color.primary.opacity(0.16))
         }
     }
 }
@@ -1047,7 +1047,7 @@ private struct CapacityStrip: View {
                 CapacitySegment(profile: profile.name, vendor: v,
                                 usage: model.usage[v.id]?[profile.name],
                                 signedOut: data.snapshot.signedIn[profile.name]?[v.id] == false,
-                                slow: model.usageSlow, namespace: namespace)
+                                sweeping: model.usageSweeping, namespace: namespace)
                     .frame(maxWidth: 52)
             }
             Spacer(minLength: 0)
