@@ -16,19 +16,12 @@ protocol UpdaterDelegateProtocol {}
 // out for anything with side effects, so the two cannot drift.
 // Helper scripts are embedded in the app bundle (Contents/Resources).
 //
-// Resident duties beyond the panel:
-//  - Auto-repatch: detects Claude.app updates (version drift vs clones) and
-//    silently rebuilds idle clones in the background.
-//  - Self-update: delegates signed automatic and manual updates to Sparkle.
+// Resident duty beyond the panel: self-update, delegated to Sparkle.
 
-// A profile as the panel needs it: the CLI's porcelain row plus the two
-// Claude-desktop paths the clone/delete/reveal actions operate on.
+// A profile as the panel needs it: the CLI's porcelain row.
 struct Profile {
     let name: String
-    let hasApp: Bool
-    let running: Bool
-    let dataDir: String
-    let configDir: String
+    let running: Bool       // one of its desktop instances is open
     /// vendor id -> "active" | "ok"; absent means no slot for that vendor.
     let slots: [String: String]
 
@@ -91,36 +84,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     private var sessionsWindow: GlassWindow?
     private let fm = FileManager.default
     private let home = NSHomeDirectory()
-    private var configRoot: String { home + "/.n2-agents" }
-    private let claudeBundleID = "com.anthropic.claudefordesktop"
     private let newIssueURL = "https://github.com/noisyneighborstudio/n2-agents/issues/new"
 
-    private var repatchInFlight = Set<String>() {
-        didSet { model.repatching = repatchInFlight }
-    }
     private var updateStatus: UpdateStatus? {
         didSet {
             model.updateStatus = updateStatus
             refreshStatusTitle()
         }
     }
-    private var staleExists = false
-    private var appsDirSource: DispatchSourceFileSystemObject?
-    private var repatchDebounce: DispatchWorkItem?
 #if canImport(Sparkle)
     private lazy var updaterController = SPUStandardUpdaterController(
         startingUpdater: true, updaterDelegate: self, userDriverDelegate: nil
     )
 #endif
 
-    var autoRepatch: Bool {
-        UserDefaults.standard.object(forKey: "autoRepatch") as? Bool ?? true
-    }
-
     // Scripts live in the bundle's Resources; fall back to the source tree when
     // running the bare dev binary.
     private var scriptsDir: String {
-        if let r = Bundle.main.resourcePath, fm.fileExists(atPath: r + "/make-claude-profile.sh") {
+        if let r = Bundle.main.resourcePath, fm.fileExists(atPath: r + "/agents") {
             return r
         }
         return home + "/Development/n2-agents"
@@ -137,21 +118,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         var env = ProcessInfo.processInfo.environment
         env["PATH"] = scriptPATH
         return env
-    }
-
-    // Claude Desktop is not always in /Applications: a per-user install lands in
-    // ~/Applications, and the user can point us at any bundle via "Locate Claude
-    // Desktop…". Clones carry a suffixed bundle id, so the base id never matches one.
-    private var claudeAppPath: String? {
-        if let saved = UserDefaults.standard.string(forKey: "claudeAppPath"),
-           fm.fileExists(atPath: saved + "/Contents") {
-            return saved
-        }
-        for candidate in ["/Applications/Claude.app", home + "/Applications/Claude.app"]
-        where fm.fileExists(atPath: candidate + "/Contents") {
-            return candidate
-        }
-        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: claudeBundleID)?.path
     }
 
     private var currentVersion: String {
@@ -195,13 +161,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         // minutes on a big history; do it now, not when the window is opened.
         loadAllSessions()
         Timer.scheduledTimer(withTimeInterval: 180, repeats: true) { [weak self] _ in self?.refreshPanel() }
-
-        // Auto-repatch: event-driven — watch /Applications for bundle swaps
-        // (Claude's updater renames the new version into place, which modifies
-        // the directory). A 6h timer is only a fallback for missed events.
-        startWatchingApplications()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { self.autoRepatchTick() }
-        Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { _ in self.autoRepatchTick() }
 
         // Keep claude-as / claude-<profile> on PATH in step with the profile
         // list — real executables, so apps and scripts get them too, and
@@ -283,7 +242,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
                    data.profiles.first(where: { $0.name == s.profile })?.slots[s.vendor] == nil {
                     self.model.selection = nil
                 }
-                self.updateStatusTitle(staleExists: !data.staleClones.isEmpty)
                 self.refreshUsage(force: false)
             }
         }
@@ -314,21 +272,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     private func buildPanelData(porcelain: String, sessions: String) -> PanelData {
         let snap = Snapshot.parse(porcelain)
         let profiles = discoverProfiles(snap)
-        let desktopVersion = claudeAppPath.flatMap(bundleVersion)
-        var stale: [String: String] = [:]
-        for p in profiles where isStale(p) {
-            stale[p.name] = bundleVersion("/Applications/Claude-\(p.name).app")
-        }
         let preferred = preferredTerminal.name
         let terminals = [preferred] + installedTerminals().map(\.name).filter { $0 != preferred }
         return PanelData(snapshot: snap,
                          profiles: profiles,
-                         desktopVersion: desktopVersion,
-                         staleClones: stale,
                          sessions: SessionInfo.parse(sessions),
                          terminals: terminals,
-                         launchDesktops: Set(snap.installedVendors.filter {
-                             $0.desktop == "launch" && !$0.desktopBundle.isEmpty
+                         desktops: Set(snap.installedVendors.filter {
+                             $0.desktop != "none" && !$0.desktopBundle.isEmpty
                                  && NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.desktopBundle) != nil
                          }.map(\.id)))
     }
@@ -430,33 +381,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 
     private func discoverProfiles(_ snap: Snapshot? = nil) -> [Profile] {
         (snap ?? snapshot()).profiles.map { row in
-            Profile(name: row.name,
-                    hasApp: row.name == "Default"
-                        ? (claudeAppPath != nil)
-                        : fm.fileExists(atPath: "/Applications/Claude-\(row.name).app"),
-                    running: row.desktopRunning,
-                    dataDir: row.name == "Default"
-                        ? home + "/Library/Application Support/Claude"
-                        : home + "/Library/Application Support/Claude-" + row.name,
-                    configDir: row.name == "Default"
-                        ? home + "/.claude"
-                        : configRoot + "/" + row.name,
-                    slots: row.slots)
-        }
-    }
-
-    private func isRunning(_ profile: Profile) -> Bool {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-        task.arguments = ["-f", "user-data-dir=" + profile.dataDir]
-        task.standardOutput = FileHandle.nullDevice
-        task.standardError = FileHandle.nullDevice
-        do {
-            try task.run()
-            task.waitUntilExit()
-            return task.terminationStatus == 0
-        } catch {
-            return false
+            Profile(name: row.name, running: row.desktopRunning, slots: row.slots)
         }
     }
 
@@ -464,153 +389,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         discoverProfiles().first { $0.name == name }
     }
 
-    // MARK: - Auto-repatch (Claude.app updated -> rebuild idle clones)
-
-    private func startWatchingApplications() {
-        let fd = open("/Applications", O_EVTONLY)
-        guard fd >= 0 else { return }
-        let src = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: .write, queue: .main)
-        src.setEventHandler { [weak self] in self?.scheduleDebouncedRepatchCheck() }
-        src.setCancelHandler { close(fd) }
-        src.resume()
-        appsDirSource = src
-    }
-
-    // Updates copy a large bundle over several seconds — wait for 30s of quiet
-    // before checking versions, so we never clone a half-written Claude.app.
-    private func scheduleDebouncedRepatchCheck() {
-        repatchDebounce?.cancel()
-        let item = DispatchWorkItem { [weak self] in self?.autoRepatchTick() }
-        repatchDebounce = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + 30, execute: item)
-    }
-
-    // NSDictionary(contentsOfFile:) instead of Bundle(path:) — Bundle caches
-    // Info.plist contents and would miss in-place updates.
-    private func bundleVersion(_ appPath: String) -> String? {
-        guard let d = NSDictionary(contentsOfFile: appPath + "/Contents/Info.plist") else { return nil }
-        return (d["CFBundleShortVersionString"] as? String) ?? (d["CFBundleVersion"] as? String)
-    }
-
-    private func isStale(_ profile: Profile) -> Bool {
-        guard profile.hasApp,
-              let appPath = claudeAppPath,
-              let src = bundleVersion(appPath),
-              let clone = bundleVersion("/Applications/Claude-\(profile.name).app") else { return false }
-        return src != clone
-    }
-
-    @objc private func autoRepatchTick() {
-        let profiles = discoverProfiles()
-        let stale = profiles.filter { isStale($0) }
-        updateStatusTitle(staleExists: !stale.isEmpty)
-        guard autoRepatch else { return }
-        for p in stale where !isRunning(p) && !repatchInFlight.contains(p.name) {
-            backgroundRepatch(p.name)
-        }
-    }
-
-    private func backgroundRepatch(_ name: String) {
-        repatchInFlight.insert(name)
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        task.arguments = [scriptsDir + "/repatch-claude-profiles.sh", name]
-        task.environment = Self.scriptEnvironment
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = pipe
-        task.terminationHandler = { t in
-            let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            DispatchQueue.main.async {
-                self.repatchInFlight.remove(name)
-                self.autoRepatchTickStatusOnly()
-                if t.terminationStatus != 0 {
-                    self.alert("Auto-repatch failed for “\(name)”",
-                               "Claude updated but the profile couldn't be rebuilt automatically:\n\n\(String(out.suffix(600)))\n\nTry Re-patch All Clones Now from the N2 Agents settings menu, or file an issue.")
-                }
-            }
-        }
-        do {
-            try task.run()
-        } catch {
-            repatchInFlight.remove(name)
-        }
-    }
-
-    private func autoRepatchTickStatusOnly() {
-        let stale = discoverProfiles().contains { isStale($0) }
-        updateStatusTitle(staleExists: stale)
-    }
-
-    private func updateStatusTitle(staleExists: Bool) {
-        self.staleExists = staleExists
-        refreshStatusTitle()
-    }
-
     // An update waiting shows as an arrow beside the icon, in the menu bar's
     // own ink, so it's seen without opening the panel.
     private func refreshStatusTitle() {
         let waiting = updateStatus == .available
         statusItem.button?.toolTip = waiting ? "N2 Agents — update available" : nil
-        let busy = !repatchInFlight.isEmpty
-        let suffix = (busy ? "⏳" : staleExists ? "⬆️" : "") + (waiting ? "↑" : "")
+        let suffix = waiting ? "↑" : ""
         // A plain title, not an attributed one: only that takes the menu bar's ink.
         statusItem.button?.font = .systemFont(ofSize: 12, weight: .bold)
         statusItem.button?.title = (statusItem.button?.image == nil ? "🤖" : "") + suffix
-    }
-
-    func setAutoRepatch(_ on: Bool) {
-        UserDefaults.standard.set(on, forKey: "autoRepatch")
-        if on { autoRepatchTick() }
-    }
-
-    func repatchAll() {
-        dismissPanel()
-        runInTerminal("\"\(scriptsDir)/repatch-claude-profiles.sh\"")
-    }
-
-    // A clone that is running can't be rebuilt in place: offer to quit it, and
-    // start the rebuild once it has actually exited.
-    func rebuildClone(_ name: String) {
-        let clonePath = "/Applications/Claude-\(name).app"
-        let running = NSWorkspace.shared.runningApplications.filter { $0.bundleURL?.path == clonePath }
-        guard !running.isEmpty else {
-            backgroundRepatch(name)
-            return
-        }
-        dismissPanel()
-        let confirm = NSAlert()
-        confirm.messageText = "Quit Claude-\(name) and rebuild it?"
-        confirm.informativeText = "The clone is on an older Claude version. Its windows close; your login and data stay."
-        confirm.addButton(withTitle: "Quit and Rebuild")
-        confirm.addButton(withTitle: "Cancel")
-        NSApp.activate(ignoringOtherApps: true)
-        guard confirm.runModal() == .alertFirstButtonReturn else { return }
-        var token: NSObjectProtocol?
-        token = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main
-        ) { [weak self] note in
-            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-            guard app?.bundleURL?.path == clonePath,
-                  !NSWorkspace.shared.runningApplications.contains(where: { $0.bundleURL?.path == clonePath }) else { return }
-            if let t = token { NSWorkspace.shared.notificationCenter.removeObserver(t) }
-            token = nil
-            self?.backgroundRepatch(name)
-        }
-        running.forEach { $0.terminate() }
-    }
-
-    func showCloneDetails() {
-        guard let data = model.data else { return }
-        let names = Set(data.staleClones.keys).union(repatchInFlight).sorted()
-        let lines = names.map { name -> String in
-            if repatchInFlight.contains(name) { return "\(name) — rebuilding" }
-            let on = data.staleClones[name].map { "on \($0)" } ?? "behind"
-            let running = data.profiles.first { $0.name == name }?.running == true
-            return "\(name) — \(on), " + (running ? "waiting until it quits" : autoRepatch ? "queued" : "auto-repatch is off")
-        }
-        dismissPanel()
-        alert("Claude \(data.desktopVersion ?? "") — clones behind", lines.joined(separator: "\n"))
     }
 
     // MARK: - Sparkle update channel
@@ -695,33 +482,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 
     // MARK: - Actions
 
-    // The path is stored in this app's preferences; the agents CLI reads the same
-    // key, so scripts and menu agree on where Claude Desktop lives.
-    func locateClaude() {
-        dismissPanel()
-        let panel = NSOpenPanel()
-        panel.message = "Select Claude.app"
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = true
-        panel.allowsMultipleSelection = false
-        panel.directoryURL = URL(fileURLWithPath: "/Applications")
-        NSApp.activate(ignoringOtherApps: true)
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        let path = url.path
-        guard let id = NSDictionary(contentsOfFile: path + "/Contents/Info.plist")?["CFBundleIdentifier"] as? String,
-              id == claudeBundleID else {
-            alert("Not Claude Desktop", "“\((path as NSString).lastPathComponent)” isn't the Claude Desktop app. Pick Claude.app — a profile clone (Claude-<Name>.app) won't do.")
-            return
-        }
-        UserDefaults.standard.set(path, forKey: "claudeAppPath")
-        autoRepatchTick()
-    }
-
-    func downloadClaude() {
-        dismissPanel()
-        NSWorkspace.shared.open(URL(string: "https://claude.ai/download")!)
-    }
-
     func reportBug() {
         dismissPanel()
         let body = """
@@ -752,54 +512,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         }
     }
 
+    // Every profile opens the stock app as its own instance; the CLI starts
+    // it, or brings forward the one already open. Off the main thread: it
+    // waits on `open`.
     func openDesktop(profile name: String, vendor id: String) {
         guard let v = model.data?.snapshot.vendor(id) else { return }
         dismissPanel()
-        guard v.clonesDesktopApp else { openSharedDesktop(profile: name, vendor: v); return }
-        guard name != "Default" else {
-            guard let appPath = claudeAppPath else {
-                alert("Claude Desktop not found", "Install it from claude.ai/download, or point N2 Agents at it with “Locate Claude Desktop…”.")
-                return
-            }
-            NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: appPath),
-                                               configuration: NSWorkspace.OpenConfiguration())
-            return
-        }
-        if repatchInFlight.contains(name) {
-            alert("“\(name)” is repatching", "Claude updated and this profile is being rebuilt. It'll be back in a moment.")
-            return
-        }
-        let url = URL(fileURLWithPath: "/Applications/Claude-\(name).app")
-        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, error in
-            if error != nil {
-                DispatchQueue.main.async {
-                    self.alert("Couldn't launch Claude-\(name)",
-                               "The app may be mid-repatch or damaged. Try Re-patch All Clones Now from the N2 Agents settings menu.")
-                }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let r = self.runCLI(["desktop", name, "--vendor", id])
+            DispatchQueue.main.async {
+                if r.status != 0 { self.alert("Couldn't open \(v.desktopName)", r.output) }
+                self.refreshPanel()
             }
         }
-    }
-
-    // A `launch` lab's desktop app is one app for the whole Mac, signed in as
-    // the lab's active profile — macOS doesn't pass env vars to apps it
-    // launches, so it can't be pinned per profile. Opening it for another
-    // profile therefore makes that profile active, asked first.
-    private func openSharedDesktop(profile name: String, vendor v: Vendor) {
-        var args = ["desktop", name, "--vendor", v.id]
-        let active = model.data?.snapshot.profiles.first { $0.name == name }?.isActive(for: v.id) ?? false
-        if !active {
-            let ask = NSAlert()
-            ask.messageText = "Open \(v.desktopName) as “\(name)”?"
-            ask.informativeText = "\(v.desktopName) uses one \(v.label) login for the whole Mac. Opening it for “\(name)” makes “\(name)” the active profile for \(v.label), so plain \(v.label) sessions use it too."
-            ask.addButton(withTitle: "Make Active and Open")
-            ask.addButton(withTitle: "Cancel")
-            NSApp.activate(ignoringOtherApps: true)
-            guard ask.runModal() == .alertFirstButtonReturn else { return }
-            args.append("--switch")
-        }
-        let r = runCLI(args)
-        if r.status != 0 { alert("Couldn't open \(v.desktopName)", r.output) }
-        refreshPanel()
     }
 
     // MARK: - agents CLI (single implementation of profile side effects)
@@ -875,6 +601,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         pb.setString("\(vendor)-\(profile.lowercased())", forType: .string)
     }
 
+    func copyPath(_ path: String) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(path, forType: .string)
+    }
+
     // Add a lab to an existing profile: one slot dir, plus its PATH shim.
     func addVendor(profile name: String) {
         dismissPanel()
@@ -906,16 +638,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         window.show()
     }
 
-    // Slots are directories, so creating them is instant. The one slow piece —
-    // cloning Claude.app for the profile's own Desktop — runs in the
-    // background, and the card picks it up when it lands.
-    func setupCreate(profile: String, vendors: [String], cloneDesktop: Bool) -> String? {
-        let r = runCLI(["new", profile, "--vendors", vendors.joined(separator: ","), "--cli-only"])
-        guard r.status == 0 else { return r.output }
-        if cloneDesktop && !fm.fileExists(atPath: "/Applications/Claude-\(profile).app") {
-            DispatchQueue.main.async { self.backgroundClone(profile) }
-        }
-        return nil
+    // Slots are directories, so creating them is instant.
+    func setupCreate(profile: String, vendors: [String]) -> String? {
+        let r = runCLI(["new", profile, "--vendors", vendors.joined(separator: ",")])
+        return r.status == 0 ? nil : r.output
     }
 
     func setupAuthed(profile: String) -> [String: Bool]? {
@@ -959,28 +685,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         setActive(profile: profile, vendor: nil)
     }
 
-    var setupDesktopInstalled: Bool { claudeAppPath != nil }
     var setupTerminalName: String { preferredTerminal.name }
-
-    private func backgroundClone(_ name: String) {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        task.arguments = [scriptsDir + "/make-claude-profile.sh", name]
-        task.environment = Self.scriptEnvironment
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = pipe
-        task.terminationHandler = { t in
-            let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            DispatchQueue.main.async {
-                self.refreshPanel()
-                if t.terminationStatus != 0 {
-                    self.alert("Couldn't create Claude Desktop for “\(name)”", String(out.suffix(600)))
-                }
-            }
-        }
-        do { try task.run() } catch { alert("Couldn't create Claude Desktop for “\(name)”", error.localizedDescription) }
-    }
 
     private func installedTerminals() -> [TerminalSpec] {
         terminalSpecs.filter { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.bundleId) != nil }
@@ -1055,13 +760,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         }
     }
 
-    func revealData(profile name: String) {
-        dismissPanel()
-        guard let p = profile(named: name) else { return }
-        try? fm.createDirectory(atPath: p.dataDir, withIntermediateDirectories: true)
-        NSWorkspace.shared.open(URL(fileURLWithPath: p.dataDir))
-    }
-
     // Name first; the setup window then picks its labs and signs in to each.
     func newProfile() {
         dismissPanel()
@@ -1085,8 +783,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
             self.alert("Reserved name", "“\(name)” conflicts with a built-in N2 Agents command. Pick another name.")
             return
         }
-        if fm.fileExists(atPath: "/Applications/Claude-\(name).app")
-            || model.data?.profiles.contains(where: { $0.name.lowercased() == name.lowercased() }) == true {
+        if model.data?.profiles.contains(where: { $0.name.lowercased() == name.lowercased() }) == true {
             self.alert("Profile exists", "“\(name)” is already a profile. Pick another name, or delete the existing one first.")
             return
         }
@@ -1096,27 +793,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     func deleteProfile(_ name: String) {
         dismissPanel()
         guard let p = profile(named: name) else { return }
-        if isRunning(p) {
-            alert("“\(p.name)” is running", "Quit this profile’s Claude Desktop first, then delete it.")
-            return
-        }
-        if repatchInFlight.contains(p.name) {
-            alert("“\(p.name)” is repatching", "Wait for the rebuild to finish, then delete.")
+        if p.running {
+            alert("“\(p.name)” is open", "Quit this profile’s desktop apps first, then delete it.")
             return
         }
         let confirm = NSAlert()
         confirm.messageText = "Delete profile “\(p.name)”?"
-        confirm.informativeText = "“Everything” also removes its login/data (\(p.dataDir)) and CLI config (\(p.configDir)). This can't be undone."
-        confirm.addButton(withTitle: "Delete App Only")
-        confirm.addButton(withTitle: "Delete Everything")
+        confirm.informativeText = "This removes its logins, CLI config and desktop app data. It can't be undone."
+        confirm.addButton(withTitle: "Delete")
         confirm.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
-        let choice = confirm.runModal()
-        guard choice != .alertThirdButtonReturn else { return }
+        guard confirm.runModal() == .alertFirstButtonReturn else { return }
 
-        var args = ["delete", p.name, "--yes"]
-        if choice == .alertSecondButtonReturn { args.append("--everything") }
-        let result = runCLI(args)
+        let result = runCLI(["delete", p.name, "--yes"])
         if result.status != 0 {
             alert("Delete failed", result.output)
         }

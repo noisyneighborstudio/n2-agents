@@ -11,7 +11,7 @@ import Foundation
 struct Vendor {
     let id: String
     let installed: Bool
-    let desktop: String     // "clone" | "launch" | "none"
+    let desktop: String     // "instance" | "none"
     let usage: String       // "oauth" | "ondemand" | "none"
     let label: String
     let sessions: String    // transcript layout, "none" when agents can't read them
@@ -23,7 +23,6 @@ struct Vendor {
     /// Each read costs something, so it's never polled: read on open or retry.
     var readsOnDemand: Bool { usage == "ondemand" }
     var hasSessions: Bool { sessions != "none" }
-    var clonesDesktopApp: Bool { desktop == "clone" }
 }
 
 struct ProfileRow {
@@ -40,9 +39,11 @@ struct Snapshot {
     let vendors: [Vendor]
     let profiles: [ProfileRow]
     let active: String
-    /// profile -> vendor -> slot directory / signed-in account, from S rows.
+    /// profile -> vendor -> slot directory / signed-in account / desktop app
+    /// data directory, from S rows.
     var slotDirs: [String: [String: String]] = [:]
     var accounts: [String: [String: String]] = [:]
+    var desktopDirs: [String: [String: String]] = [:]
     /// true / false = the slot does / doesn't hold a login; absent = can't tell.
     var signedIn: [String: [String: Bool]] = [:]
     /// The last slot `agents run` started; next best starts after it.
@@ -50,6 +51,7 @@ struct Snapshot {
 
     func account(_ profile: String, _ vendor: String) -> String? { accounts[profile]?[vendor] }
     func slotDir(_ profile: String, _ vendor: String) -> String? { slotDirs[profile]?[vendor] }
+    func desktopDir(_ profile: String, _ vendor: String) -> String? { desktopDirs[profile]?[vendor] }
 
     var installedVendors: [Vendor] { vendors.filter { $0.installed } }
     func vendor(_ id: String) -> Vendor? { vendors.first { $0.id == id } }
@@ -63,6 +65,7 @@ struct Snapshot {
         var profiles: [ProfileRow] = []
         var active = "Default"
         var slotDirs: [String: [String: String]] = [:]
+        var desktopDirs: [String: [String: String]] = [:]
         var accounts: [String: [String: String]] = [:]
         var signedIn: [String: [String: Bool]] = [:]
         var lastSlot: (profile: String, vendor: String)?
@@ -90,6 +93,7 @@ struct Snapshot {
                 slotDirs[f[1], default: [:]][f[2]] = f[3]
                 if !f[4].isEmpty { accounts[f[1], default: [:]][f[2]] = f[4] }
                 if f.count > 5, f[5] != "unknown" { signedIn[f[1], default: [:]][f[2]] = f[5] == "yes" }
+                if f.count > 6, !f[6].isEmpty { desktopDirs[f[1], default: [:]][f[2]] = f[6] }
             case "L" where f.count >= 3:
                 lastSlot = (f[1], f[2])
             case "A" where f.count >= 2:
@@ -99,7 +103,8 @@ struct Snapshot {
             }
         }
         return Snapshot(vendors: vendors, profiles: profiles, active: active,
-                        slotDirs: slotDirs, accounts: accounts, signedIn: signedIn, lastSlot: lastSlot)
+                        slotDirs: slotDirs, accounts: accounts, desktopDirs: desktopDirs,
+                        signedIn: signedIn, lastSlot: lastSlot)
     }
 }
 

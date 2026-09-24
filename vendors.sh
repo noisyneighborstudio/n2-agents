@@ -11,8 +11,8 @@
 #   dot         the config dir the CLI uses when nothing overrides it
 #   env         env var that relocates that dir, so profiles run CONCURRENTLY,
 #               each pinned per process. A lab without one can't be supported.
-#   desktop     clone  — a macOS bundle we copy per profile (Claude)
-#               launch — the CLI opens its own desktop app (Codex)
+#   desktop     instance — the stock desktop app, run as one more instance per
+#                          profile with that profile's data dir and config
 #               none
 #   usage       oauth    — server-side quota we can query (Claude, Codex, Grok)
 #               ondemand — the same, but each read has a cost (Muse mints an
@@ -126,9 +126,8 @@ vendor_slot_name() {
 
 vendor_desktop() {
   case $1 in
-    claude) echo clone ;;
-    codex)  echo launch ;;
-    *)      echo none ;;
+    claude|codex) echo instance ;;
+    *)            echo none ;;
   esac
 }
 
@@ -141,13 +140,34 @@ vendor_desktop_name() {
   esac
 }
 
-# The desktop app's bundle id, to find and open it. A `clone` lab's per-profile
-# copies carry their own ids; this is the original.
+# The desktop app's bundle id, to find and open it.
 vendor_desktop_bundle() {
   case $1 in
     claude) echo "com.anthropic.claudefordesktop" ;;
     codex)  echo "com.openai.codex" ;;
     *)      echo "" ;;
+  esac
+}
+
+# Where a profile's instance keeps its browser data (cookies, the desktop
+# login). Claude's is the path its per-profile clones used, so their logins
+# carry over. Default's is the stock app's own.
+vendor_desktop_data() {  # vendor, profile
+  case $1:$2 in
+    claude:Default) echo "$HOME/Library/Application Support/Claude" ;;
+    codex:Default)  echo "$HOME/Library/Application Support/Codex" ;;
+    claude:*)       echo "$HOME/Library/Application Support/Claude-$2" ;;
+    codex:*)        echo "$HOME/Library/Application Support/Codex-$2" ;;
+  esac
+}
+
+# The environment that pins an instance to a profile, one VAR=value per line.
+# Codex's own multi-instance launch takes its data dir from the environment
+# too, and only the stock instance may update the shared bundle.
+vendor_desktop_env() {  # vendor, slot dir, data dir
+  case $1 in
+    claude) echo "CLAUDE_CONFIG_DIR=$2" ;;
+    codex)  printf '%s\n' "CODEX_HOME=$2" "CODEX_ELECTRON_USER_DATA_PATH=$3" "CODEX_SPARKLE_ENABLED=false" ;;
   esac
 }
 
