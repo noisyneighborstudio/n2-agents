@@ -567,7 +567,7 @@ swiftc -parse-as-library ${(f)"$(ls loop/*.swift | grep -v main.swift)"} tests/L
 # the standalone loop executable directly so this test doesn't resolve the
 # app's binary resources just to exercise the loop engine.
 mkdir -p .build/release
-swiftc -O loop/*.swift -o "$PWD/.build/release/n2-loop"
+swiftc -swift-version 5 -O loop/*.swift -o "$PWD/.build/release/n2-loop"
 n2_root=$PWD
 loop_root="$test_root/loop"
 mkdir -p "$loop_root/home" "$loop_root/bin"
