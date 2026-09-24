@@ -671,7 +671,7 @@ footer{border-block-start:1px solid var(--border);padding-block:var(--space-6)}
       <div class="facts">
         <div class="fact"><span class="n stencil">01</span><div><h3>Open the profile with room left</h3><p><code>agents run --best</code> opens whichever profile has the most Claude quota left. The numbers come from the same OAuth endpoint Claude Code's own <code>/usage</code> screen reads.</p></div></div>
         <div class="fact"><span class="n stencil">02</span><div><h3>Opens in your terminal</h3><p>Terminal, iTerm2, Warp, Ghostty, kitty, Alacritty or WezTerm.</p></div></div>
-        <div class="fact"><span class="n stencil">03</span><div><h3>Claude Desktop, cloned per profile</h3><p>Re-patched on its own each time Claude ships an update.</p></div></div>
+        <div class="fact"><span class="n stencil">03</span><div><h3>Claude Desktop and Codex, per profile</h3><p>Each profile opens its own instance of the app you already have, signed in side by side. Nothing copied, nothing to rebuild.</p></div></div>
         <div class="fact"><span class="n stencil">04</span><div><h3>Move a session between identities</h3><p>Transfer a Claude or Codex transcript to another profile and pick it straight back up.</p></div></div>
         <div class="fact"><span class="n stencil">05</span><div><h3>The menu is a client of the CLI</h3><p>The app parses <code>agents porcelain</code> and shells back out for anything with side effects, so the menu and the CLI can't drift apart.</p></div></div>
       </div>
@@ -714,8 +714,8 @@ footer{border-block-start:1px solid var(--border);padding-block:var(--space-6)}
       <table>
         <thead><tr><th>Lab</th><th>CLI</th><th>Config home</th><th>Isolation</th><th>Desktop app</th><th>Usage API</th><th>Sessions</th></tr></thead>
         <tbody>
-          <tr><td class="lab"><i style="background:#18E4CC"></i>Claude</td><td>claude</td><td>~/.claude</td><td><span class="t-pill tier-env">ENV</span></td><td>cloned per profile</td><td><span class="yes">YES</span></td><td><span class="yes">YES</span></td></tr>
-          <tr><td class="lab"><i style="background:#7848C0"></i>Codex</td><td>codex</td><td>~/.codex</td><td><span class="t-pill tier-env">ENV</span></td><td>codex app</td><td><span class="yes">YES</span></td><td><span class="yes">YES</span></td></tr>
+          <tr><td class="lab"><i style="background:#18E4CC"></i>Claude</td><td>claude</td><td>~/.claude</td><td><span class="t-pill tier-env">ENV</span></td><td>an instance per profile</td><td><span class="yes">YES</span></td><td><span class="yes">YES</span></td></tr>
+          <tr><td class="lab"><i style="background:#7848C0"></i>Codex</td><td>codex</td><td>~/.codex</td><td><span class="t-pill tier-env">ENV</span></td><td>an instance per profile</td><td><span class="yes">YES</span></td><td><span class="yes">YES</span></td></tr>
           <tr><td class="lab"><i style="background:#F09C24"></i>Grok</td><td>grok</td><td>~/.grok</td><td><span class="t-pill tier-env">ENV</span></td><td><span class="no">—</span></td><td><span class="yes">WEEKLY</span></td><td><span class="no">—</span></td></tr>
           <tr><td class="lab"><i style="background:#1884E4"></i>Cursor</td><td>cursor-agent</td><td>~/.cursor</td><td><span class="t-pill tier-env">ENV</span></td><td><span class="no">—</span></td><td><span class="no">—</span></td><td><span class="no">—</span></td></tr>
           <tr><td class="lab"><i style="background:#FC6054"></i>opencode</td><td>opencode</td><td>~/.config/opencode</td><td><span class="t-pill tier-env">ENV</span></td><td><span class="no">—</span></td><td><span class="no">—</span></td><td><span class="no">—</span></td></tr>

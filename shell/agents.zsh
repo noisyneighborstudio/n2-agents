@@ -25,7 +25,7 @@ _n2agents_profiles() {
 # `--vendor` takes a vendor id; everything else takes a profile.
 _n2agents_cli() {
   if (( CURRENT == 2 )); then
-    _values 'command' list vendors active use run best new delete repatch adopt \
+    _values 'command' list vendors active use run best new delete adopt \
       sessions transfer desktop shims porcelain profiles version help
   elif [[ ${words[CURRENT-1]} == (--vendor|--vendors) ]]; then
     local -a vendors

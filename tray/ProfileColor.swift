@@ -1,10 +1,9 @@
 import AppKit
 
-// One colour per profile, shared by the cloned app's icon ribbon (icon-badge)
-// and the panel's profile bars, so a profile reads the same everywhere. djb2
-// over the name: stable across launches and machines. Pink belongs to Default
-// alone; any other name that hashes onto it re-hashes over the other six, so
-// the panel never shows Default's colour on a second card.
+// One colour per profile, for the panel's profile bars. djb2 over the name:
+// stable across launches and machines. Pink belongs to Default alone; any
+// other name that hashes onto it re-hashes over the other six, so the panel
+// never shows Default's colour on a second card.
 enum ProfileColor {
     static let palette: [NSColor] = [
         NSColor(calibratedRed: 0.20, green: 0.47, blue: 0.96, alpha: 1), // blue
