@@ -269,7 +269,10 @@ final class Controller {
         s.turns[i].outcome = outcome
         if outcome != "ok" { s.turns[i].note = oneLine(out.tail, 300) }
 
-        let troubled = ["quota", "attention", "auth", "outage", "failed"].contains(outcome)
+        // Only failures the loop can't account for trip the breaker. Quota and
+        // "needs you" already set the slot aside until a known time, and running
+        // dry has to end in WAITING, not in a pause nobody resumes.
+        let troubled = ["auth", "outage", "failed"].contains(outcome)
         s.signatures["slot-failures"] = troubled ? (s.signatures["slot-failures"] ?? 0) + 1 : (outcome == "ok" ? 0 : s.signatures["slot-failures"])
         note(s.turns[i].role.rawValue, "\(id) \(outcome) after \(Int(out.seconds))s\(outcome == "ok" ? "" : ": " + oneLine(out.tail, 160))")
         if (s.signatures["slot-failures"] ?? 0) >= Limits.maxSlotFailures {

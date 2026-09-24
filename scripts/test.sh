@@ -581,13 +581,15 @@ done
 loop() { env $loop_env LOOP_FAKE="$loop_fake" "$n2_root/agents" loop "$@" }
 field() { python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$loop_root/runs/$run/state.json" "$1" }
 wait_for() {  # status
-  for _ in {1..150}; do [ "$(field 's["status"]')" = "$1" ] && return 0; sleep 0.2; done
+  for _ in {1..300}; do [ "$(field 's["status"]')" = "$1" ] && return 0; sleep 0.2; done
   echo "loop never reached $1:" >&2; loop status "$run" >&2; cat "$loop_root/runs/$run/controller.log" >&2; return 1
 }
 # A fresh repository and scenario, planned and approved the way a person would.
 new_loop() {  # scenario files…
   loop_fake=$(mktemp -d "$loop_root/fake.XXXXXX")
-  for f in "$@"; do touch "$loop_fake/$f"; done
+  for f in "$@"; do  # name, or name=contents
+    case $f in *=*) echo "${f#*=}" > "$loop_fake/${f%%=*}" ;; *) touch "$loop_fake/$f" ;; esac
+  done
   repo=$(mktemp -d "$loop_root/repo.XXXXXX")
   git -C "$repo" init -q && git -C "$repo" config user.email loop@test && git -C "$repo" config user.name Loop
   echo hi > "$repo/README" && git -C "$repo" add . && git -C "$repo" commit -qm init
@@ -619,6 +621,14 @@ wait_for DONE
 [ "$(field 's["cooldowns"]["codex|Home"]["until"][:4]')" = 2099 ]   # the reset time the lab stated
 [ "$(field '{c["lastSlot"] for c in s["plan"]["chunks"]}')" = "{'codex|Work'}" ]
 [ "$(field 'max(c["revisions"] for c in s["plan"]["chunks"])')" = 0 ]
+
+# Every slot running dry waits for the stated reset and carries on by itself —
+# however many quota failures that takes, it never turns into a pause.
+new_loop worker-quota-Home=4 worker-quota-Work=4
+wait_for DONE
+[ "$(field 'len([t for t in s["turns"] if t["outcome"] == "quota"])')" = 8 ]
+field '[e["detail"] for e in s["events"] if e["kind"] == "capacity"]' | grep -q "out of quota or cooling down; retrying at"
+[ "$(field 'len([e for e in s["events"] if e["kind"] == "paused"])')" = 0 ]
 
 # Pause stops running agents at once and keeps their work; resume finishes.
 new_loop slow
