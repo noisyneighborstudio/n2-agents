@@ -80,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     private var statusIcon: StatusIcon?
     private var quotaWatch: AnyCancellable?
     private var menuBarAppearance: NSKeyValueObservation?
+    private var drawnIcon: (remaining: Int?, dark: Bool)?
     private lazy var quotaToast = QuotaToast(anchor: statusItem.button!) { [weak self] in self?.togglePanel() }
     // Built on first use (an open, or the first quota reading): it anchors to
     // the status item's button.
@@ -223,8 +224,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 
     private func drawStatusIcon() {
         guard let icon = statusIcon, let button = statusItem.button else { return }
-        let dark = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua, .vibrantLight, .vibrantDark])
-        button.image = icon.image(remaining: model.remaining, dark: dark == .darkAqua || dark == .vibrantDark)
+        let match = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua, .vibrantLight, .vibrantDark])
+        let drawn = (remaining: model.remaining, dark: match == .darkAqua || match == .vibrantDark)
+        // Setting the image re-resolves the button's appearance, which fires
+        // the observer that calls this: redraw only on a real change, or the
+        // two feed each other forever.
+        if let last = drawnIcon, last == drawn { return }
+        drawnIcon = drawn
+        button.image = icon.image(remaining: drawn.remaining, dark: drawn.dark)
     }
 
     // MARK: - Panel (re-read every time it opens)

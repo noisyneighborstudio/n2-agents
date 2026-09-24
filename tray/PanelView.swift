@@ -896,12 +896,13 @@ private struct Sweep: View {
     var period: Double = 1.4
     var strength: Double = 0.5
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.windowOnScreen) private var onScreen
 
     var body: some View {
         if reduceMotion {
             Rectangle().fill(Color.primary.opacity(0.3))
         } else {
-            TimelineView(.animation) { context in
+            TimelineView(.animation(paused: !onScreen)) { context in
                 GeometryReader { g in
                     let phase = context.date.timeIntervalSinceReferenceDate
                         .truncatingRemainder(dividingBy: period) / period
