@@ -221,7 +221,8 @@ private struct PanelFooter: View {
     // counter resets with every stable release; the build number always climbs.
     private var versionLine: LocalizedStringKey {
         let build = (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String) ?? "0"
-        return "\(fullVersion.prefix { $0 != "-" }) (\(build))"
+        let version = "\(fullVersion.prefix { $0 != "-" }) (\(build))"
+        return UpdateChannel.isQABuild ? "\(version) · QA build" : "\(version)"
     }
 
     private var statusSymbol: String? {
@@ -234,6 +235,7 @@ private struct PanelFooter: View {
     }
 
     private var updateHelp: String {
+        if UpdateChannel.isQABuild { return "Local QA build — never updates itself" }
         let channel = "\(UpdateChannel.selected().rawValue.capitalized) channel"
         switch model.updateStatus {
         case .upToDate?: return "N2 Agents \(fullVersion) (\(channel)) is up to date"
@@ -248,9 +250,11 @@ private struct PanelFooter: View {
             Button { actions.checkForUpdates() } label: {
                 HStack(spacing: 4) {
                     Text(versionLine)
-                    let channel = UpdateChannel.selected()
-                    Image(systemName: channel.symbol).fontWeight(.light)
-                        .accessibilityLabel("\(channel.rawValue.capitalized) channel")
+                    if !UpdateChannel.isQABuild {
+                        let channel = UpdateChannel.selected()
+                        Image(systemName: channel.symbol).fontWeight(.light)
+                            .accessibilityLabel("\(channel.rawValue.capitalized) channel")
+                    }
                     if let statusSymbol { Image(systemName: statusSymbol).accessibilityLabel(updateHelp) }
                 }.lineLimit(1)
             }

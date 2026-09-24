@@ -170,8 +170,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 #if canImport(Sparkle)
         // Sparkle owns automatic scheduling and signature verification. Both
         // automatic and manual checks obtain their feed from the delegate below.
-        _ = updaterController
-        updaterController.updater.automaticallyChecksForUpdates = true
+        // The controller is lazy: a QA build never touches it, so never updates.
+        if !UpdateChannel.isQABuild {
+            _ = updaterController
+            updaterController.updater.automaticallyChecksForUpdates = true
+        }
 #endif
     }
 
@@ -190,7 +193,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         // two feed each other forever.
         if let last = drawnIcon, last == drawn { return }
         drawnIcon = drawn
-        button.image = icon.image(remaining: drawn.remaining, dark: drawn.dark)
+        let image = icon.image(remaining: drawn.remaining, dark: drawn.dark)
+        button.image = UpdateChannel.isQABuild ? StatusIcon.taggedQA(image) : image
     }
 
     // MARK: - Panel (re-read every time it opens)
@@ -393,7 +397,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     // own ink, so it's seen without opening the panel.
     private func refreshStatusTitle() {
         let waiting = updateStatus == .available
-        statusItem.button?.toolTip = waiting ? "N2 Agents — update available" : nil
+        statusItem.button?.toolTip = waiting ? "N2 Agents — update available"
+            : UpdateChannel.isQABuild ? "N2 Agents — QA build" : nil
         let suffix = waiting ? "↑" : ""
         // A plain title, not an attributed one: only that takes the menu bar's ink.
         statusItem.button?.font = .systemFont(ofSize: 12, weight: .bold)
@@ -406,7 +411,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         UserDefaults.standard.set(channel.rawValue, forKey: UpdateChannel.preferenceKey)
         updateStatus = nil
 #if canImport(Sparkle)
-        updaterController.updater.resetUpdateCycle()
+        if !UpdateChannel.isQABuild { updaterController.updater.resetUpdateCycle() }
 #endif
     }
 
@@ -441,6 +446,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 
     func checkForUpdates() {
         dismissPanel()
+        if UpdateChannel.isQABuild {
+            alert("QA build", "This is a local QA build. It never updates itself; rebuild it to pick up changes.")
+            return
+        }
 #if canImport(Sparkle)
         updaterController.checkForUpdates(nil)
 #else
