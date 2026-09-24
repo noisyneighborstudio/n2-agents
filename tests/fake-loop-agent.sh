@@ -3,6 +3,8 @@
 # role — the ROLE line of the prompt on stdin — and misbehaves on cue:
 # files in $LOOP_FAKE (the scenario dir) switch each misbehaviour on.
 #   quota-<profile>   that slot is out of quota
+#   worker-quota-<profile>   holds n: that slot's next n worker turns hit a
+#                     limit that resets in two seconds
 #   slow              workers take a minute (time to pause them)
 #   fail-b-once       the first verification rejects criterion has-b
 #   liar              the sign-off says done whatever the evidence says
@@ -12,6 +14,13 @@ role=$(printf '%s\n' "$prompt" | sed -n 's/^ROLE: //p' | head -1)
 chunk=$(printf '%s\n' "$prompt" | sed -n 's/^CHUNK: //p' | head -1)
 profile=$(basename "$(dirname "$CODEX_HOME")")
 echo "$role ${chunk:-} $profile" >> "$LOOP_FAKE/calls"
+
+left=$(cat "$LOOP_FAKE/worker-quota-$profile" 2>/dev/null || echo 0)
+if [ "$role" = worker ] && [ "$left" -gt 0 ]; then
+  echo $((left - 1)) > "$LOOP_FAKE/worker-quota-$profile"
+  echo "ERROR: You've hit your usage limit. Try again in 2 seconds." >&2
+  exit 1
+fi
 
 if [ -f "$LOOP_FAKE/quota-$profile" ]; then
   echo "ERROR: You've hit your usage limit. Try again at Sep 26th, 2099 11:20 AM." >&2
