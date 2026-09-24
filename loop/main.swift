@@ -348,7 +348,8 @@ func main() throws {
         let id = try store.resolve(a.positional.first)
         let log = store.controllerLog(id)
         if a.follow {
-            let args = ["/usr/bin/tail", "-n", "40", "-f", log].map { strdup($0) } + [nil]
+            let cArgs: [UnsafeMutablePointer<CChar>?] = ["/usr/bin/tail", "-n", "40", "-f", log].map { strdup($0) }
+            let args = cArgs + [nil]
             execv("/usr/bin/tail", args)
             throw LoopError("could not run tail")
         }
