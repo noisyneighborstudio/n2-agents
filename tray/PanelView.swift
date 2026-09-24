@@ -167,7 +167,7 @@ private struct PanelHeader: View {
                 .buttonStyle(.plain)
                 .help("Switch every lab to one profile")
             }
-            Button { popUpSettingsMenu() } label: {
+            Button { actions.showSettings() } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 12))
                     .frame(width: 24, height: 24)
@@ -188,25 +188,6 @@ private struct PanelHeader: View {
         })
     }
 
-    private func popUpSettingsMenu() {
-        var items: [NSMenuItem] = [ClosureItem("New Profile…", symbol: "person.badge.plus") { actions.newProfile() },
-                                   .separator()]
-        if let terms = model.data?.terminals, terms.count > 1 {
-            items.append(submenu("Open Sessions In", symbol: "terminal", terms.enumerated().map { i, name in
-                ClosureItem(name, symbol: "terminal", checked: i == 0) { actions.setPreferredTerminal(name) }
-            }))
-        }
-        let channel = UpdateChannel.selected()
-        items.append(submenu("Update Channel", symbol: "dial.medium", UpdateChannel.allCases.map { c in
-            ClosureItem(c.rawValue.capitalized, symbol: c.symbol, checked: c == channel) { actions.setUpdateChannel(c) }
-        }))
-        items.append(ClosureItem("Keyboard Shortcut: \(actions.panelShortcut ?? "None")…", symbol: "keyboard") {
-            actions.setPanelShortcut()
-        })
-        items.append(.separator())
-        items.append(ClosureItem("Check for Updates…", symbol: "arrow.down.circle") { actions.checkForUpdates() })
-        popUp(items)
-    }
 }
 
 private struct PanelFooter: View {

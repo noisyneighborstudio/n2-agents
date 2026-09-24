@@ -82,6 +82,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     private lazy var hotKey = GlobalHotKey { [weak self] in self?.togglePanel() }
     /// Recent sessions, opened out of the panel into its own window.
     private var sessionsWindow: GlassWindow?
+    /// Preferences live in a persistent window rather than a transient menu.
+    private var settingsWindow: GlassWindow?
     private let fm = FileManager.default
     private let home = NSHomeDirectory()
     private let newIssueURL = "https://github.com/noisyneighborstudio/n2-agents/issues/new"
@@ -879,6 +881,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 
     func closeSessions() {
         sessionsWindow?.dismiss()
+    }
+
+    func showSettings() {
+        dismissPanel()
+        if settingsWindow == nil {
+            settingsWindow = GlassWindow(rootView: SettingsWindowView(model: model, actions: self), behavior: .floating)
+            settingsWindow?.identifier = NSUserInterfaceItemIdentifier("dev.sethwebster.n2agents.settings")
+        }
+        settingsWindow?.present()
+    }
+
+    func closeSettings() {
+        settingsWindow?.dismiss()
+    }
+
+    func installCLI() -> String {
+        let source = URL(fileURLWithPath: cliPath).standardizedFileURL
+        let agentAs = scriptsDir + "/agent-as"
+        guard fm.isExecutableFile(atPath: source.path), fm.isExecutableFile(atPath: agentAs) else {
+            return "The CLI files are missing from this app bundle. Reinstall N2 Agents and try again."
+        }
+
+        let allowed = ["/opt/homebrew/bin", "/usr/local/bin", home + "/.local/bin"]
+        let pathDirs = Self.scriptPATH.split(separator: ":").map(String.init)
+        var candidates = pathDirs.filter { allowed.contains($0) }
+        candidates += allowed.filter { !candidates.contains($0) }
+
+        for directory in candidates {
+            let dir = URL(fileURLWithPath: directory, isDirectory: true)
+            if !fm.fileExists(atPath: directory), directory == home + "/.local/bin" {
+                do { try fm.createDirectory(at: dir, withIntermediateDirectories: true) }
+                catch { continue }
+            }
+            guard fm.isWritableFile(atPath: directory) else { continue }
+
+            let link = dir.appendingPathComponent("agents")
+            let linkExists = fm.fileExists(atPath: link.path)
+                || (try? fm.destinationOfSymbolicLink(atPath: link.path)) != nil
+            if linkExists {
+                if let target = try? fm.destinationOfSymbolicLink(atPath: link.path),
+                   URL(fileURLWithPath: target, relativeTo: dir).standardizedFileURL == source {
+                    do {
+                        try fm.createDirectory(atPath: home + "/.n2-agents", withIntermediateDirectories: true)
+                        try "\(directory)\n".write(toFile: home + "/.n2-agents/.bin-dir", atomically: true, encoding: .utf8)
+                    } catch {
+                        return "CLI link exists, but its install record couldn't be written: \(error.localizedDescription)"
+                    }
+                    let result = runCLI(["shims"])
+                    return result.status == 0 ? "CLI is installed at \(link.path)." : "CLI is installed; profile commands need attention: \(result.output)"
+                }
+                continue
+            }
+
+            do {
+                try fm.createSymbolicLink(at: link, withDestinationURL: source)
+                try fm.createDirectory(atPath: home + "/.n2-agents", withIntermediateDirectories: true)
+                try "\(directory)\n".write(toFile: home + "/.n2-agents/.bin-dir", atomically: true, encoding: .utf8)
+                let result = runCLI(["shims"])
+                return result.status == 0 ? "CLI installed at \(link.path). Restart your terminal to use it." : "CLI installed; profile commands need attention: \(result.output)"
+            } catch {
+                return "Couldn't install the CLI in \(directory): \(error.localizedDescription)"
+            }
+        }
+        return "No writable PATH directory is available. Make /opt/homebrew/bin, /usr/local/bin, or ~/.local/bin writable, then try again."
     }
 
     // Every session, not a page of them: search runs over the list in memory,

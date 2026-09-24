@@ -323,6 +323,9 @@ protocol PanelActions: AnyObject {
     func copyResumeCommand(_ session: SessionInfo)
     func showAllSessions()
     func closeSessions()
+    func showSettings()
+    func closeSettings()
+    func installCLI() -> String
     func addVendor(profile: String)
     func deleteProfile(_ name: String)
     func newProfile()
