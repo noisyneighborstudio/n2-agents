@@ -20,14 +20,13 @@ enum LabState: Equatable {
 /// What the setup window needs from the app; everything with a side effect
 /// still goes through the `agents` CLI.
 protocol SetupHost: AnyObject {
-    func setupCreate(profile: String, vendors: [String], cloneDesktop: Bool) -> String?
+    func setupCreate(profile: String, vendors: [String]) -> String?
     func setupAuthed(profile: String) -> [String: Bool]?
     func setupStartLogin(profile: String, vendor: String)
     func setupCopyLoginCommand(profile: String, vendor: String)
     func setupPending(profile: String, labs: [String]?)
     func setupOpen(profile: String, vendor: String)
     func setupMakeActive(profile: String)
-    var setupDesktopInstalled: Bool { get }
     var setupTerminalName: String { get }
 }
 
@@ -107,11 +106,10 @@ final class ProfileSetup: NSObject, NSWindowDelegate {
     func create() {
         guard let host, !model.busy else { return }
         let picks = model.newPicks
-        let clone = picks.contains { model.vendor($0)?.clonesDesktopApp == true } && host.setupDesktopInstalled
         model.busy = true
         model.error = nil
         DispatchQueue.global(qos: .userInitiated).async {
-            let error = host.setupCreate(profile: self.model.profile, vendors: picks, cloneDesktop: clone)
+            let error = host.setupCreate(profile: self.model.profile, vendors: picks)
             DispatchQueue.main.async {
                 self.model.busy = false
                 if let error {

@@ -8,5 +8,9 @@ import AppKit
         }
         // The toast announces a reading once it's a tier worse than before.
         precondition(StatusIcon.Tier.green < .amber && StatusIcon.Tier.amber < .orange && StatusIcon.Tier.orange < .red)
+        // Flat bitmaps, not a drawing handler the menu bar re-runs every repaint.
+        let icon = StatusIcon(base: NSImage(size: NSSize(width: 64, height: 64))).image(remaining: 40, dark: true)
+        let widths = icon.representations.compactMap { ($0 as? NSBitmapImageRep)?.pixelsWide }
+        precondition(widths == [22, 44] && icon.representations.count == 2, "icon should be 1x + 2x bitmaps, got \(icon.representations)")
     }
 }

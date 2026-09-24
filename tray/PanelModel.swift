@@ -92,28 +92,21 @@ struct Usage {
 struct PanelData {
     let snapshot: Snapshot
     let profiles: [Profile]
-    let desktopVersion: String?          // nil = Claude Desktop not found
-    let staleClones: [String: String]    // profile -> clone version, where it differs from desktopVersion
     let sessions: [SessionInfo]
     let terminals: [String]              // installed terminal names, preferred first
-    /// Labs whose single, shared desktop app (desktop = launch) is installed.
-    let launchDesktops: Set<String>
+    /// Labs whose desktop app is installed.
+    let desktops: Set<String>
 
-    var desktopInstalled: Bool { desktopVersion != nil }
     /// The labs this profile holds, in table order.
     func slotted(_ profile: Profile) -> [Vendor] {
         snapshot.installedVendors.filter { profile.slots[$0.id] != nil }
     }
     /// The labs whose quota the panel can show.
     var quotaVendors: [Vendor] { snapshot.installedVendors.filter(\.hasUsageAPI) }
-    /// The lab whose desktop app is cloned per profile (Claude alone, today) —
-    /// every desktop clone feature keys off this, never a lab's name.
-    var cloneVendor: Vendor? { snapshot.installedVendors.first { $0.clonesDesktopApp } }
-
-    /// Whether this profile has a desktop app to open for this lab: its own
-    /// clone for a `clone` lab, the lab's one shared app for a `launch` lab.
+    /// Whether this profile can open this lab's desktop app: any profile with
+    /// a slot can, as its own instance of the installed app.
     func hasDesktop(_ vendor: Vendor, for profile: Profile) -> Bool {
-        vendor.clonesDesktopApp ? desktopInstalled && profile.hasApp : launchDesktops.contains(vendor.id)
+        desktops.contains(vendor.id) && profile.slots[vendor.id] != nil
     }
 }
 
@@ -171,7 +164,6 @@ final class PanelModel: ObservableObject {
     @Published var usageSlow = false
     /// Flips false → true on every open; the content rises into place off it.
     @Published var presented = true
-    @Published var repatching: Set<String> = []
     /// The one profile showing its labs. One at a time keeps the panel's
     /// height bounded, which is what lets depth 3 open in place.
     @Published var expanded: String?
@@ -319,6 +311,7 @@ protocol PanelActions: AnyObject {
     func openSession(profile: String, vendor: String, terminal: String?)
     func setActive(profile: String, vendor: String?)
     func copyCommand(profile: String, vendor: String)
+    func copyPath(_ path: String)
     func openDesktop(profile: String, vendor: String)
     func signIn(profile: String, vendor: String, confirm: Bool)
     func finishSetup(profile: String)
@@ -328,17 +321,9 @@ protocol PanelActions: AnyObject {
     func showAllSessions()
     func closeSessions()
     func addVendor(profile: String)
-    func revealData(profile: String)
     func deleteProfile(_ name: String)
     func newProfile()
-    func rebuildClone(_ name: String)
-    func showCloneDetails()
     func retryUsage()
-    func locateClaude()
-    func downloadClaude()
-    func repatchAll()
-    func setAutoRepatch(_ on: Bool)
-    var autoRepatch: Bool { get }
     func setPreferredTerminal(_ name: String)
     func setUpdateChannel(_ channel: UpdateChannel)
     var panelShortcut: String? { get }

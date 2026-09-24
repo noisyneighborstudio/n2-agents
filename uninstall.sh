@@ -4,7 +4,7 @@
 # Warp launch configs, tray defaults — and un-migrates every vendor dot dir
 # that `agents use` turned into a symlink, so plain `claude`/`codex`/… keep
 # working afterwards.
-# Profiles (cloned apps, logins, CLI configs) are listed but only removed if
+# Profiles (logins, CLI configs, desktop app data) are listed but only removed if
 # you pass --purge. Your original default config is always restored, never
 # purged.
 set -euo pipefail
@@ -122,19 +122,32 @@ rm -f "$HOME/.n2-agents/.bin-dir"
 rm -f "$HOME/.warp/launch_configurations"/n2agents-*.yaml
 defaults delete dev.sethwebster.n2agents 2>/dev/null || true
 
-apps=(/Applications/Claude-*.app)
 cfgs=("$HOME/.n2-agents"/*(N))
 
 if [[ ${1:-} == "--purge" ]]; then
-  for app in $apps; do rm -rf "$app"; echo "✓ Removed $app"; done
-  for d in "$HOME/Library/Application Support"/Claude-*(N); do rm -rf "$d"; echo "✓ Removed $d"; done
+  # A profile's desktop instances keep their data beside the stock app's. A
+  # profile adopted from the separate `claudes` app shares its Claude data and
+  # clone with it, and those stay.
+  support="$HOME/Library/Application Support"
+  for d in "$HOME/.n2-agents"/*(N/); do
+    p=${d:t}
+    [[ $p == Default ]] && continue
+    targets=("$support/Codex-$p")
+    [[ -e $HOME/.claude-profiles/$p ]] || targets+=("$support/Claude-$p")
+    # Profiles used to open in a per-profile copy of Claude Desktop.
+    [[ -e $HOME/.claude-profiles/$p || ! -x /Applications/Claude-$p.app/Contents/MacOS/Claude-bin ]] || targets+=("/Applications/Claude-$p.app")
+    for t in $targets; do
+      [[ -e $t ]] || continue
+      rm -rf "$t"
+      echo "✓ Removed $t"
+    done
+  done
   # Only our own root: ~/.claude-profiles belongs to the separate `claudes` app,
   # and adopted slots are symlinks into it that must outlive this uninstall.
   rm -rf "$HOME/.n2-agents"
   echo "✓ Removed N2 Agents profile configs"
-elif (( ${#apps} + ${#cfgs} > 0 )); then
+elif (( ${#cfgs} > 0 )); then
   echo ""
   echo "Profiles left in place (remove with: ./uninstall.sh --purge):"
-  for app in $apps; do echo "  $app"; done
-  (( ${#cfgs} > 0 )) && echo "  ~/.n2-agents/"
+  echo "  ~/.n2-agents/"
 fi

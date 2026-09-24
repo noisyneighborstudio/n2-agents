@@ -65,7 +65,6 @@ struct PanelView: View {
                                 .padding(.horizontal, Metrics.side)
                                 .padding(.vertical, 12)
                         }
-                        Banners(data: data, model: model, actions: actions)
                         if data.profiles.count <= 1 {
                             FirstRun(actions: actions)
                         } else {
@@ -201,17 +200,6 @@ private struct PanelHeader: View {
         items.append(submenu("Update Channel", symbol: "dial.medium", UpdateChannel.allCases.map { c in
             ClosureItem(c.rawValue.capitalized, symbol: "shippingbox", checked: c == channel) { actions.setUpdateChannel(c) }
         }))
-        if let clone = model.data?.cloneVendor {
-            if model.data?.desktopInstalled == true {
-                items.append(ClosureItem("Auto-repatch \(clone.desktopName) Clones",
-                                         symbol: "arrow.triangle.2.circlepath",
-                                         checked: actions.autoRepatch) {
-                    actions.setAutoRepatch(!actions.autoRepatch)
-                })
-                items.append(ClosureItem("Re-patch All Clones Now", symbol: "hammer") { actions.repatchAll() })
-            }
-            items.append(ClosureItem("Locate \(clone.desktopName)…", symbol: "folder.badge.questionmark") { actions.locateClaude() })
-        }
         items.append(ClosureItem("Keyboard Shortcut: \(actions.panelShortcut ?? "None")…", symbol: "keyboard") {
             actions.setPanelShortcut()
         })
@@ -269,60 +257,6 @@ private struct PanelFooter: View {
 }
 
 // MARK: - Banners
-
-private struct Banners: View {
-    let data: PanelData
-    @ObservedObject var model: PanelModel
-    let actions: PanelActions
-
-    var body: some View {
-        if !data.desktopInstalled, let clone = data.cloneVendor {
-            Banner(icon: "exclamationmark.triangle", text: "\(clone.desktopName) not found — CLI profiles still work") {
-                Button { actions.locateClaude() } label: {
-                    Label("Locate…", systemImage: "folder.badge.questionmark")
-                }
-                Button { actions.downloadClaude() } label: {
-                    Label("Download…", systemImage: "arrow.down.circle")
-                }
-            }
-        }
-        let clones = Set(data.staleClones.keys).union(model.repatching)
-        if let version = data.desktopVersion, let clone = data.cloneVendor, !clones.isEmpty {
-            Banner(icon: "arrow.up.to.line",
-                   text: model.repatching.isEmpty
-                       ? "\(clone.desktopName) \(version) — \(clones.count) clone(s) behind"
-                       : "\(clone.desktopName) \(version) — rebuilding \(model.repatching.count) of \(clones.count) clones") {
-                Button { actions.showCloneDetails() } label: {
-                    Label("Details", systemImage: "list.bullet")
-                }
-            }
-        }
-    }
-}
-
-private struct Banner<Buttons: View>: View {
-    let icon: String
-    let text: LocalizedStringKey
-    @ViewBuilder let buttons: Buttons
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Image(systemName: icon).foregroundStyle(Ink.amber)
-                Text(text).font(.system(size: 11.5))
-                Spacer(minLength: 0)
-            }
-            HStack(spacing: 6) { buttons }
-                .buttonStyle(PillButtonStyle(tint: Ink.amber))
-                .padding(.leading, 22)
-        }
-        .padding(.horizontal, Metrics.side)
-        .padding(.vertical, 9)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Ink.amber.opacity(0.16))
-        .overlay(alignment: .bottom) { Divider() }
-    }
-}
 
 // MARK: - Profiles
 
@@ -439,8 +373,6 @@ private struct ProfileCard: View {
     private var slotted: [Vendor] { data.slotted(profile) }
     private var addable: Bool { data.snapshot.installedVendors.contains { profile.slots[$0.id] == nil } }
     private var open: Bool { model.expanded == profile.name }
-    private var repatching: Bool { model.repatching.contains(profile.name) }
-    private var stale: Bool { data.staleClones[profile.name] != nil }
     private var reading: (state: ProfileState, used: Int?) { model.reading(profile, data) }
     private var allOut: Bool { if case .allOut = reading.state { return true }; return false }
 
@@ -510,11 +442,6 @@ private struct ProfileCard: View {
             if addable {
                 Button { actions.addVendor(profile: profile.name) } label: {
                     Label("Add Lab…", systemImage: "plus")
-                }
-            }
-            if profile.hasApp, let clone = data.cloneVendor {
-                Button { actions.revealData(profile: profile.name) } label: {
-                    Label("Reveal \(clone.desktopName) Data", systemImage: "folder")
                 }
             }
             if !profile.isDefault {
@@ -601,14 +528,6 @@ private struct ProfileCard: View {
             let names = setup.missing.compactMap { data.snapshot.vendor($0)?.label }
             InlineStatus(text: "\(names.joined(separator: ", ")) never finished signing in",
                          button: "Finish setup", symbol: "key") { actions.finishSetup(profile: profile.name) }
-                .padding(.top, 7)
-        } else if repatching {
-            ProgressView().progressViewStyle(.linear).controlSize(.small).tint(Ink.amber)
-                .padding(.top, 7)
-        } else if stale {
-            InlineStatus(text: profile.running ? "Waiting — clone is in use"
-                                               : actions.autoRepatch ? "Queued for rebuild" : "Auto-repatch is off",
-                         button: "Rebuild Now", symbol: "hammer") { actions.rebuildClone(profile.name) }
                 .padding(.top, 7)
         }
     }
@@ -750,7 +669,7 @@ private struct SlotActions: View {
     let data: PanelData
     @ObservedObject var model: PanelModel
     let actions: PanelActions
-    @State private var copied = false
+    @State private var copied: String?   // which row just copied
 
     private var usage: Usage? { model.usage[vendor.id]?[profile.name] }
     private var signedOut: Bool {
@@ -796,10 +715,15 @@ private struct SlotActions: View {
                 }
             }
             ActionRow(title: "Copy command", icon: "doc.on.doc",
-                      trailing: copied ? "Copied" : "\(vendor.id)-\(profile.name.lowercased())", mono: true) {
+                      trailing: copied == "command" ? "Copied" : "\(vendor.id)-\(profile.name.lowercased())", mono: true) {
                 actions.copyCommand(profile: profile.name, vendor: vendor.id)
-                copied = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
+                flash("command")
+            }
+            if let dir = data.snapshot.slotDir(profile.name, vendor.id) {
+                pathRow("Copy config folder", dir)
+            }
+            if !vendor.desktopName.isEmpty, let dir = data.snapshot.desktopDir(profile.name, vendor.id) {
+                pathRow("Copy \(vendor.desktopName) data folder", dir)
             }
             if let account = data.snapshot.account(profile.name, vendor.id) {
                 ActionRow(title: account, icon: "person.crop.circle", trailing: "Sign in again…") {
@@ -814,6 +738,19 @@ private struct SlotActions: View {
         .padding(.leading, 12)
         .padding(.top, 3)
         .padding(.bottom, 5)
+    }
+
+    private func pathRow(_ title: String, _ path: String) -> some View {
+        ActionRow(title: title, icon: "folder",
+                  trailing: copied == path ? "Copied" : (path as NSString).abbreviatingWithTildeInPath, mono: true) {
+            actions.copyPath(path)
+            flash(path)
+        }
+    }
+
+    private func flash(_ row: String) {
+        copied = row
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { if copied == row { copied = nil } }
     }
 
     private func group(_ title: String, _ icon: String) -> some View {
@@ -846,6 +783,7 @@ private struct ActionRow: View {
                         .font(.system(size: 10.5, design: mono ? .monospaced : .default))
                         .foregroundStyle(Ink.secondary)
                         .lineLimit(1)
+                        .truncationMode(.middle)
                 }
             }
             .font(.system(size: 11.5))
@@ -907,12 +845,13 @@ private struct Sweep: View {
     var period: Double = 1.4
     var strength: Double = 0.5
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.windowOnScreen) private var onScreen
 
     var body: some View {
         if reduceMotion {
             Rectangle().fill(Color.primary.opacity(0.3))
         } else {
-            TimelineView(.animation) { context in
+            TimelineView(.animation(paused: !onScreen)) { context in
                 GeometryReader { g in
                     let phase = context.date.timeIntervalSinceReferenceDate
                         .truncatingRemainder(dividingBy: period) / period

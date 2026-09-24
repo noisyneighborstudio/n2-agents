@@ -50,14 +50,13 @@ fake_path="$fake_bin:/usr/bin:/bin"
 
 # --- syntax ----------------------------------------------------------------
 sh -n agents vendors.sh shell/agent-as
-zsh -n install.sh uninstall.sh make-claude-profile.sh repatch-claude-profiles.sh tray/build.sh \
+zsh -n install.sh uninstall.sh tray/build.sh \
   scripts/release-build.sh scripts/make-appcast.sh scripts/release-prepare.sh \
   scripts/publish-appcast.sh shell/agents.zsh
 bash -n shell/agents.bash
 command -v fish >/dev/null && fish -n shell/agents.fish
 swiftc -typecheck tray/main.swift tray/UpdateChannel.swift tray/Vendors.swift tray/ProfileColor.swift tray/StatusIcon.swift tray/QuotaToast.swift tray/Ink.swift tray/LabMark.swift \
   tray/PanelModel.swift tray/PanelView.swift tray/ProfileSetup.swift tray/GlassWindow.swift tray/ShellPath.swift tray/Hotkey.swift
-swiftc -typecheck tray/icon-badge/main.swift tray/ProfileColor.swift
 swiftc -typecheck scripts/make-icon.swift
 swiftc -typecheck scripts/verify-signature.swift
 channel_test=$(mktemp -d "$TMPDIR/channel.XXXXXX")/update-channel-tests
@@ -96,7 +95,7 @@ home="$test_root/home"
 mkdir -p "$home"
 run_agents() { HOME="$home" PATH="$fake_path" ./agents "$@" }
 
-run_agents new Work --vendors claude,codex,grok,muse --cli-only >/dev/null
+run_agents new Work --vendors claude,codex,grok,muse >/dev/null
 for v in claude codex grok; do test -d "$home/.n2-agents/Work/$v"; done
 # The last entry of a comma list must survive the parse — `read` drops a final
 # line with no trailing newline, which silently lost one vendor once.
@@ -144,14 +143,16 @@ test "$(run_agents active)" = mixed
 
 # --- porcelain contract (the tray parses this) -----------------------------
 porcelain=$(run_agents porcelain)
-print -r -- "$porcelain" | grep -q '^V	claude	1	clone	oauth	Claude Code	projects	CC	Claude Desktop	com.anthropic.claudefordesktop	7d$'
+print -r -- "$porcelain" | grep -q '^V	claude	1	instance	oauth	Claude Code	projects	CC	Claude Desktop	com.anthropic.claudefordesktop	7d$'
+print -r -- "$porcelain" | grep -q '^V	codex	1	instance	oauth	Codex	sessions	CX	Codex	com.openai.codex	7d$'
 # Cursor's long window is its monthly billing cycle.
 print -r -- "$porcelain" | grep -q '^V	cursor	.*	mo$'
 print -r -- "$porcelain" | grep -q '^P	Work	'
 print -r -- "$porcelain" | grep -q '^A	'
-# One S row per slot: its directory (the tray watches it during a sign-in)
-# and the account read from the vendor's own files.
-print -r -- "$porcelain" | grep -qx "S	Work	codex	$home/.n2-agents/Work/codex		no"
+# One S row per slot: its directory (the tray watches it during a sign-in),
+# the account read from the vendor's own files, and its desktop app's data.
+print -r -- "$porcelain" | grep -qx "S	Work	codex	$home/.n2-agents/Work/codex		no	$home/Library/Application Support/Codex-Work"
+print -r -- "$porcelain" | grep -qx "S	Work	grok	$home/.n2-agents/Work/grok		no	"
 # Every P row lists its vendors as comma-separated <vendor>:<state> pairs.
 print -r -- "$porcelain" | awk -F'\t' '$1=="P" && $4!="-" {print $4}' \
   | grep -qE '^[a-z]+:(active|ok)(,[a-z]+:(active|ok))*$'
@@ -160,7 +161,7 @@ print -r -- "$porcelain" | awk -F'\t' '$1=="P" && $4!="-" {print $4}' \
 # vendor with no usage API says so per row instead of printing an empty table.
 printf '{"oauthAccount": {"emailAddress": "work@example.com"}}' > "$home/.n2-agents/Work/claude/.claude.json"
 porcelain=$(run_agents porcelain)
-print -r -- "$porcelain" | grep -qx "S	Work	claude	$home/.n2-agents/Work/claude	work@example.com	no"
+print -r -- "$porcelain" | grep -qx "S	Work	claude	$home/.n2-agents/Work/claude	work@example.com	no	$home/Library/Application Support/Claude-Work"
 # Signed in = the slot holds the lab's own credential file (codex: auth.json);
 # cursor keeps its login outside the slot, so it can only say unknown.
 echo '{}' > "$home/.n2-agents/Work/codex/auth.json"
@@ -362,27 +363,65 @@ test -d "$adopt_home/.claude-profiles/Client"
 HOME="$adopt_home" PATH="$fake_path" ./agents use Client --vendor claude >/dev/null
 test "$(HOME="$adopt_home" PATH="$fake_path" ./agents active --vendor claude)" = Client
 
+# --- desktop instances and delete ------------------------------------------
+desk_home="$test_root/desk-home"
+desk() { HOME="$desk_home" PATH="$fake_path" ./agents "$@" }
+desk new Work --vendors claude,codex >/dev/null
+desk new WorkIO --vendors claude >/dev/null
+support="$desk_home/Library/Application Support"
+mkdir -p "$support/Claude-Work" "$support/Codex-Work" "$support/Claude-WorkIO"
+
+# An instance is pinned by its env and told apart by its data dir.
+test "$(. ./vendors.sh; vendor_desktop_env codex /slot "/data dir")" = "$(printf '%s\n' \
+  CODEX_HOME=/slot "CODEX_ELECTRON_USER_DATA_PATH=/data dir" CODEX_SPARKLE_ENABLED=false)"
+test "$(. ./vendors.sh; vendor_desktop_env claude /slot /data)" = CLAUDE_CONFIG_DIR=/slot
+
+# The exact data dir, not a prefix: WorkIO open doesn't make Work look open. A
+# script under a bundle-shaped path stands in for the app.
+fake_app="$test_root/Fake.app/Contents/MacOS"
+mkdir -p "$fake_app"
+printf '#!/bin/sh\nsleep 30\n' > "$fake_app/Fake"
+chmod +x "$fake_app/Fake"
+"$fake_app/Fake" --user-data-dir="$support/Claude-WorkIO" &
+fake_pid=$!
+sleep 0.3
+porcelain=$(desk porcelain)
+print -r -- "$porcelain" | grep -q '^P	WorkIO	1	'
+print -r -- "$porcelain" | grep -q '^P	Work	0	'
+if desk delete WorkIO --yes >/dev/null 2>&1; then
+  echo "A profile open in a desktop app was deleted" >&2
+  exit 1
+fi
+kill $fake_pid
+wait $fake_pid 2>/dev/null || true
+
+out=$(desk desktop Work --vendor grok 2>&1 || true)
+[[ $out == *"has no desktop app"* ]]
+
+# Delete takes the slots and every lab's desktop data…
+desk delete Work --yes >/dev/null
+test ! -e "$desk_home/.n2-agents/Work"
+test ! -e "$support/Claude-Work"
+test ! -e "$support/Codex-Work"
+test -d "$support/Claude-WorkIO"
+# …except Claude data a `claudes` profile shares.
+mkdir -p "$desk_home/.claude-profiles/WorkIO"
+desk delete WorkIO --yes >/dev/null
+test ! -e "$desk_home/.n2-agents/WorkIO"
+test -d "$support/Claude-WorkIO"
+
 # --- reserved and invalid names --------------------------------------------
 for bad in As default; do
-  if HOME="$test_root/names" PATH="$fake_path" ./agents new "$bad" --cli-only >/dev/null 2>&1; then
+  if HOME="$test_root/names" PATH="$fake_path" ./agents new "$bad" >/dev/null 2>&1; then
     echo "Reserved profile name '$bad' was accepted" >&2
     exit 1
   fi
 done
-if ./make-claude-profile.sh As >/dev/null 2>&1; then
-  echo "Reserved profile name was accepted by make-claude-profile.sh" >&2
-  exit 1
-fi
 # An unknown vendor must fail loudly instead of quietly creating nothing.
-if HOME="$test_root/names" PATH="$fake_path" ./agents new Nope --vendors notalab --cli-only >/dev/null 2>&1; then
+if HOME="$test_root/names" PATH="$fake_path" ./agents new Nope --vendors notalab >/dev/null 2>&1; then
   echo "Unknown vendor was accepted" >&2
   exit 1
 fi
-
-# Claude Desktop missing: cloning fails loudly and points at --cli-only.
-missing_app="$test_root/no-claude/Claude.app"
-clone_error=$(N2_CLAUDE_APP="$missing_app" ./make-claude-profile.sh Work 2>&1 || true)
-[[ $clone_error == *--cli-only* ]]
 
 # --- PATH shims ------------------------------------------------------------
 shim_home="$test_root/shim-home"
