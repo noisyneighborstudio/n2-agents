@@ -10,6 +10,7 @@ enum UpdateChannel: String, CaseIterable {
     /// never starts, so it can't replace itself or stop the installed app.
     static let isQABuild = Bundle.main.object(forInfoDictionaryKey: "N2QABuild") as? Bool == true
     var feedInfoKey: String { self == .stable ? "N2AgentsStableFeedURL" : "N2AgentsContinuousFeedURL" }
+    var symbol: String { self == .stable ? "shippingbox" : "flask" }
 
     static func selected(defaults: UserDefaults = .standard) -> UpdateChannel {
         defaults.string(forKey: preferenceKey).flatMap(UpdateChannel.init(rawValue:)) ?? .stable

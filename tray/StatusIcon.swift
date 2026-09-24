@@ -41,47 +41,63 @@ struct StatusIcon {
         glyph = Self.glyph(of: base)
     }
 
+    /// Rendered once into flat 1x and 2x bitmaps: a lazily drawn image
+    /// re-runs its handler on every menu bar repaint, and this one is costly.
+    func image(remaining: Int?, dark: Bool) -> NSImage {
+        let image = NSImage(size: Self.size)
+        for scale in [1, 2] {
+            let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(Self.size.width) * scale,
+                                       pixelsHigh: Int(Self.size.height) * scale, bitsPerSample: 8,
+                                       samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                       colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+            // Sized in points, so the context scales drawing and glow alike.
+            rep.size = Self.size
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+            draw(remaining: remaining, dark: dark, in: NSRect(origin: .zero, size: Self.size))
+            NSGraphicsContext.restoreGraphicsState()
+            image.addRepresentation(rep)
+        }
+        return image
+    }
+
     /// The dark ground is the gauge's liquid: full colour below the level,
     /// and above it only the foreground's outline, in the menu bar's ink.
-    func image(remaining: Int?, dark: Bool) -> NSImage {
-        let (base, glyph) = (base, glyph)
-        return NSImage(size: Self.size, flipped: false) { rect in
-            let art = rect.insetBy(dx: 1, dy: 1)
-            guard let remaining else {
-                base.draw(in: art)
-                return true
-            }
-            let square = art.insetBy(dx: art.width * Self.artInset, dy: art.height * Self.artInset)
-            let level = square.minY + square.height * CGFloat(min(max(remaining, 0), 100)) / 100
-            let (full, drained) = rect.divided(atDistance: level - rect.minY, from: .minYEdge)
-
-            NSGraphicsContext.saveGraphicsState()
-            full.clip()
+    private func draw(remaining: Int?, dark: Bool, in rect: NSRect) {
+        let art = rect.insetBy(dx: 1, dy: 1)
+        guard let remaining else {
             base.draw(in: art)
-            NSGraphicsContext.restoreGraphicsState()
-
-            NSGraphicsContext.saveGraphicsState()
-            drained.clip()
-            glyph.draw(in: art)
-            (dark ? NSColor.white : NSColor.black).setFill()
-            drained.fill(using: .sourceAtop)
-            NSGraphicsContext.restoreGraphicsState()
-
-            let color = Tier(remaining: remaining).color
-            let glow = NSShadow()
-            glow.shadowColor = color
-            glow.shadowBlurRadius = 3
-            glow.shadowOffset = .zero
-            NSGraphicsContext.saveGraphicsState()
-            glow.set()
-            color.setStroke()
-            let radius = square.width * Self.artRadius
-            let border = NSBezierPath(roundedRect: square.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
-            border.lineWidth = 1
-            border.stroke()
-            NSGraphicsContext.restoreGraphicsState()
-            return true
+            return
         }
+        let square = art.insetBy(dx: art.width * Self.artInset, dy: art.height * Self.artInset)
+        let level = square.minY + square.height * CGFloat(min(max(remaining, 0), 100)) / 100
+        let (full, drained) = rect.divided(atDistance: level - rect.minY, from: .minYEdge)
+
+        NSGraphicsContext.saveGraphicsState()
+        full.clip()
+        base.draw(in: art)
+        NSGraphicsContext.restoreGraphicsState()
+
+        NSGraphicsContext.saveGraphicsState()
+        drained.clip()
+        glyph.draw(in: art)
+        (dark ? NSColor.white : NSColor.black).setFill()
+        drained.fill(using: .sourceAtop)
+        NSGraphicsContext.restoreGraphicsState()
+
+        let color = Tier(remaining: remaining).color
+        let glow = NSShadow()
+        glow.shadowColor = color
+        glow.shadowBlurRadius = 3
+        glow.shadowOffset = .zero
+        NSGraphicsContext.saveGraphicsState()
+        glow.set()
+        color.setStroke()
+        let radius = square.width * Self.artRadius
+        let border = NSBezierPath(roundedRect: square.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
+        border.lineWidth = 1
+        border.stroke()
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     /// A QA build's icon carries an orange "QA" tag, so it can't be mistaken

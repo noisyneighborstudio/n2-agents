@@ -21,7 +21,6 @@ cp "$bin_dir/N2AgentsTray" "$app/Contents/MacOS/N2 Agents"
 sparkle_framework=$(find ../.build -type d -name Sparkle.framework -print -quit)
 [[ -n $sparkle_framework ]] || { echo "✗ Sparkle.framework was not produced" >&2; exit 1; }
 ditto "$sparkle_framework" "$app/Contents/Frameworks/Sparkle.framework"
-swiftc -O icon-badge/main.swift ProfileColor.swift -o "$app/Contents/Resources/icon-badge"
 cp Info.plist "$app/Contents/"
 
 # Version: explicit N2_VERSION (CI) > latest git tag (source builds) > 0.0.0.
@@ -48,10 +47,10 @@ if [[ ${N2_QA:-} == 1 ]]; then
   echo "QA build"
 fi
 echo "Version: $ver ($build_ver)"
-cp ../make-claude-profile.sh ../repatch-claude-profiles.sh ../agents ../vendors.sh "$app/Contents/Resources/"
+cp ../agents ../vendors.sh "$app/Contents/Resources/"
 cp ../shell/agents.zsh ../shell/agents.bash ../shell/agents.fish ../shell/agent-as "$app/Contents/Resources/"
 ditto logos "$app/Contents/Resources/logos"
-chmod +x "$app/Contents/Resources/"*.sh "$app/Contents/Resources/agents" "$app/Contents/Resources/agent-as"
+chmod +x "$app/Contents/Resources/agents" "$app/Contents/Resources/agent-as"
 
 # App icon: build multi-res icns from n2agents.png
 iconset=$(mktemp -d)/n2agents.iconset
@@ -72,8 +71,7 @@ if [[ -n ${identity:-} ]]; then
     "$sparkle/XPCServices/Installer.xpc" \
     "$sparkle/Autoupdate" \
     "$sparkle/Updater.app" \
-    "$app/Contents/Frameworks/Sparkle.framework" \
-    "$app/Contents/Resources/icon-badge"
+    "$app/Contents/Frameworks/Sparkle.framework"
   do
     codesign --force --timestamp --options runtime --sign "$identity" "$nested"
   done
@@ -81,7 +79,6 @@ if [[ -n ${identity:-} ]]; then
 else
   echo "No Developer ID identity found — signing ad-hoc (fine for local use)."
   codesign --force -s - "$app/Contents/Frameworks/Sparkle.framework"
-  codesign --force -s - "$app/Contents/Resources/icon-badge"
   codesign --force -s - "$app"
 fi
 codesign -v "$app"

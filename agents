@@ -8,17 +8,15 @@
 #   agents use <Profile|Default> [--vendor <v>]
 #   agents run [Profile|--next|--best] [--vendor <v>] [--start-from-session=<id>] [args]   (unsaid = next best)
 #   agents best [--vendor <v>] [--porcelain]  per-profile usage (5h/7d windows)
-#   agents new <Name> [--vendors a,b] [--cli-only]
-#   agents delete <Name> [--everything] [--yes]
-#   agents repatch [Name]                 rebuild Claude clone(s) after an update
+#   agents new <Name> [--vendors a,b]
+#   agents delete <Name> [--yes]
 #   agents adopt [--yes]                  import existing `claudes` profiles (shared, not copied)
 #   agents login <Profile> [--vendor <v>]  sign that slot out and back in
 #   agents authed <Profile>               per slot: signed in yes|no|unknown
 #   agents sessions [Profile] [--vendor <v>] [--porcelain [--limit N]]  newest first; no helpers or one-shots
 #   agents transfer <id> --to <Profile>|--next|--best [--from <Profile>] [--vendor <v>]
-#   agents desktop [Name|--next|--best] [--vendor <v>] [--switch]
+#   agents desktop [Name|--next|--best] [--vendor <v>]   open, or bring forward, its desktop app
 #   agents shims [--remove]               sync <vendor>-<profile> commands on PATH
-#   agents app-path                       print the Claude Desktop bundle path
 #   agents version
 #
 # A profile is an IDENTITY, not a login: "Work" holds one slot per vendor, so
@@ -105,6 +103,13 @@ claude_app_path() {
   return 1
 }
 
+# A lab's desktop app bundle. Nothing, and 1, when it isn't installed.
+desktop_app_path() {  # vendor
+  [ "$1" = claude ] && { claude_app_path; return; }
+  found=$(mdfind "kMDItemCFBundleIdentifier == '$(vendor_desktop_bundle "$1")'" 2>/dev/null | grep -v '/\.Trash/' | sort | head -1)
+  [ -n "$found" ] && [ -d "$found/Contents" ] && echo "$found"
+}
+
 # --- profiles --------------------------------------------------------------
 
 valid_profile_name() {
@@ -114,25 +119,15 @@ valid_profile_name() {
   case $(lower "$1") in default) return 1 ;; *) return 0 ;; esac
 }
 
-# All profile names: slot dirs ∪ Claude app clones (one per line, sorted, unique).
+# All profile names: the slot dirs under the root (one per line, sorted, unique).
 profile_names() {
-  {
-    if [ -d "$root" ]; then
-      for d in "$root"/*/; do
-        [ -d "$d" ] || continue
-        name=${d%/}
-        name=${name##*/}
-        if valid_profile_name "$name"; then echo "$name"; fi
-      done
-    fi
-    for a in /Applications/Claude-*.app; do
-      [ -d "$a" ] || continue
-      b=${a##*/}
-      b=${b%.app}
-      name=${b#Claude-}
-      if valid_profile_name "$name"; then echo "$name"; fi
-    done
-  } | sort -fu
+  [ -d "$root" ] || return 0
+  for d in "$root"/*/; do
+    [ -d "$d" ] || continue
+    name=${d%/}
+    name=${name##*/}
+    if valid_profile_name "$name"; then echo "$name"; fi
+  done | sort -fu
 }
 
 all_profiles() { { echo Default; profile_names; } | sort -fu; }
@@ -203,14 +198,33 @@ active_summary() {
   if [ $# -eq 1 ]; then echo "$1"; elif [ $# -eq 0 ]; then echo "Default"; else echo "mixed"; fi
 }
 
-# Desktop instance running for this profile? Only meaningful for `clone` vendors.
-profile_running() {  # profile
-  if [ "$1" = Default ]; then
-    app=$(claude_app_path) || return 1
-    pgrep -f "$app/Contents/MacOS/Claude" >/dev/null 2>&1
+# The main process of a profile's desktop instance, if one is running. A
+# profile's instance is the one given its data dir — any bundle's, so a
+# `claudes` clone sharing that dir counts. Default's is the plain stock app.
+desktop_pid() {  # vendor, profile
+  if [ "$2" = Default ]; then
+    dp_app=$(desktop_app_path "$1") || return 0
+    dp_exe="$dp_app/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$dp_app/Contents/Info.plist" 2>/dev/null)"
+    ps -Aww -o pid=,args= | awk -v exe="$dp_exe" '
+      { pid = $1; sub(/^ *[0-9]+ /, "") }
+      ($0 == exe || index($0, exe " ") == 1) && !index($0, "--user-data-dir=") { print pid; exit }'
   else
-    pgrep -f "user-data-dir=$HOME/Library/Application Support/Claude-$1" >/dev/null 2>&1
+    ps -Aww -o pid=,args= | awk -v want="--user-data-dir=$(vendor_desktop_data "$1" "$2")" '
+      { pid = $1; sub(/^ *[0-9]+ /, "") }
+      !index($0, "/Contents/MacOS/") || index($0, "/Frameworks/") { next }
+      { i = index($0, " " want); if (!i) next
+        c = substr($0, i + 1 + length(want), 1)
+        if (c == "" || c == " ") { print pid; exit } }'
   fi
+}
+
+# Any of this profile's desktop instances running?
+profile_running() {  # profile
+  for v in $(vendors_installed); do
+    [ "$(vendor_desktop "$v")" = none ] && continue
+    [ -n "$(desktop_pid "$v" "$1")" ] && return 0
+  done
+  return 1
 }
 
 # --- list / vendors --------------------------------------------------------
@@ -521,8 +535,32 @@ def muse_row(r):
                      time.strftime('%Y-%m-%dT%H:%M', time.gmtime(at)) if at else '-'))
     return cols[0][0], cols[1][0], cols[0][1], cols[1][1]
 
+def cursor(name, cfg):
+    # cursor-agent keeps ONE login in the keychain whatever CURSOR_CONFIG_DIR
+    # says, so there is one account to read. It's shown once, on Default;
+    # other slots say they share it rather than repeat the numbers.
+    if name != 'Default':
+        return 'shared-login', None
+    p = subprocess.run(['security', 'find-generic-password', '-s', 'cursor-access-token',
+                        '-a', 'cursor-user', '-w'], capture_output=True, text=True)
+    if p.returncode != 0 or not p.stdout.strip():
+        return 'no-token', None
+    url = os.environ.get('N2_CURSOR_USAGE_URL',
+                         'https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage')
+    return 'ok', urllib.request.Request(url, data=b'{}', method='POST',
+        headers={'Authorization': 'Bearer ' + p.stdout.strip(), 'Content-Type': 'application/json',
+                 'Connect-Protocol-Version': '1', 'User-Agent': 'n2-agents'})
+
+def cursor_row(r):
+    # One pool per monthly billing cycle, in the long-window column; the
+    # percent is already in percent units (0.4 means 0.4%).
+    end = r.get('billingCycleEnd')
+    reset = time.strftime('%Y-%m-%dT%H:%M', time.gmtime(int(end) / 1000)) if end else '-'
+    return '-', (r.get('planUsage') or {}).get('totalPercentUsed', '-'), '-', reset
+
 request, row = {'claude': (claude, claude_row), 'codex': (codex, codex_row),
-                'grok': (grok, grok_row), 'muse': (muse, muse_row)}[sys.argv[1]]
+                'grok': (grok, grok_row), 'muse': (muse, muse_row),
+                'cursor': (cursor, cursor_row)}[sys.argv[1]]
 for pair in sys.argv[2:]:
     name, cfg = pair.split('=', 1)
     status, req = request(name, cfg)
@@ -569,7 +607,9 @@ EOF
 
 # --porcelain prints usage_table's rows untouched — the tray's quota meters
 # parse it, so like `agents porcelain` it is a contract, not a display:
-#   <profile> <5h%> <7d%> <5h-resets UTC> <note: ok|no-token|stale-token|rate-limited|fetch-error|no-usage-api> [<7d-resets UTC>]
+#   <profile> <5h%> <7d%> <5h-resets UTC> <note: ok|no-token|stale-token|rate-limited|fetch-error|no-usage-api|shared-login> [<7d-resets UTC>]
+# The 7d columns hold the lab's long window, whatever its length
+# (vendor_long_window). shared-login: the slot uses Default's login and quota.
 cmd_best() {
   vsel="" porcelain=0
   while [ $# -gt 0 ]; do
@@ -642,6 +682,8 @@ slot_has_room() {  # profile, vendor, usage rows
   vendor_has_usage "$2" || return 0
   su_row=$(printf '%s\n' "$3" | awk -F'\t' -v v="$2" -v n="$1" '$1 == v && $2 == n' | head -1)
   [ -n "$su_row" ] || return 1
+  # A slot on the lab's one shared login has Default's room.
+  case $su_row in *"	shared-login"*) slot_has_room Default "$2" "$3"; return ;; esac
   IFS="$(printf '\t')" read -r _ _ su_f su_s _ su_note _ <<EOF
 $su_row
 EOF
@@ -986,10 +1028,9 @@ sync_shims() {
 # --- new / delete ----------------------------------------------------------
 
 cmd_new() {
-  name="" cli_only=0 vsel=""
+  name="" vsel=""
   while [ $# -gt 0 ]; do
     case $1 in
-      --cli-only) cli_only=1; shift ;;
       --vendors) vsel=${2:-}; shift 2 ;;
       --vendors=*) vsel=${1#--vendors=}; shift ;;
       --vendor) vsel=${2:-}; shift 2 ;;
@@ -998,7 +1039,7 @@ cmd_new() {
       *) name=$1; shift ;;
     esac
   done
-  [ -n "$name" ] || die "usage: agents new <Name> [--vendors a,b] [--cli-only]"
+  [ -n "$name" ] || die "usage: agents new <Name> [--vendors a,b]"
   valid_profile_name "$name" || die "profile name must be letters/numbers and not 'default': $name"
   [ "$(lower "$name")" = as ] && die "profile name is reserved: $name"
 
@@ -1019,21 +1060,6 @@ cmd_new() {
   done
   [ -n "$created" ] || die "nothing created — none of the requested vendors is installed"
 
-  # The Claude desktop clone is the one piece that isn't just a directory.
-  case " $created " in
-    *" claude "*)
-      if [ "$cli_only" -eq 0 ] && claude_app_path >/dev/null 2>&1; then
-        if [ -d "/Applications/Claude-$name.app" ]; then
-          echo "  claude desktop: /Applications/Claude-$name.app already exists"
-        else
-          "$scripts_dir/make-claude-profile.sh" "$name"
-        fi
-      elif [ "$cli_only" -eq 0 ]; then
-        echo "  claude desktop: skipped (Claude Desktop not installed)"
-      fi
-      ;;
-  esac
-
   sync_shims
   echo ""
   echo "✓ Profile '$name' ready."
@@ -1046,46 +1072,44 @@ cmd_new() {
 }
 
 cmd_delete() {
-  name="" everything=0 yes=0
+  name="" yes=0
   for arg in "$@"; do
     case $arg in
-      --everything) everything=1 ;;
       --yes) yes=1 ;;
       -*) die "unknown flag: $arg" ;;
       *) name=$arg ;;
     esac
   done
-  [ -n "$name" ] || die "usage: agents delete <Name> [--everything] [--yes]"
+  [ -n "$name" ] || die "usage: agents delete <Name> [--yes]"
   want=$name; name=$(resolve_profile "$want") || die "no profile named '$want'"
   [ "$name" = Default ] && die "Default can't be deleted"
   for v in $(vendors_installed); do
     [ "$(active_profile "$v")" = "$name" ] && \
       die "'$name' is active for $v — run 'agents use <other> --vendor $v' first"
   done
-  profile_running "$name" && die "'$name' is running — quit it first"
+  profile_running "$name" && die "'$name' is open in a desktop app — quit it first"
 
-  app="/Applications/Claude-$name.app"
-  data="$HOME/Library/Application Support/Claude-$name"
-  cfg="$root/$name"
   if [ "$yes" -eq 0 ]; then
-    if [ "$everything" -eq 1 ]; then extra=" AND all of its per-vendor logins/config"; else extra=""; fi
-    printf "Delete profile '%s'%s? [y/N] " "$name" "$extra"
+    printf "Delete profile '%s' — its logins, config and desktop data? [y/N] " "$name"
     read -r reply
     case $(lower "$reply") in y*) ;; *) echo "aborted"; exit 1 ;; esac
   fi
-  [ -d "$app" ] && rm -rf "$app"
-  if [ "$everything" -eq 1 ]; then
-    [ -d "$data" ] && rm -rf "$data"
-    [ -d "$cfg" ] && rm -rf "$cfg"
-    echo "Deleted '$name' (desktop clone, data, all vendor slots)"
-  else
-    echo "Deleted '$name' (desktop clone only — vendor slots kept at $cfg)"
+  # A profile adopted from `claudes` shares that app's Claude data and clone;
+  # only the link to it goes.
+  for v in $N2_VENDORS; do
+    data=$(vendor_desktop_data "$v" "$name")
+    [ -n "$data" ] && [ -d "$data" ] || continue
+    [ "$v" = claude ] && [ -e "$legacy_root/$name" ] && continue
+    rm -rf "$data"
+  done
+  # Profiles used to open in a per-profile copy of Claude Desktop.
+  clone="/Applications/Claude-$name.app"
+  if [ -x "$clone/Contents/MacOS/Claude-bin" ] && [ ! -e "$legacy_root/$name" ]; then
+    rm -rf "$clone"
   fi
+  rm -rf "${root:?}/$name"
+  echo "Deleted '$name'"
   sync_shims
-}
-
-cmd_repatch() {
-  exec "$scripts_dir/repatch-claude-profiles.sh" "$@"
 }
 
 # --- adopt -----------------------------------------------------------------
@@ -1459,30 +1483,29 @@ cmd_transfer() {
 
 # --- desktop ---------------------------------------------------------------
 
-# A profile's desktop app. `clone` labs (Claude) have one app per profile;
-# `launch` labs (Codex) have a single app that signs in as the lab's active
-# profile — launched apps don't inherit env vars, so it can't be pinned — so
-# opening it for another profile makes that profile active, which --switch
-# confirms.
+# A profile's desktop app is the stock app, run as one more instance with the
+# profile's data dir and config — every entitlement intact, nothing to copy or
+# rebuild. Default is the stock app as installed. An instance already open is
+# brought forward instead: Claude doesn't stop a second instance on the same
+# data dir, and two would corrupt it.
 cmd_desktop() {
-  name="" vsel="" switch=0
+  name="" vsel=""
   while [ $# -gt 0 ]; do
     case $1 in
       --vendor) vsel=${2:-}; shift 2 ;;
       --vendor=*) vsel=${1#--vendor=}; shift ;;
-      --switch) switch=1; shift ;;
       --next|--best) name=$1; shift ;;
       *) name=$1; shift ;;
     esac
   done
   if [ -z "$vsel" ]; then
-    # Only a lab whose desktop is cloned per profile has a profile's desktop.
-    dv=$(for x in $(vendors_installed); do [ "$(vendor_desktop "$x")" = clone ] && echo "$x"; done; true)
+    dv=$(for x in $(vendors_installed); do [ "$(vendor_desktop "$x")" != none ] && echo "$x"; done; true)
     [ "$(printf '%s\n' "$dv" | grep -c .)" = 1 ] || die "which lab? pass --vendor <v>"
     vsel=$dv
   fi
   v=$(one_vendor "$vsel")
-  [ "$(vendor_desktop "$v")" != none ] || die "$(vendor_label "$v") has no desktop app"
+  dname=$(vendor_desktop_name "$v")
+  [ -n "$dname" ] || die "$(vendor_label "$v") has no desktop app"
 
   case ${name:-} in
     --next) name=$(rotation_next); echo "agents: rotating to profile '$name'" >&2 ;;
@@ -1493,25 +1516,28 @@ cmd_desktop() {
             echo "agents: next best is '$name'" >&2 ;;
     *)      want=$name; name=$(resolve_profile "$want") || die "no profile named '$want'" ;;
   esac
-  if [ "$(vendor_desktop "$v")" = launch ]; then
-    dapp=$(vendor_desktop_name "$v")
-    [ -n "$(mdfind "kMDItemCFBundleIdentifier == '$(vendor_desktop_bundle "$v")'" 2>/dev/null | head -1)" ] || \
-      die "$dapp isn't installed"
-    cur=$(active_profile "$v")
-    if [ "$cur" != "$name" ]; then
-      [ "$switch" = 1 ] || die "$dapp signs in as $(vendor_label "$v")'s active profile ('$cur'), not per profile.
-  Make '$name' active and open it:  agents desktop $name --vendor $v --switch"
-      switch_vendor "$name" "$v" >&2
-    fi
-    open -b "$(vendor_desktop_bundle "$v")"
+  app=$(desktop_app_path "$v") || die "$dname isn't installed"
+
+  pid=$(desktop_pid "$v" "$name")
+  if [ -n "$pid" ]; then
+    osascript -e "tell application \"System Events\" to set frontmost of (first process whose unix id is $pid) to true" >/dev/null || \
+      die "$dname is open as '$name' but couldn't be brought forward"
     return 0
   fi
   if [ "$name" = Default ]; then
-    app=$(claude_app_path) || die "Claude Desktop is not installed — get it from https://claude.ai/download"
-    open -a "$app"
-  else
-    open -a "/Applications/Claude-$name.app"
+    open -n -a "$app"
+    return 0
   fi
+  slot=$(config_dir "$name" "$v")
+  [ -d "$slot" ] || die "profile '$name' has no $v slot — create it: agents new $name --vendors $v"
+  data=$(vendor_desktop_data "$v" "$name")
+  mkdir -p "$data"
+  chmod 700 "$data"
+  set --
+  while IFS= read -r kv; do set -- "$@" --env "$kv"; done <<EOF
+$(vendor_desktop_env "$v" "$slot" "$data")
+EOF
+  open -n -a "$app" "$@" --args --user-data-dir="$data"
 }
 
 # --- misc ------------------------------------------------------------------
@@ -1541,9 +1567,6 @@ cmd_version() {
   fi
 }
 
-cmd_app_path() {
-  claude_app_path || die "Claude Desktop is not installed — get it from https://claude.ai/download"
-}
 
 cmd_profiles() { all_profiles; }
 
@@ -1567,18 +1590,18 @@ cmd_authed() {
 # above. Padding and emoji belong to the human-facing commands; this one is a
 # contract, and it is the only thing the Swift side parses.
 #
-#   V <vendor> <installed 0|1> <desktop> <usage> <label> <sessions> <monogram> <desktop app name> <desktop bundle id>
+#   V <vendor> <installed 0|1> <desktop> <usage> <label> <sessions> <monogram> <desktop app name> <desktop bundle id> <long window: 7d|mo>
 #   P <profile> <desktop-running 0|1> <vendor,vendor,…  or "-">
-#   S <profile> <vendor> <slot-dir> <account or ""> <signed in: yes|no|unknown>   one per slot
+#   S <profile> <vendor> <slot-dir> <account or ""> <signed in: yes|no|unknown> <desktop data dir or "">   one per slot
 #   L <profile> <vendor>        the last slot `run` started ("next best" starts after it)
 #   A <active-summary>
 cmd_porcelain() {
   for v in $N2_VENDORS; do
     if vendor_installed "$v"; then i=1; else i=0; fi
-    printf 'V\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf 'V\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$v" "$i" "$(vendor_desktop "$v")" \
       "$(vendor_usage "$v")" "$(vendor_label "$v")" "$(vendor_sessions "$v")" "$(vendor_monogram "$v")" \
-      "$(vendor_desktop_name "$v")" "$(vendor_desktop_bundle "$v")"
+      "$(vendor_desktop_name "$v")" "$(vendor_desktop_bundle "$v")" "$(vendor_long_window "$v")"
   done
   for n in $(all_profiles); do
     if profile_running "$n"; then r=1; else r=0; fi
@@ -1588,7 +1611,8 @@ cmd_porcelain() {
       [ -d "$d" ] || continue
       if [ "$(active_profile "$v")" = "$n" ]; then s="$v:active"; else s="$v:ok"; fi
       if [ -z "$slots" ]; then slots=$s; else slots="$slots,$s"; fi
-      printf 'S\t%s\t%s\t%s\t%s\t%s\n' "$n" "$v" "$d" "$(vendor_account "$v" "$d")" "$(authed_word "$v" "$d" "$n")"
+      printf 'S\t%s\t%s\t%s\t%s\t%s\t%s\n' "$n" "$v" "$d" "$(vendor_account "$v" "$d")" "$(authed_word "$v" "$d" "$n")" \
+        "$(vendor_desktop_data "$v" "$n")"
     done
     printf 'P\t%s\t%s\t%s\n' "$n" "$r" "${slots:--}"
   done
@@ -1614,7 +1638,6 @@ case $cmd in
   best)     cmd_best "$@" ;;
   new)      cmd_new "$@" ;;
   delete)   cmd_delete "$@" ;;
-  repatch)  cmd_repatch "$@" ;;
   adopt)    cmd_adopt "$@" ;;
   sessions) cmd_sessions "$@" ;;
   login)    cmd_login "$@" ;;
@@ -1622,7 +1645,6 @@ case $cmd in
   transfer) cmd_transfer "$@" ;;
   desktop)  cmd_desktop "$@" ;;
   shims)    cmd_shims "$@" ;;
-  app-path) cmd_app_path ;;
   profiles) cmd_profiles ;;
   porcelain) cmd_porcelain ;;
   version)  cmd_version ;;

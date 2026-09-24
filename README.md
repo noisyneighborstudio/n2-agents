@@ -105,10 +105,10 @@ functions, so editors, GUI apps and scripts get them too.
 
 | Lab | CLI | Config home | Isolation | Desktop app | Usage API | Sessions |
 |---|---|---|---|---|---|---|
-| Claude | `claude` | `~/.claude` | `CLAUDE_CONFIG_DIR` | cloned per profile | ✅ | ✅ |
-| Codex | `codex` | `~/.codex` | `CODEX_HOME` | `codex app` | ✅ | ✅ |
+| Claude | `claude` | `~/.claude` | `CLAUDE_CONFIG_DIR` | an instance per profile | ✅ | ✅ |
+| Codex | `codex` | `~/.codex` | `CODEX_HOME` | an instance per profile | ✅ | ✅ |
 | Grok | `grok` | `~/.grok` | `GROK_HOME` | — | ✅ (weekly) | — |
-| Cursor | `cursor-agent` | `~/.cursor` | `CURSOR_CONFIG_DIR` | — | — | — |
+| Cursor | `cursor-agent` | `~/.cursor` | `CURSOR_CONFIG_DIR` (settings only) | — | ✅ (monthly, one login) | — |
 | opencode | `opencode` | `~/.config/opencode` | `XDG_CONFIG_HOME` | — | — | — |
 | Muse (Meta) | `muse` | `~/.config/muse` | `XDG_CONFIG_HOME` + file credentials | — | ✅ (on demand) | — |
 
@@ -121,17 +121,33 @@ the macOS Keychain, where no profile switch can reach it. On first launch after
 the update, a `~/.gemini` that N2 Agents had linked into a profile turns back
 into a plain directory with the same contents.
 
-Claude, Codex, Grok and Muse expose a server-side quota endpoint, so `agents best`
-works for those four and tells you plainly that the others have nothing to rank.
+Claude Desktop and Codex open per profile as extra instances of the app you
+already have, each with the profile's own data dir and config dir, so every
+profile stays signed in to its own account side by side. The app itself is
+never copied or modified: passkeys, computer use, notifications and updates
+work as they do in the stock app, and there is nothing to rebuild when it
+updates. Default is the app as you normally open it. The catch is identity:
+every instance has the stock app's name and Dock icon, and `claude://` or
+`codex://` links go to whichever instance macOS picks.
+
+Claude, Codex, Grok, Muse and Cursor expose a server-side quota endpoint, so
+`agents best` works for those five and tells you plainly that the others have
+nothing to rank.
 Grok has one weekly credit pool and no 5-hour window. Each Muse read mints an
 inference key, so the menu bar app reads Muse only when you open the panel or
 press retry, never on its timer. Muse reports numbers only while a 5-hour
-window is open; between windows its row says "no reading".
+window is open; between windows its row says "idle".
 
 Muse keeps its sign-in in one keychain item whatever `XDG_CONFIG_HOME` says, so
 every profile but Default runs it with `TBH_CREDENTIAL_BACKEND=file` and keeps
 its login in its own slot. Default keeps the keychain login a plain `muse` uses.
 A profile set up before this has to sign in to Muse once more.
+
+Cursor has no such switch: `cursor-agent` keeps one keychain login for the
+machine, and `CURSOR_CONFIG_DIR` moves only its settings. Every profile's
+Cursor is the same account, so its usage (a monthly billing cycle, tagged "mo")
+shows once, on Default; other profiles' Cursor rows say "shared login" and
+share Default's room in rotation.
 
 **Adding a lab** means adding one `case` arm to each accessor in
 [`vendors.sh`](vendors.sh). Nothing in `agents` or the menu bar app needs to
@@ -146,14 +162,13 @@ agents active [--vendor <v>]          active profile ("mixed" if labs disagree)
 agents use <Profile> [--vendor <v>]   switch
 agents run <Profile|--next|--best> [--vendor <v>] [--start-from-session=<id>]
 agents best [--vendor <v>]            per-profile usage (5h/7d windows)
-agents new <Name> [--vendors a,b] [--cli-only]
-agents delete <Name> [--everything] [--yes]
+agents new <Name> [--vendors a,b]
+agents delete <Name> [--yes]
 agents adopt [--yes]                  import existing `claudes` profiles
 agents sessions [Profile] [--vendor <v>]
 agents transfer <id> --to <Profile>|--next|--best [--vendor <v>]
 agents desktop [Name|--next|--best] [--vendor <v>]
 agents shims [--remove]               sync <vendor>-<profile> commands on PATH
-agents repatch [Name]                 rebuild Claude clones after an update
 ```
 
 The CLI is the single authoritative implementation. The menu bar app parses
@@ -201,7 +216,7 @@ agents new Client --vendors codex,grok
 - Every profile, with its labs listed and the active one ticked
 - Open any lab in your terminal of choice (Terminal, iTerm2, Warp, Ghostty, kitty, Alacritty, WezTerm)
 - **Add Vendor…** to give an existing profile another lab
-- Claude Desktop clones, auto-repatched when Claude updates
+- Claude Desktop and Codex, opened as any profile, several at once
 - Claude session transfer between profiles
 - Sparkle self-updates on a stable or continuous channel
 
