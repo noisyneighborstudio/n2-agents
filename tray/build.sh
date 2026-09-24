@@ -16,6 +16,7 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Framewor
 
 echo "Compiling…"
 swift build --package-path .. -c release --product N2AgentsTray
+swift build --package-path .. -c release --product n2-loop
 bin_dir=$(swift build --package-path .. -c release --show-bin-path)
 cp "$bin_dir/N2AgentsTray" "$app/Contents/MacOS/N2 Agents"
 sparkle_framework=$(find ../.build -type d -name Sparkle.framework -print -quit)
@@ -41,7 +42,7 @@ for channel key in stable N2AgentsStableFeedURL continuous N2AgentsContinuousFee
   /usr/libexec/PlistBuddy -c "Add :$key string $N2_FEED_BASE_URL/$channel/appcast.xml" "$app/Contents/Info.plist"
 done
 echo "Version: $ver ($build_ver)"
-cp ../agents ../vendors.sh "$app/Contents/Resources/"
+cp ../agents ../vendors.sh "$bin_dir/n2-loop" "$app/Contents/Resources/"
 cp ../shell/agents.zsh ../shell/agents.bash ../shell/agents.fish ../shell/agent-as "$app/Contents/Resources/"
 ditto logos "$app/Contents/Resources/logos"
 chmod +x "$app/Contents/Resources/agents" "$app/Contents/Resources/agent-as"
@@ -69,10 +70,13 @@ if [[ -n ${identity:-} ]]; then
   do
     codesign --force --timestamp --options runtime --sign "$identity" "$nested"
   done
+  # The loop engine is a Mach-O beside the scripts: sign it on its own, first.
+  codesign --force --timestamp --options runtime --sign "$identity" "$app/Contents/Resources/n2-loop"
   codesign --force --timestamp --options runtime --entitlements entitlements.plist --sign "$identity" "$app"
 else
   echo "No Developer ID identity found — signing ad-hoc (fine for local use)."
   codesign --force -s - "$app/Contents/Frameworks/Sparkle.framework"
+  codesign --force -s - "$app/Contents/Resources/n2-loop"
   codesign --force -s - "$app"
 fi
 codesign -v "$app"

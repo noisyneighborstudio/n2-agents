@@ -17,7 +17,7 @@ function __n2agents_vendors
 end
 
 complete -c agents -f -n __fish_use_subcommand \
-    -a 'list vendors active use run best new delete adopt sessions transfer desktop shims porcelain profiles version help'
+    -a 'list vendors active use run best new delete adopt sessions transfer desktop shims loop porcelain profiles version help'
 complete -c agents -f -n 'not __fish_use_subcommand' \
     -a '(agents profiles 2>/dev/null) --next --best'
 complete -c agents -f -l vendor -a '(__n2agents_vendors)'

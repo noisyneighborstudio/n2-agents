@@ -17,6 +17,7 @@
 #   agents transfer <id> --to <Profile>|--next|--best [--from <Profile>] [--vendor <v>]
 #   agents desktop [Name|--next|--best] [--vendor <v>]   open, or bring forward, its desktop app
 #   agents shims [--remove]               sync <vendor>-<profile> commands on PATH
+#   agents loop "goal" --budget 2h [...]  fan a goal out across slots until its definition of done holds
 #   agents version
 #
 # A profile is an IDENTITY, not a login: "Work" holds one slot per vendor, so
@@ -1512,6 +1513,25 @@ EOF
   open -n -a "$app" "$@" --args --user-data-dir="$data"
 }
 
+# --- loop ------------------------------------------------------------------
+
+# A goal bigger than one session. The engine (loop/, built as n2-loop) plans
+# it into chunks with a definition of done, hands each chunk to the best slot
+# for its effort with quota left, and has a supervisor review, merge and sign
+# off. Profiles, sign-in and quota come from this CLI, and every agent turn
+# runs through `agents run`, so there is one source of truth for slots.
+loop_engine() {
+  for le in "$scripts_dir/n2-loop" "$scripts_dir/.build/release/n2-loop" "$scripts_dir/.build/debug/n2-loop"; do
+    [ -x "$le" ] && { echo "$le"; return 0; }
+  done
+  return 1
+}
+
+cmd_loop() {
+  engine=$(loop_engine) || die "the loop engine isn't built — run: swift build -c release --product n2-loop"
+  N2_AGENTS_CLI="$self" exec "$engine" "$@"
+}
+
 # --- misc ------------------------------------------------------------------
 
 cmd_active() {
@@ -1596,7 +1616,7 @@ cmd_porcelain() {
 }
 
 cmd_help() {
-  sed -n '3,23p' "$self" | sed 's/^# \{0,3\}//'
+  sed -n '3,24p' "$self" | sed 's/^# \{0,3\}//'
 }
 
 cmd=${1:-help}
@@ -1617,6 +1637,7 @@ case $cmd in
   transfer) cmd_transfer "$@" ;;
   desktop)  cmd_desktop "$@" ;;
   shims)    cmd_shims "$@" ;;
+  loop)     cmd_loop "$@" ;;
   profiles) cmd_profiles ;;
   porcelain) cmd_porcelain ;;
   version)  cmd_version ;;

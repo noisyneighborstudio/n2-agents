@@ -162,6 +162,7 @@ agents sessions [Profile] [--vendor <v>]
 agents transfer <id> --to <Profile>|--next|--best [--vendor <v>]
 agents desktop [Name|--next|--best] [--vendor <v>]
 agents shims [--remove]               sync <vendor>-<profile> commands on PATH
+agents loop "goal" [--budget 2h]      pursue a whole goal across every slot
 ```
 
 The CLI is the single authoritative implementation. The menu bar app parses
@@ -181,6 +182,65 @@ agents run Personal --vendor codex --start-from-session=<id>
 `--best` picks the profile with the most quota left (from the same endpoint
 the lab's own CLI reads for its usage screen — real server-side numbers, not a
 local guess). `--next` round-robins.
+
+## Loops
+
+For a goal bigger than one session, `agents loop` fans it out across your
+slots and keeps going until it is actually done:
+
+```sh
+agents loop "Add CSV export to the reports page" --file spec.md --budget 2h
+```
+
+1. **Plan.** A planner reads the repository and splits the goal into chunks,
+   each one focused session of work, rated `light`, `standard` or `deep`. It
+   also writes the **definition of done**: observable criteria, each with how
+   it is checked, plus the exact commands (build, tests) the loop runs on the
+   result. It asks about real ambiguities. You approve the plan; after that,
+   no agent can change what done means.
+2. **Fan out.** Chunks run in parallel, each in its own git worktree, each on
+   the best slot for its rating: the strongest model for the effort, then the
+   most quota left. A slot that hits its limit, fails sign-in, or has an
+   outage is set aside and the chunk moves on. That never counts against the
+   work.
+3. **Supervise.** A supervisor, on a different lab where one is signed in,
+   reviews every chunk before it is merged. It accepts it, sends it back with
+   specific feedback, or stops for you. A chunk that stalls gets a diagnosis:
+   a new approach, extra chunks, or a question for you. A repeat is never a
+   new approach.
+4. **Done.** Once everything is merged, the loop runs the commands, then a
+   fresh verifier checks every criterion on that exact commit, and the
+   supervisor signs off. A failed criterion reopens only the chunks behind
+   it. The run is `DONE` only when every criterion and every command passed
+   on the final commit. Nobody's claim of "finished" counts, the
+   supervisor's included.
+
+```sh
+agents loop status [run]           # what done means, and how far along each chunk is
+agents loop pause [run]            # stops running agents now; their work stays in the worktrees
+agents loop resume [run]           # carries on from exactly there
+agents loop resume [run] --budget 4h   # …with a larger total budget
+agents loop log [run] -f           # the controller's log
+agents loop list
+```
+
+The result lands on branch `n2/loop-<run>` in your repository. Your checkout
+is never touched, nothing is pushed, and `DONE.md` in the run folder lists
+the evidence. A run pauses by itself, with its reason in `status`:
+
+- when the budget is spent (the last stretch is kept for verification);
+- when no signed-in slot has quota;
+- when the same failure repeats without anything changing;
+- when the supervisor needs a decision.
+
+It waits by itself when every slot is out of quota until a known reset.
+
+To review a plan before anything runs, use `agents loop plan "goal" --budget
+2h`, edit the saved `plan.json` if you like, then `agents loop approve <run>
+--plan plan.json`. Loops use Claude Code, Codex and Muse. Each runs headless
+with its own scoped approval mode. Grok and Cursor only offer
+approve-everything modes, so the loop doesn't use them. Runs live in
+`~/.n2-agents/loops/`.
 
 ## Coming from Claudes
 

@@ -527,4 +527,99 @@ grep -Fq 'runCLI(["porcelain"])' tray/main.swift
 grep -Fq 'clip.layer?.masksToBounds = true' tray/GlassWindow.swift
 grep -Fq 'hasShadow = true' tray/GlassWindow.swift
 
+# --- loop ------------------------------------------------------------------
+# Pure logic first: reports, failure classes, paths, slot picking, plan
+# validation, and what "done" means.
+loop_unit=$(mktemp -d "$TMPDIR/loopunit.XXXXXX")/loop-tests
+swiftc -parse-as-library ${(f)"$(ls loop/*.swift | grep -v main.swift)"} tests/LoopTests.swift -o "$loop_unit"
+"$loop_unit"
+
+# Then end to end: the real CLI, real git and the real engine, with a fake
+# agent playing every role (tests/fake-loop-agent.sh) on two Codex slots.
+swift build -c release --product n2-loop >/dev/null
+n2_root=$PWD
+loop_root="$test_root/loop"
+mkdir -p "$loop_root/home" "$loop_root/bin"
+cp tests/fake-loop-agent.sh "$loop_root/bin/codex"
+cp "$fake_bin/security" "$loop_root/bin/security"
+chmod +x "$loop_root/bin/codex"
+printf '{"rate_limit": {"limit_reached": false, "primary_window": {"used_percent": 10, "limit_window_seconds": 604800, "reset_at": 1790411072}, "secondary_window": null}}' \
+  > "$loop_root/usage.json"
+loop_env=(HOME="$loop_root/home" PATH="$loop_root/bin:/usr/bin:/bin" N2_LOOP_HOME="$loop_root/runs"
+          N2_CODEX_USAGE_URL="file://$loop_root/usage.json")
+for p in Work Home; do
+  env $loop_env ./agents new $p --vendors codex >/dev/null 2>&1
+  echo "$codex_auth" > "$loop_root/home/.n2-agents/$p/codex/auth.json"
+done
+loop() { env $loop_env LOOP_FAKE="$loop_fake" "$n2_root/agents" loop "$@" }
+field() { python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$loop_root/runs/$run/state.json" "$1" }
+wait_for() {  # status
+  for _ in {1..150}; do [ "$(field 's["status"]')" = "$1" ] && return 0; sleep 0.2; done
+  echo "loop never reached $1:" >&2; loop status "$run" >&2; cat "$loop_root/runs/$run/controller.log" >&2; return 1
+}
+# A fresh repository and scenario, planned and approved the way a person would.
+new_loop() {  # scenario files…
+  loop_fake=$(mktemp -d "$loop_root/fake.XXXXXX")
+  for f in "$@"; do touch "$loop_fake/$f"; done
+  repo=$(mktemp -d "$loop_root/repo.XXXXXX")
+  git -C "$repo" init -q && git -C "$repo" config user.email loop@test && git -C "$repo" config user.name Loop
+  echo hi > "$repo/README" && git -C "$repo" add . && git -C "$repo" commit -qm init
+  loop plan "write a and b" --budget 1h --cwd "$repo" >/dev/null
+  run=$(ls -t "$loop_root/runs" | head -1)
+  loop approve "$run" >/dev/null
+}
+
+# Fan out, review, merge, verify, sign off: the result lands on the run's
+# branch and the user's checkout never changes.
+new_loop
+wait_for DONE
+branch="n2/loop-${run[1,8]}"
+git -C "$repo" show "${branch}:a.txt" | grep -q done
+git -C "$repo" show "${branch}:b.txt" | grep -q done
+[ ! -e "$repo/a.txt" ] && [ "$(git -C "$repo" rev-parse --abbrev-ref HEAD)" != "$branch" ]
+[ "$(git -C "$repo" worktree list | wc -l | tr -d ' ')" = 1 ]      # scaffolding cleared away
+test -f "$loop_root/runs/$run/DONE.md"
+roles=$(field '" ".join(sorted(set(t["role"] for t in s["turns"])))')
+[ "$roles" = "planner supervisor verifier worker" ]
+shown=$(loop status "$run")
+[[ $shown == *"DONE"* && $shown == *"✓ has-a"* && $shown == *"✓ grep -q done b.txt"* ]]
+loop list | grep -q "${run[1,8]}  DONE"
+
+# A slot out of quota costs the work nothing: planning and chunks fail over.
+new_loop quota-Home
+wait_for DONE
+[ "$(field 'len([t for t in s["turns"] if t["outcome"] == "quota" and t["slot"] == "codex|Home"])')" -ge 1 ]
+[ "$(field 's["cooldowns"]["codex|Home"]["until"][:4]')" = 2099 ]   # the reset time the lab stated
+[ "$(field '{c["lastSlot"] for c in s["plan"]["chunks"]}')" = "{'codex|Work'}" ]
+[ "$(field 'max(c["revisions"] for c in s["plan"]["chunks"])')" = 0 ]
+
+# Pause stops running agents at once and keeps their work; resume finishes.
+new_loop slow
+for _ in {1..100}; do [ "$(field 'len([t for t in s["turns"] if t["role"] == "worker" and not t.get("endedAt") and t.get("pgid")])')" = 2 ] && break; sleep 0.2; done
+pgids=(${(f)"$(field '"\n".join(str(t["pgid"]) for t in s["turns"] if t["role"] == "worker")')"})
+loop pause "$run" >/dev/null
+[ "$(field 's["status"]')" = PAUSED ]
+[[ "$(field 's["reason"]')" == "paused by you"* ]]
+[ "$(field '{t["outcome"] for t in s["turns"] if t["role"] == "worker"}')" = "{'interrupted'}" ]
+for g in $pgids; do ! kill -0 -"$g" 2>/dev/null; done
+rm "$loop_fake/slow"
+loop resume "$run" >/dev/null
+wait_for DONE
+[ "$(field 'min(c["turns"] for c in s["plan"]["chunks"])')" = 2 ]
+
+# Done means the definition of done: a criterion the verifier rejects sends
+# its chunk back, and only a fresh pass on the new commit finishes the run.
+new_loop fail-b-once
+wait_for DONE
+[ "$(field 'len([e for e in s["evidence"] if e["criterion"] == "has-b" and not e["passed"]])')" = 1 ]
+[ "$(field '[c["revisions"] for c in s["plan"]["chunks"]]')" = "[0, 1]" ]
+[ "$(field 's["evidence"][-1]["candidate"] == s["lastMerge"] and all(e["passed"] for e in s["evidence"] if e["candidate"] == s["lastMerge"])')" = True ]
+
+# …and a supervisor who calls it done anyway is overruled.
+new_loop fail-b-once liar
+wait_for PAUSED
+[[ "$(field 's["reason"]')" == *"doesn't hold"* ]]
+
+run_agents help | grep -Fq 'agents loop "goal"'
+
 echo "All tests passed"
