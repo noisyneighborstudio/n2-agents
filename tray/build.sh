@@ -47,8 +47,16 @@ if [[ ${N2_QA:-} == 1 ]]; then
   /usr/libexec/PlistBuddy -c "Add :N2QABuild bool true" "$app/Contents/Info.plist"
   echo "QA build"
 fi
+if [[ ${N2_FLEET_QA:-} == 1 ]]; then
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier dev.sethwebster.n2agents.fleet-qa" "$app/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleName N2 Fleet QA" "$app/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Add :N2FleetQA bool true" "$app/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :N2QABuild true" "$app/Contents/Info.plist" 2>/dev/null || \
+    /usr/libexec/PlistBuddy -c "Add :N2QABuild bool true" "$app/Contents/Info.plist"
+  touch "$app/Contents/Resources/fleet-qa"
+fi
 echo "Version: $ver ($build_ver)"
-cp ../agents ../vendors.sh "$bin_dir/n2-loop" "$app/Contents/Resources/"
+cp ../agents ../vendors.sh ../fleet.sh ../fleet-sync.sh ../fleet-qa-import.py ../fleet-manifest.py "$bin_dir/n2-loop" "$app/Contents/Resources/"
 cp ../shell/agents.zsh ../shell/agents.bash ../shell/agents.fish ../shell/agent-as "$app/Contents/Resources/"
 ditto logos "$app/Contents/Resources/logos"
 chmod +x "$app/Contents/Resources/agents" "$app/Contents/Resources/agent-as"

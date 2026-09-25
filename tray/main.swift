@@ -137,7 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         }
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePanel)
-        hotKey.register(Shortcut.load())
+        if !UpdateChannel.isQABuild { hotKey.register(Shortcut.load()) }
         // @Published fires before the store, so read the model a turn later.
         quotaWatch = model.$data.combineLatest(model.$usage)
             .receive(on: DispatchQueue.main)
@@ -167,7 +167,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         // Keep claude-as / claude-<profile> on PATH in step with the profile
         // list — real executables, so apps and scripts get them too, and
         // upgrades from a shell-function-only version heal themselves.
-        DispatchQueue.global(qos: .utility).async { self.runCLI(["shims"]) }
+        if !UpdateChannel.isQABuild {
+            DispatchQueue.global(qos: .utility).async { self.runCLI(["shims"]) }
+        }
 
 #if canImport(Sparkle)
         // Sparkle owns automatic scheduling and signature verification. Both
@@ -897,6 +899,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     }
 
     func installCLI() -> String {
+        if Bundle.main.object(forInfoDictionaryKey: "N2FleetQA") as? Bool == true {
+            return "Fleet QA uses its bundled CLI; the primary CLI stays installed."
+        }
         let source = URL(fileURLWithPath: cliPath).standardizedFileURL
         let agentAs = scriptsDir + "/agent-as"
         guard fm.isExecutableFile(atPath: source.path), fm.isExecutableFile(atPath: agentAs) else {

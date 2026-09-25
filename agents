@@ -30,7 +30,7 @@
 # POSIX sh on purpose — no zsh/bashisms; callers can be any shell.
 set -eu
 
-root="$HOME/.n2-agents"
+root="${N2_AGENTS_ROOT:-$HOME/.n2-agents}"
 
 # Resolve symlinks (install.sh links this onto PATH) so sibling scripts and
 # the bundle Info.plist are found next to the real file, not the link.
@@ -50,7 +50,18 @@ die() { echo "agents: $*" >&2; exit 1; }
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
 # The vendor adapter table — every lab-specific fact lives there.
+# The fleet QA bundle has its own profiles, peer identity and background job.
+# Detect it here too: SSH and launchd invoke the CLI without the app environment.
+if [ -f "$scripts_dir/fleet-qa" ]; then
+  root="$HOME/.n2-agents-qa"
+  export N2_AGENTS_ROOT="$root"
+  export N2_FLEET_REMOTE_CMD='exec ~/Applications/N2-Fleet-QA.app/Contents/Resources/agents'
+  export N2_FLEET_SYNC_LABEL=com.n2agents.fleet-sync-qa
+  export N2_FLEET_QA=1
+fi
 . "$scripts_dir/vendors.sh"
+. "$scripts_dir/fleet.sh"
+. "$scripts_dir/fleet-sync.sh"
 
 # --- vendor selection ------------------------------------------------------
 
@@ -117,7 +128,7 @@ valid_profile_name() {
   [ -n "$1" ] || return 1
   clean=$(printf '%s' "$1" | LC_ALL=C tr -cd 'A-Za-z0-9')
   [ "$clean" = "$1" ] || return 1
-  case $(lower "$1") in default) return 1 ;; *) return 0 ;; esac
+  case $(lower "$1") in default|fleet) return 1 ;; *) return 0 ;; esac
 }
 
 # All profile names: the slot dirs under the root (one per line, sorted, unique).
@@ -151,7 +162,7 @@ resolve_profile() {
 # where another vendor has been switched but this one hasn't.
 config_dir() {  # profile, vendor
   cd_slot="$root/$1/$(vendor_slot_name "$2")"
-  if [ "$1" = Default ] && [ ! -e "$cd_slot" ] && [ ! -L "$cd_slot" ]; then
+  if [ "${N2_FLEET_QA:-}" != 1 ] && [ "$1" = Default ] && [ ! -e "$cd_slot" ] && [ ! -L "$cd_slot" ]; then
     vendor_dot "$2"
   else
     echo "$cd_slot"
@@ -1651,6 +1662,12 @@ cmd_help() {
 
 cmd=${1:-help}
 [ $# -ge 1 ] && shift
+if [ "${N2_FLEET_QA:-}" = 1 ]; then
+  case $cmd in
+    use|adopt|shims|login|desktop|run|new|delete|transfer|loop)
+      die "This fleet QA build manages isolated profile copies; use the primary app for $cmd." ;;
+  esac
+fi
 case $cmd in
   list)     cmd_list "$@" ;;
   vendors)  cmd_vendors "$@" ;;
@@ -1667,6 +1684,7 @@ case $cmd in
   transfer) cmd_transfer "$@" ;;
   desktop)  cmd_desktop "$@" ;;
   shims)    cmd_shims "$@" ;;
+  fleet)    cmd_fleet "$@" ;;
   loop)     cmd_loop "$@" ;;
   profiles) cmd_profiles ;;
   porcelain) cmd_porcelain ;;
