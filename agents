@@ -201,9 +201,10 @@ active_summary() {
 
 # The main process of a profile's desktop instance, if one is running. A
 # profile's instance is the one given its data dir — any bundle's, so a
-# `claudes` clone sharing that dir counts. Default's is the plain stock app.
+# `claudes` clone sharing that dir counts. Claude Default remains the plain
+# stock app; Codex Default has an explicit data dir like every other profile.
 desktop_pid() {  # vendor, profile
-  if [ "$2" = Default ]; then
+  if [ "$2" = Default ] && [ "$1" != codex ]; then
     dp_app=$(desktop_app_path "$1") || return 0
     dp_exe="$dp_app/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$dp_app/Contents/Info.plist" 2>/dev/null)"
     ps -Aww -o pid=,args= | awk -v exe="$dp_exe" '
@@ -1486,7 +1487,7 @@ cmd_transfer() {
 
 # A profile's desktop app is the stock app, run as one more instance with the
 # profile's data dir and config — every entitlement intact, nothing to copy or
-# rebuild. Default is the stock app as installed. An instance already open is
+# rebuild. Claude Default is the stock app as installed. An instance already open is
 # brought forward instead: Claude doesn't stop a second instance on the same
 # data dir, and two would corrupt it.
 cmd_desktop() {
@@ -1525,12 +1526,13 @@ cmd_desktop() {
       die "$dname is open as '$name' but couldn't be brought forward"
     return 0
   fi
-  if [ "$name" = Default ]; then
+  if [ "$name" = Default ] && [ "$v" != codex ]; then
     open -n -a "$app"
     return 0
   fi
   slot=$(config_dir "$name" "$v")
   [ -d "$slot" ] || die "profile '$name' has no $v slot — create it: agents new $name --vendors $v"
+  slot=$(abspath "$slot")
   data=$(vendor_desktop_data "$v" "$name")
   mkdir -p "$data"
   chmod 700 "$data"

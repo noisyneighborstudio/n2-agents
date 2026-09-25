@@ -376,6 +376,33 @@ test "$(. ./vendors.sh; vendor_desktop_env codex /slot "/data dir")" = "$(printf
   CODEX_HOME=/slot "CODEX_ELECTRON_USER_DATA_PATH=/data dir" CODEX_SPARKLE_ENABLED=false)"
 test "$(. ./vendors.sh; vendor_desktop_env claude /slot /data)" = CLAUDE_CONFIG_DIR=/slot
 
+# Default must not share the stock desktop's lock or follow the active CLI
+# symlink. Exercise the real launch command with a symlinked Default slot.
+launch_bin="$test_root/launch-bin"
+launch_home="$test_root/launch-home"
+mkdir -p "$launch_bin" "$launch_home/.n2-agents/Default" \
+  "$launch_home/.n2-agents/Work/codex" "$launch_home/original-codex" \
+  "$test_root/Launch.app/Contents"
+ln -s "$launch_home/original-codex" "$launch_home/.n2-agents/Default/codex"
+ln -s "$launch_home/.n2-agents/Work/codex" "$launch_home/.codex"
+cat > "$launch_bin/mdfind" <<'FAKE'
+#!/bin/sh
+printf '%s\n' "$FAKE_DESKTOP_APP"
+FAKE
+cat > "$launch_bin/open" <<'FAKE'
+#!/bin/sh
+printf '%s\n' "$@" > "$FAKE_DESKTOP_ARGS"
+FAKE
+printf '#!/bin/sh\nexit 0\n' > "$launch_bin/ps"
+chmod +x "$launch_bin/mdfind" "$launch_bin/open" "$launch_bin/ps"
+HOME="$launch_home" PATH="$launch_bin:$fake_path" \
+  FAKE_DESKTOP_APP="$test_root/Launch.app" FAKE_DESKTOP_ARGS="$test_root/launch-args" \
+  ./agents desktop Default --vendor codex
+canonical_slot=$(cd -P "$launch_home/original-codex" && pwd)
+grep -qxF "CODEX_HOME=$canonical_slot" "$test_root/launch-args"
+grep -qxF "CODEX_ELECTRON_USER_DATA_PATH=$launch_home/Library/Application Support/Codex-Default" "$test_root/launch-args"
+grep -qxF -- "--user-data-dir=$launch_home/Library/Application Support/Codex-Default" "$test_root/launch-args"
+
 # The exact data dir, not a prefix: WorkIO open doesn't make Work look open. A
 # script under a bundle-shaped path stands in for the app.
 fake_app="$test_root/Fake.app/Contents/MacOS"

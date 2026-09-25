@@ -152,11 +152,11 @@ vendor_desktop_bundle() {
 
 # Where a profile's instance keeps its browser data (cookies, the desktop
 # login). Claude's is the path its per-profile clones used, so their logins
-# carry over. Default's is the stock app's own.
+# carry over. Codex Default also needs its own data dir: sharing the stock
+# app's dir forwards launches to an existing process with the wrong home.
 vendor_desktop_data() {  # vendor, profile
   case $1:$2 in
     claude:Default) echo "$HOME/Library/Application Support/Claude" ;;
-    codex:Default)  echo "$HOME/Library/Application Support/Codex" ;;
     claude:*)       echo "$HOME/Library/Application Support/Claude-$2" ;;
     codex:*)        echo "$HOME/Library/Application Support/Codex-$2" ;;
   esac
