@@ -195,3 +195,25 @@ enum Failure {
         return nil
     }
 }
+
+/// Retain only structured execution evidence. Provider output and prompts never
+/// enter the shared journal; unavailable token/account/session fields stay null.
+func recordUsageOutcome(cli: String, slot: String, outcome: String, task: String, effort: Effort) {
+    guard outcome == "quota" || outcome == "ok" else { return }
+    let parts = slot.split(separator: "|", maxSplits: 1).map(String.init)
+    guard parts.count == 2 else { return }
+    let model: Any = parts[0] == "claude" ? ([Effort.deep: "opus", .standard: "sonnet", .light: "haiku"][effort] ?? "unknown") as Any : NSNull()
+    let value: [String: Any] = [
+        "status": outcome == "quota" ? "restricted" : "ok", "source": "n2-loop",
+        "identity": ["status": "unknown"], "session": NSNull(), "model": model,
+        "resetKnown": false,
+        "restrictions": outcome == "quota" ? [["scope": "unknown", "reason": "quota-rejected"]] : [],
+        "attribution": ["task": task, "inputTokens": NSNull(), "outputTokens": NSNull(),
+                        "cachedInputTokens": NSNull(), "totalTokens": NSNull()]
+    ]
+    guard let data = try? JSONSerialization.data(withJSONObject: value),
+          let json = String(data: data, encoding: .utf8) else { return }
+    let result = run(cli, ["usage", "record", "--provider", parts[0], "--profile", parts[1],
+                           "--kind", outcome == "quota" ? "quota-rejected" : "execution-succeeded", "--data", json])
+    if !result.ok { fputs("agents: could not retain execution usage observation\n", stderr) }
+}

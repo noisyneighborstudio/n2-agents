@@ -55,3 +55,11 @@ values and gate execution actions by task role. Focused security tests pass;
 independent follow-up found no remaining demonstrated security finding in these
 changes. The native tests and release build pass. Final regression checks remain
 in progress before this batch is recorded as complete.
+
+The journal now retains successful and failed polls and loop quota/success
+outcomes. Approved peers exchange bounded observations with origin validation,
+unchanged timestamps and replay deduplication. Twelve reader tests, seven journal
+tests, a two-peer exchange test and the full loop regression pass. Independent
+security and correctness follow-ups are clear for this journal scope. This does
+not yet establish verified account identity or apply shared rejections to
+scheduling; token and provider-session fields remain explicitly unknown.

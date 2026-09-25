@@ -387,7 +387,7 @@ usage_table() {  # vendor
   done
   [ -n "$ut_args" ] || return 0
   # shellcheck disable=SC2086
-  /usr/bin/python3 "$scripts_dir/usage.py" "$1" $ut_args
+  N2_USAGE_ROOT="$root" N2_USAGE_ORIGIN="$(fleet_self_id 2>/dev/null)" /usr/bin/python3 "$scripts_dir/usage.py" "$1" $ut_args
 }
 
 # Lowest 5-hour utilization wins; ties fall to 7-day, then list order. A
@@ -1481,6 +1481,7 @@ case $cmd in
   use)      cmd_use "$@" ;;
   run)      cmd_run "$@" ;;
   best)     cmd_best "$@" ;;
+  usage)    /usr/bin/python3 "$scripts_dir/usage-store.py" --root "$root" --origin "$(fleet_self_id 2>/dev/null)" "$@" ;;
   new)      cmd_new "$@" ;;
   delete)   cmd_delete "$@" ;;
   adopt)    cmd_adopt "$@" ;;

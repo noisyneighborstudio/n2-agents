@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """Exercise provider parsing without credentials or network access."""
+import contextlib
+import io
+import sqlite3
 import importlib.util
 from pathlib import Path
 import unittest
@@ -14,6 +17,25 @@ u = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(u)
 
 class ReaderTests(unittest.TestCase):
+    def test_success_and_failure_are_retained_with_original_times(self):
+        with tempfile.TemporaryDirectory() as root:
+            with patch.dict(os.environ, {'N2_USAGE_ROOT': root, 'N2_USAGE_ORIGIN': 'fixture-peer'}), \
+                 patch.object(u.sys, 'argv', ['usage.py', 'codex', 'Default=/fixture']), \
+                 patch.object(u, 'codex', return_value=('ok', lambda: {'rate_limit': {'primary_window': {'used_percent': 12, 'limit_window_seconds': 18000}}})), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                u.main()
+            with patch.dict(os.environ, {'N2_USAGE_ROOT': root, 'N2_USAGE_ORIGIN': 'fixture-peer'}), \
+                 patch.object(u.sys, 'argv', ['usage.py', 'codex', 'Default=/fixture']), \
+                 patch.object(u, 'codex', side_effect=ValueError('synthetic')), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                u.main()
+            with sqlite3.connect(Path(root) / '.usage/events.sqlite') as db:
+                events = [json.loads(row[0]) for row in db.execute('SELECT body FROM events ORDER BY at')]
+            self.assertEqual([event['data']['status'] for event in events], ['ok', 'fetch-error'])
+            self.assertEqual(events[0]['data']['windows'][0]['usedPercent'], 12)
+            self.assertEqual(events[1]['data']['windows'], [])
+            self.assertLessEqual(events[0]['at'], events[1]['at'])
+
     def test_weekly_only(self):
         row = u.codex_row({"rate_limit": {"primary_window": {
             "used_percent": 72, "limit_window_seconds": 604800, "reset_at": 1790411072}}})

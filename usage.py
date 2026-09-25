@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Provider usage readers. Stdout contains sanitized measurements only."""
-import hashlib, json, os, signal, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request
+import hashlib, importlib.util, json, math, os, signal, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request
 from datetime import datetime, timezone
 
 def claude_creds(cfg, is_default):
@@ -129,10 +129,10 @@ def details(vendor, data):
         duration = value.get('windowDurationMins') if native else value.get('limit_window_seconds', seconds)
         if native and isinstance(duration, (int, float)):
             duration *= 60
-        if not isinstance(duration, (int, float)) or isinstance(duration, bool) or duration <= 0:
+        if not isinstance(duration, (int, float)) or isinstance(duration, bool) or not math.isfinite(duration) or duration <= 0:
             duration = None
         reset = value.get('resetsAt' if native else 'reset_at', value.get('resets_at'))
-        if not isinstance(reset, (str, int, float)) or isinstance(reset, bool):
+        if not isinstance(reset, (str, int, float)) or isinstance(reset, bool) or (isinstance(reset, (int, float)) and not math.isfinite(reset)):
             reset = None
         result['windows'].append({'scope': scope, 'usedPercent': used,
                                   'durationSeconds': duration, 'resetsAt': reset})
@@ -168,7 +168,8 @@ def details(vendor, data):
             credits = bucket.get('credits') or {}
             if isinstance(credits, dict):
                 result['credits'][str(scope)] = {k: credits[k] for k in ('hasCredits', 'unlimited', 'balance')
-                                               if k in credits and isinstance(credits[k], (bool, int, float, str))}
+                                               if k in credits and isinstance(credits[k], (bool, int, float, str))
+                                               and (not isinstance(credits[k], float) or math.isfinite(credits[k]))}
     elif vendor == 'claude':
         for key, value in data.items():
             if key == 'five_hour' or key.startswith('seven_day'):
@@ -176,7 +177,8 @@ def details(vendor, data):
         extra = data.get('extra_usage') or {}
         if isinstance(extra, dict):
             result['credits']['overage'] = {k: extra[k] for k in ('is_enabled', 'monthly_limit', 'used_credits', 'utilization', 'disabled_reason', 'spend_limit_reached')
-                                           if k in extra and isinstance(extra[k], (bool, int, float, str))}
+                                           if k in extra and isinstance(extra[k], (bool, int, float, str))
+                                           and (not isinstance(extra[k], float) or math.isfinite(extra[k]))}
         # Disabled overage is not itself a block on included allowance.
     return result
 
@@ -366,6 +368,19 @@ def main():
         except Exception:
             status = 'fetch-error'
         five, seven, five_at, seven_at = columns
+        measurement['status'] = status
+        measurement['display'] = {'shortUsed': five, 'longUsed': seven,
+                                  'shortResets': five_at, 'longResets': seven_at}
+        if os.environ.get('N2_USAGE_ROOT'):
+            try:
+                module_spec = importlib.util.spec_from_file_location('usage_store', os.path.join(os.path.dirname(__file__), 'usage-store.py'))
+                journal_module = importlib.util.module_from_spec(module_spec)
+                module_spec.loader.exec_module(journal_module)
+                journal = journal_module.Journal(os.environ['N2_USAGE_ROOT'], os.environ.get('N2_USAGE_ORIGIN') or None)
+                journal.append(vendor, name, 'measurement', measurement)
+                journal.db.close()
+            except Exception:
+                print('agents: could not retain usage observation', file=sys.stderr)
         if os.environ.get('N2_USAGE_FORMAT') == 'json':
             measurement.update({'schemaVersion': 1, 'provider': vendor, 'profile': name,
                                 'observedAt': datetime.now(timezone.utc).isoformat(), 'status': status,

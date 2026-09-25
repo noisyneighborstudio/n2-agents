@@ -654,6 +654,15 @@ loop list | grep -q "${run[1,8]}  DONE"
 new_loop quota-Home
 wait_for DONE
 [ "$(field 'len([t for t in s["turns"] if t["outcome"] == "quota" and t["slot"] == "codex|Home"])')" -ge 1 ]
+env $loop_env "$n2_root/agents" usage history > "$loop_root/usage-history.json"
+python3 - "$loop_root/usage-history.json" "$run" <<'PYTEST'
+import json,sys
+events=json.load(open(sys.argv[1]))
+matched=[e for e in events if e['kind']=='quota-rejected' and e['data'].get('attribution',{}).get('task','').startswith(sys.argv[2]+'/')]
+assert matched and matched[0]['profile']=='Home'
+assert matched[0]['data']['identity']['status']=='unknown'
+assert matched[0]['data']['attribution']['totalTokens'] is None
+PYTEST
 [ "$(field 's["cooldowns"]["codex|Home"]["until"][:4]')" = 2099 ]   # the reset time the lab stated
 [ "$(field '{c["lastSlot"] for c in s["plan"]["chunks"]}')" = "{'codex|Work'}" ]
 [ "$(field 'max(c["revisions"] for c in s["plan"]["chunks"])')" = 0 ]

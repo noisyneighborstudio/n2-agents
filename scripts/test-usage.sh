@@ -9,3 +9,6 @@ swiftc "$work/Usage.swift" tests/UsageTests.swift -o "$work/test-usage"
 "$work/test-usage"
 
 python3 scripts/test-usage-reader.py
+
+python3 scripts/test-usage-store.py
+sh scripts/test-usage-fleet.sh

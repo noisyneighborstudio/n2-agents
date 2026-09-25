@@ -115,6 +115,7 @@ func planOnce(_ s: inout RunState, cli: String, source: SlotSource, cwd: String,
         s.turns[i].endedAt = Date()
         if out.exit == 0, let report = parseReport(out.stdout) {
             s.turns[i].outcome = "ok"
+            recordUsageOutcome(cli: cli, slot: slot.key, outcome: "ok", task: "\(s.id)/\(id)", effort: .deep)
             return report
         }
         s.turns[i].note = oneLine(out.tail, 300)
@@ -123,6 +124,7 @@ func planOnce(_ s: inout RunState, cli: String, source: SlotSource, cwd: String,
         } else {
             let (outcome, cooldown) = slotTrouble(slot.key, out.tail)
             s.turns[i].outcome = outcome
+            recordUsageOutcome(cli: cli, slot: slot.key, outcome: outcome, task: "\(s.id)/\(id)", effort: .deep)
             s.cooldowns[slot.key] = cooldown
         }
         avoid.insert(slot.key)

@@ -1731,6 +1731,7 @@ sync_tick() {  # sync_tick [interval-seconds]
   # Task disconnection is independent of profile-sync freshness. Reconcile
   # every tick, without retrying work or moving its outputs.
   if command -v exec_reconcile >/dev/null 2>&1; then
+    sync_usage_pull
     exec_discover_tasks
     exec_reconcile | sed 's/^/task\t/'
   fi
@@ -2671,3 +2672,23 @@ cmd_fleet_tools() {
     *) tools_usage >&2; fleet_die "unknown tools verb: $tv" ;;
   esac
 }
+
+# Usage observations use a separate bounded journal. Only the authenticated
+# origin exports its observations; matching profile labels never merge accounts.
+fleet_handle_usage_export() {
+  fleet_approved "$1" || { echo "ERR not-approved"; return 1; }
+  /usr/bin/python3 "$scripts_dir/usage-store.py" --root "$root" --origin "$(fleet_self_id)" export > "$3/out" || { echo "ERR usage-journal"; return 1; }
+  fleet_ok "$3/out"
+}
+
+sync_usage_pull() (
+  sup_dir=$(mktemp -d "${TMPDIR:-/tmp}/n2usagepull.XXXXXX") || exit 1
+  trap 'rm -rf "$sup_dir"' EXIT
+  : > "$sup_dir/request"
+  for sup_peer in $(fleet_peer_ids); do
+    [ "$sup_peer" = "$(fleet_self_id)" ] && continue
+    fleet_approved "$sup_peer" || continue
+    fleet_call "$sup_peer" usage-export "$sup_dir/request" > "$sup_dir/events" 2>/dev/null || continue
+    /usr/bin/python3 "$scripts_dir/usage-store.py" --root "$root" --origin "$(fleet_self_id)" import --source "$sup_peer" < "$sup_dir/events" || exit 1
+  done
+)
