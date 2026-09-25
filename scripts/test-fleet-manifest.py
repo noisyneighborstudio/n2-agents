@@ -33,7 +33,7 @@ with tempfile.TemporaryDirectory() as temporary:
     (slot / 'skills/demo/cycle').symlink_to(slot / 'skills')
     slow = base / 'slow'
     slow.mkdir()
-    for name in ('agents', 'vendors.sh', 'fleet.sh', 'fleet-sync.sh'):
+    for name in ('agents', 'vendors.sh', 'fleet.sh', 'fleet-sync.sh', 'fleet-exec.sh'):
         shutil.copy2(repo / name, slow / name)
     env = dict(os.environ, HOME=str(home))
     def cli(where, *args):

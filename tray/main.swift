@@ -67,9 +67,10 @@ let terminalSpecs: [TerminalSpec] = [
     }),
 ]
 
-final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtocol, PanelActions, SetupHost {
-    private var statusItem: NSStatusItem!
-    private let model = PanelModel()
+final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtocol, PanelActions, FleetActions, SetupHost {
+    var statusItem: NSStatusItem!
+    let model = PanelModel()
+    var announcer = FleetAnnouncer()
     private var statusIcon: StatusIcon?
     private var quotaWatch: AnyCancellable?
     private var menuBarAppearance: NSKeyValueObservation?
@@ -162,6 +163,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         // The first full session read indexes every transcript, which takes
         // minutes on a big history; do it now, not when the window is opened.
         loadAllSessions()
+        refreshFleet()
+        Timer.scheduledTimer(withTimeInterval: 45, repeats: true) { [weak self] _ in self?.refreshFleet() }
         Timer.scheduledTimer(withTimeInterval: 180, repeats: true) { [weak self] _ in self?.refreshPanel() }
 
         // Keep claude-as / claude-<profile> on PATH in step with the profile
@@ -218,11 +221,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         DispatchQueue.main.async { self.model.presented = true }
         refreshPanel()
         refreshUsage(force: false, onDemand: true)
+        refreshFleet()
     }
 
     // Anything that opens a window, dialog or terminal closes the panel first:
     // a transient panel would otherwise vanish under it mid-click.
-    private func dismissPanel() {
+    func dismissPanel() {
         panel.dismiss()
     }
 
@@ -232,7 +236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     // fresh one.
     private var refreshGeneration = 0
 
-    private func refreshPanel() {
+    func refreshPanel() {
         refreshGeneration += 1
         let generation = refreshGeneration
         DispatchQueue.global(qos: .userInitiated).async {
@@ -543,10 +547,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 
     // MARK: - agents CLI (single implementation of profile side effects)
 
-    private var cliPath: String { scriptsDir + "/agents" }
+    var cliPath: String { scriptsDir + "/agents" }
 
     @discardableResult
-    private func runCLI(_ args: [String]) -> (status: Int32, output: String) {
+    func runCLI(_ args: [String]) -> (status: Int32, output: String) {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/sh")
         task.arguments = [cliPath] + args
@@ -975,7 +979,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     // MARK: - Terminal + alerts
 
     // Runs in Terminal.app so script output/progress is visible to the user.
-    private func runInTerminal(_ command: String) {
+    func runInTerminal(_ command: String) {
         let escaped = command
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
@@ -1007,7 +1011,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         }
     }
 
-    private func alert(_ title: String, _ message: String) {
+    func alert(_ title: String, _ message: String) {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message

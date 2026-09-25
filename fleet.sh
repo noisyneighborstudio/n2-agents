@@ -1566,6 +1566,7 @@ agents fleet <verb>
   status [--porcelain]                     self + peers + pending
   sync <verb>                              shared profile replication (sync help)
   tools <verb>                             fleet-managed utilities (tools help)
+  task <verb>                              dispatch, handoff and task lifecycle (task help)
   send <peerid> --verb <v> [--payload-file <f>]   raw signed request
   serve                                    stdio responder (the remote end)
   help                                     this list
@@ -1782,6 +1783,7 @@ cmd_fleet() {
       ;;
     sync) cmd_fleet_sync "$@" ;;
     tools) cmd_fleet_tools "$@" ;;
+    task) cmd_fleet_task "$@" ;;
     serve) fleet_serve ;;
     help|-h|--help) fleet_usage ;;
     *) fleet_usage >&2; fleet_die "unknown fleet verb: $verb" ;;

@@ -177,6 +177,7 @@ final class PanelModel: ObservableObject {
     @Published var pendingSetups: [String: [String]] = [:]
     /// Every session, for the standalone window; the panel itself keeps the
     /// two newest. Kept between opens, so the window never starts empty.
+    @Published var fleet: FleetData?
     @Published var allSessions: [SessionInfo] = []
     @Published var sessionsLoading = false
 

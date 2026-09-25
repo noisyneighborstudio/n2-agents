@@ -1919,3 +1919,216 @@ range from producing an incomplete gate result:
 ```
 
 Both commands must exit 0 before marking sync hardening implemented.
+
+## Dispatch, handoff and the task lifecycle (fleet-exec.sh)
+
+Dispatcher agent policy is configured with `agents fleet task preferences set
+<agent>...`, inspected with `preferences show`, and cleared with `preferences
+reset`. With no configured policy all supported agents are candidates. The
+explicit list filters eligibility before completion-time ranking; its order has
+no ranking effect, and a pin cannot override an exclusion. Invalid updates keep
+the previous policy. This setting is local to the dispatching machine, stored
+atomically at `fleet/tools/agents.allowed` and replicates as the sync address
+`tools|-|-|agents.allowed`, sharing the reserved fleet-level slot with the
+managed-tool manifest but addressed separately so one can be excepted without
+the other. Absent means no restriction. A machine holds itself out with the
+ordinary exception `agents fleet sync except add tools - - agents.allowed`,
+which is machine-local like every other exception.
+`scripts/test-exec-preferences.sh` checks the planner with synthetic capability
+reports, including pin refusal and ordering. It does not verify provider login.
+
+
+### What a task is
+
+A task is a directory under `fleet/tasks/<id>`: `meta` (key=value — role, state,
+peer, machine, vendor, label, eta, created, and `retry_of`/`retried_as` when
+cross-linked), the request, the optional context, the optional workspace
+archive, and `out/`. The origin and the worker each keep their own record for
+the same id, which is what makes reconciliation after an outage a comparison
+rather than a guess.
+
+### Eligibility, then speed — in that order
+
+`exec_plan` filters before it ranks, and says why it excluded each candidate:
+
+1. Capability: `--requires` entries are matched against the peer's advertised
+   capabilities. A missing requirement is an exclusion, never a penalty.
+2. Agent access: a candidate that cannot run the pinned or preferred vendor is
+   out. Unknown auth state is an exclusion unless `--allow-unknown-auth`.
+3. Reachability: an offline peer is excluded and named as offline.
+
+Only survivors are ranked, by expected completion = queue depth + workspace
+transfer + environment preparation + execution estimate. Missing data is
+reported as unknown rather than silently scored as zero; `--plan` prints the
+ranked table and dispatches nothing.
+
+Pins compose: `--machine` alone, `--agent` alone, or both. A pin narrows the
+candidate set and is never overridden by a faster candidate — if the pinned
+combination is ineligible the dispatch fails loudly instead of substituting.
+
+### Handoff
+
+`--workspace` archives the working tree as it actually is: staged, unstaged,
+untracked and deleted files all cross the wire, because remote work is not
+restricted to committed state. `exec_workspace_path` refuses `..` components;
+a refused transfer leaves the source tree untouched. `--context` / `--context-file`
+carries the task, constraints, decisions, progress and next steps so the
+receiving agent does not repeat discovery.
+
+### Notifications
+
+Completion and disconnection are `fleet_event` records *and* a fan-out:
+`exec notify` broadcasts to every approved peer, each of which appends to its
+own notice journal (`agents fleet task notices`, the in-app feed) and calls the
+native notifier. Fan-out uses `fleet_broadcast`, so an offline peer is a line
+in the report and never an error.
+
+`N2_FLEET_NOTIFY`, when set, is run as a command for every fan-out event with
+`N2_NOTIFY_KIND` and `N2_NOTIFY_TASK` in its environment. Unset, the runtime
+falls back to the native path (`terminal-notifier`, else `osascript -e
+'display notification'`). This is the seam the tray uses, and the seam a
+headless test uses to observe desktop delivery without a desktop session —
+`scripts/test-exec.sh` points it at a per-peer `banner.log`, so "the banner
+fired on beta" and "on gamma" are two separate files rather than one ambiguous
+marker.
+
+### Outputs stay put
+
+Nothing copies an output anywhere on completion. The worker writes to its own
+`out/`, the origin is *told* it finished, and that is all. Distribution is
+`agents fleet task distribute <src> --name <n> --machine <p> | --all` — push,
+explicit, one named payload at a time. A traversing `--name` is refused, and
+distribution writes only what it names, leaving unrelated content at the
+destination intact.
+
+### Disconnect and wait
+
+`reconcile` is the only lifecycle verb that touches an unreachable worker, and
+it reports `unreachable` rather than re-dispatching: an outage never mints a
+task. The worker keeps running its copy while the link is down; when the link
+returns, reconcile reads the worker's own record and adopts its outcome. Only
+`retry` mints a new task, only when the operator asks, and the new task carries
+its own id cross-linked to the original in both directions — the original keeps
+its own outcome.
+
+### Managed updates and active work
+
+`sync`'s deferral asks `exec_tasks_active` whether this machine is running a
+task. A disruptive update defers while a task is running and applies on the
+next tick after it ends; a non-disruptive one applies immediately, running task
+or not. Nothing in this path kills or interrupts a task.
+
+"Running" is a liveness fact, not a status field a crashed worker could leave
+behind: each active task writes a record under the active dir naming the pid
+that owns the work, and `sync_tasks_reap` files any record whose pid no longer
+answers `ps -p` as stale before the count is taken. That makes the pid the
+load-bearing value, and the first version of it was wrong. `exec_run_local`
+recorded `$$`, but it is itself invoked with `&` (fleet-exec.sh) and `$$` is
+not re-set in a subshell, so the record named the short-lived request handler,
+which was already gone by the next tick. Reap filed every live task as stale,
+the active count read zero, and a `--disruptive` update would have applied
+straight through running work. The command subshell is now backgrounded and
+`$!` — the worker's own pid — is what the record carries.
+
+The record is opened *before* the command is launched, carrying only its task
+id and no pid. Reap's rule for a record that declares no owner is to leave it
+active, so the launch window counts as busy: the race resolves toward deferring
+an update, never toward running one against live work.
+
+### Task CLI surface
+
+    agents fleet task run <command…>          dispatch; prints "<id>\t<state>\t<machine>"
+        --workspace <dir>                     send the tree, dirty files and all
+        --context <text> | --context-file <f> what the receiver needs to not rediscover
+        --requires a,b                        task requirements vs. capabilities
+        --machine <p> --agent <v>             pins; either, both, or neither
+        --label <s>                           operator-facing name
+        --allow-unknown-auth                  proceed when auth state is unknown
+        --plan                                show the ranked plan, dispatch nothing
+    agents fleet task list [--porcelain]
+    agents fleet task show <id>
+    agents fleet task reconcile [<id>]        re-ask workers after an outage
+    agents fleet task retry <id> [pins]       explicit; mints a NEW cross-linked id
+    agents fleet task fetch <id> [--output n]
+    agents fleet task distribute <src> --name <n> --machine <p> | --all
+    agents fleet task notices                 the local notice journal
+
+### Running the exec suite
+
+    sh scripts/test-exec.sh          # 13 sections; includes estimate-order checks
+
+`scripts/test-fleet.sh` — the declared fleet verification command — runs this
+suite after the replication suite, so nothing here depends on someone
+remembering a third command. `N2_FLEET_SUITES=transport` runs the transport
+sections alone.
+
+Every peer is a real `agents` process under its own HOME inside an mktemp
+fixture; nothing touches a real fleet or reaches the network. Sections:
+eligibility refusal; plan honesty; the three pin combinations; dirty-workspace
+transfer and execution; completion fan-out in-app and on the desktop; outputs
+staying put; explicit targeted distribution and traversal refusal;
+disconnect-and-wait; explicit retry identity; dispatch surviving the
+destruction of the originating machine; and the deferral rule reading live task
+state — a `--disruptive` managed update held off while a real dispatched task
+runs, the installer's absence checked against the filesystem rather than
+stdout, and the same installer landing once the work ends so the negative is
+not vacuous.
+
+Sections 12 and 13 cover required tools and ranking order. A tool on PATH can
+satisfy a requirement without a managed designation. A missing managed tool
+adds preparation time without running its installer during planning. Ranking
+tests invert execution history and transfer speed to check both orderings.
+The statistics reader uses only the mean from a `mean count` record; the
+sample count must not change the estimated seconds. The unequal-count ranking
+regression was added after the last full execution-suite run and still needs
+that run. Focused reader checks cover a mean with a count, a malformed mean,
+and a single-field bandwidth value.
+
+### Open execution gaps found during source inspection
+
+The execution assignment is not complete. Dispatch now persists the selected
+worker before sending a request and attempts delivery to that worker only.
+A failed transport call or malformed acknowledgment leaves an `unreachable`
+task with the original ID and destination for reconciliation. Even an explicit
+refusal is conservatively treated as uncertain until inspected; the operator
+can request a new retry. No fallback worker starts automatically. Completion
+received before acknowledgment is preserved.
+
+`scripts/test-exec-delivery.sh` injects a lost acknowledgment after acceptance,
+a malformed acknowledgment, completion before acknowledgment, and normal
+delivery. All four focused scenarios pass, including reconciliation to
+completion without a second delivery. This is transport-boundary fault
+injection, not proof of live SSH delivery. The script runs at the beginning of
+`scripts/test-exec.sh`; the full process suite still needs a controller run
+against this change.
+
+`task run` keeps explicit shell-command behavior. `task run --prompt` instead
+sends the request and continuation context to the selected agent on stdin.
+The initial prompt adapters support Claude (`claude --print`) and Codex
+(`codex exec -`), checked against installed CLI help on 2026-09-22. They use
+the active provider profile and its existing isolation variable. Missing
+profile slots and unsupported adapters fail closed; prompt planning excludes
+unsupported providers. No permission-bypass flags are supplied. Provider
+permissions and workspace trust can therefore still prevent unattended work.
+This is not evidence of a successful live provider session.
+
+Task bundles and retained requests carry the execution mode, including explicit
+retries. Multiline prompts remain intact. The default notification label is
+"Fleet task", so request contents are not automatically copied into notices.
+`scripts/test-exec-prompt.sh` checks arguments, stdin, profile isolation,
+unsupported adapters, missing profiles and nonzero exits using synthetic CLI
+executables. It does not authenticate to a provider.
+
+Required tools travel in the bundle and are rechecked before launch. The
+worker uses the managed-installer lock and existing designation checks. Failed
+or deferred preparation fails the task with rc 125 without launching its
+command. No retry starts automatically. Other provider prompt adapters,
+shared preference propagation and full execution-suite verification remain
+open before claiming the dispatch acceptance criterion.
+
+The focused test scripts/test-exec-prepare.sh uses an isolated HOME and real
+controlled shell installers to cover missing tools, updates, active-task
+deferral, installer failure, unmanaged PATH checks, malformed requirements,
+and bundle inclusion. Its active marker deliberately omits a PID, exercising
+the conservative active-state rule without relying on sandbox process access.
+The full process suite still requires a controller run.

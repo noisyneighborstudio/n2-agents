@@ -62,6 +62,7 @@ fi
 . "$scripts_dir/vendors.sh"
 . "$scripts_dir/fleet.sh"
 . "$scripts_dir/fleet-sync.sh"
+. "$scripts_dir/fleet-exec.sh"
 
 # --- vendor selection ------------------------------------------------------
 

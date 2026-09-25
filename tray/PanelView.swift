@@ -74,6 +74,13 @@ struct PanelView: View {
                                 SessionsSection(data: data, actions: actions)
                             }
                         }
+                        // The fleet sits below this machine's own profiles on
+                        // purpose: the local machine is what the panel is for,
+                        // and the other Macs are the second question.
+                        if let fleetActions = actions as? FleetActions {
+                            Divider()
+                            FleetSection(model: model, actions: fleetActions)
+                        }
                     }
                 }
             } else {

@@ -49,14 +49,14 @@ chmod +x "$fake_bin/security"
 fake_path="$fake_bin:/usr/bin:/bin"
 
 # --- syntax ----------------------------------------------------------------
-sh -n agents vendors.sh fleet.sh fleet-sync.sh scripts/test-fleet-spike.sh shell/agent-as
+sh -n agents vendors.sh fleet.sh fleet-sync.sh fleet-exec.sh scripts/test-fleet-spike.sh scripts/test-exec.sh scripts/test-native-ui.sh shell/agent-as
 zsh -n install.sh uninstall.sh tray/build.sh \
   scripts/release-build.sh scripts/make-appcast.sh scripts/release-prepare.sh \
   scripts/publish-appcast.sh shell/agents.zsh
 bash -n shell/agents.bash
 command -v fish >/dev/null && fish -n shell/agents.fish
 swiftc -typecheck tray/main.swift tray/UpdateChannel.swift tray/Vendors.swift tray/ProfileColor.swift tray/StatusIcon.swift tray/QuotaToast.swift tray/Ink.swift tray/LabMark.swift \
-  tray/PanelModel.swift tray/PanelView.swift tray/SettingsWindowView.swift tray/FleetSyncSettings.swift tray/FleetSettingsLoader.swift tray/ProfileSetup.swift tray/GlassWindow.swift tray/ShellPath.swift tray/Hotkey.swift
+  tray/PanelModel.swift tray/PanelView.swift tray/SettingsWindowView.swift tray/FleetSyncSettings.swift tray/FleetSettingsLoader.swift tray/ProfileSetup.swift tray/GlassWindow.swift tray/ShellPath.swift tray/Hotkey.swift tray/FleetModel.swift tray/FleetView.swift tray/FleetControl.swift
 swiftc -typecheck scripts/make-icon.swift
 swiftc -typecheck scripts/verify-signature.swift
 channel_test=$(mktemp -d "$TMPDIR/channel.XXXXXX")/update-channel-tests
