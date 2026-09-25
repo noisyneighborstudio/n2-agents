@@ -323,7 +323,11 @@ exec_ws_pack() {  # <srcdir> <outfile>
   ewp_s=$1 ewp_o=$2
   [ -d "$ewp_s" ] || { echo "agents: not a directory: $ewp_s" >&2; return 1; }
   case $ewp_s in *..*) echo "agents: workspace path may not contain ..: $ewp_s" >&2; return 1 ;; esac
-  ( cd "$ewp_s" 2>/dev/null && tar -cf - . ) > "$ewp_o" 2>/dev/null
+  if [ -f "$ewp_s/.git" ]; then
+    /usr/bin/python3 "${scripts_dir:-$repo}/workspace-pack.py" "$ewp_s" "$ewp_o"
+  else
+    ( cd "$ewp_s" 2>/dev/null && tar -cf - . ) > "$ewp_o" 2>/dev/null
+  fi
 }
 
 # A received archive is inspected BEFORE extraction: an absolute member, a
@@ -397,6 +401,7 @@ fleet_handle_task_start() {  # <from> <payload> <dir>
     fi
     rm -f "$hts_w/spec/workspace.tar"
   fi
+  exec_meta_set "$hts_id" machine "$(fleet_self_machine)"
   exec_meta_set "$hts_id" role worker
   exec_meta_set "$hts_id" origin "$hts_from"
   exec_meta_set "$hts_id" vendor "$hts_v"
@@ -411,7 +416,8 @@ fleet_handle_task_start() {  # <from> <payload> <dir>
 # Recheck on the receiving machine: capabilities can change after planning.
 # Share the managed-installer lock; a requirement never authorizes new software.
 exec_prepare_requirements() (  # <requirements-file>
-  [ -f "$1" ] || exit 0
+  epr_file=$1 epr_task=${2:-}
+  [ -f "$epr_file" ] || epr_file=/dev/null
   sync_res_lock "tools-apply" || exit 1
   trap 'sync_res_unlock "tools-apply"' EXIT
   while IFS= read -r epr_tool || [ -n "$epr_tool" ]; do
@@ -422,13 +428,20 @@ exec_prepare_requirements() (  # <requirements-file>
       ok) ;;
       unmanaged) command -v "$epr_tool" >/dev/null 2>&1 || exit 1 ;;
       install|update)
-        ( cmd_fleet_tools install "$epr_tool" ) >/dev/null 2>&1 || exit 1
+        ( sync_tool_install_locked "$epr_tool" ) >/dev/null 2>&1 || exit 1
         # Install returns success for a safe deferral too. Do not launch work
         # until the required version really exists.
         [ "$(sync_tool_state "$epr_tool")" = ok ] || exit 1 ;;
       *) exit 1 ;;
     esac
-  done < "$1"
+  done < "$epr_file"
+  # Register the launch before releasing installer admission. An updater can
+  # either finish before preparation or observe this reservation, never idle
+  # in the gap between preparation and task startup.
+  if [ -n "$epr_task" ]; then
+    mkdir -p "$(exec_active_dir)" || exit 1
+    printf 'task %s\n' "$epr_task" > "$(exec_active_dir)/$epr_task" || exit 1
+  fi
 )
 
 # Prompt adapters use the same per-provider profile isolation as `agents run`.
@@ -448,6 +461,7 @@ exec_invoke_prompt() (
   # The prompt stays on stdin, outside process arguments and fleet journals.
   {
     printf 'Task:\n'; cat "$eip_spec/command"
+    printf '\nDeliverable files: copy requested deliverables into $N2_FLEET_OUTPUTS for explicit fetch/distribution. Source edits remain in the workspace.\n'
     printf '\nContinuation context (constraints, decisions, progress):\n'
     cat "$eip_spec/context"
   } | case $eip_vendor in
@@ -465,11 +479,11 @@ exec_run_local() {  # <id>
   erl_mode=${erl_mode:-shell}
   [ -n "$erl_cmd" ] || { exec_set_state "$erl_id" failed "no command"; return 0; }
   erl_cwd=$erl_w/workspace; [ -d "$erl_cwd" ] || erl_cwd=$erl_w
-  mkdir -p "$erl_d/out" 2>/dev/null
+  mkdir -p "$erl_d/out/artifacts" 2>/dev/null
   erl_start=$(fleet_now)
   exec_meta_set "$erl_id" started "$erl_start"
   exec_set_state "$erl_id" preparing
-  if ! exec_prepare_requirements "$erl_w/spec/requires"; then
+  if ! exec_prepare_requirements "$erl_w/spec/requires" "$erl_id"; then
     exec_meta_set "$erl_id" rc 125
     exec_meta_set "$erl_id" ended "$(fleet_now)"
     exec_set_state "$erl_id" failed "required tools unavailable or deferred"
@@ -492,11 +506,10 @@ exec_run_local() {  # <id>
   # owner. In between it carries no pid line, which sync_tasks_reap treats as
   # "no owner declared -> stays active" — so the window between launch and
   # knowing the pid errs toward deferring an update, never toward running one.
-  mkdir -p "$(exec_active_dir)" 2>/dev/null
-  printf 'task %s\n' "$erl_id" > "$(exec_active_dir)/$erl_id" 2>/dev/null || true
+  # Preparation already reserved this task under the installer lock.
   (
     cd "$erl_cwd" 2>/dev/null || exit 127
-    export N2_FLEET_TASK=$erl_id N2_FLEET_CONTEXT=$erl_w/spec/context
+    export N2_FLEET_TASK=$erl_id N2_FLEET_CONTEXT=$erl_w/spec/context N2_FLEET_OUTPUTS=$erl_d/out/artifacts
     case $erl_mode in
       shell) sh -c "$erl_cmd" ;;
       prompt) exec_invoke_prompt "$(exec_meta "$erl_id" vendor)" "$erl_w/spec" ;;
@@ -505,6 +518,7 @@ exec_run_local() {  # <id>
   ) > "$erl_d/out/stdout" 2> "$erl_d/out/stderr" &
   erl_pid=$!
   printf 'task %s\npid %s\n' "$erl_id" "$erl_pid" > "$(exec_active_dir)/$erl_id" 2>/dev/null || true
+  exec_fanout started "$erl_id" "$(exec_meta "$erl_id" label)"
   wait "$erl_pid"
   erl_rc=$?
   rm -f "$(exec_active_dir)/$erl_id" 2>/dev/null || true
@@ -525,10 +539,42 @@ exec_run_local() {  # <id>
 
 exec_status_line() {  # <id>
   esl_d=$(exec_task_dir "$1")
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$(exec_meta "$1" state)" \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$(exec_meta "$1" state)" \
     "$(exec_meta "$1" vendor)" "$(exec_meta "$1" rc)" \
-    "$(exec_meta "$1" label)" "$(exec_meta "$1" machine)"
+    "$(exec_meta "$1" label)" "$(exec_meta "$1" machine)" "$(exec_meta "$1" role)"
 }
+
+# An approved peer that missed the start announcement can discover active
+# worker tasks after reconnecting. Inventory contains no prompt or output.
+fleet_handle_task_inventory() {
+  fleet_approved "$1" || { echo "ERR not-approved"; return 1; }
+  : > "$3/out"
+  for hti_dir in "$(exec_db)"/*; do
+    [ -d "$hti_dir" ] || continue
+    hti_id=$(basename "$hti_dir")
+    [ "$(exec_meta "$hti_id" role)" = worker ] || continue
+    case $(exec_meta "$hti_id" state) in completed|failed) continue ;; esac
+    printf '%s\t%s\t%s\n' "$hti_id" "$(exec_meta "$hti_id" vendor)" "$(fleet_self_machine)" >> "$3/out"
+  done
+  fleet_ok "$3/out"
+}
+
+exec_discover_tasks() (
+  edt=$(mktemp -d "${TMPDIR:-/tmp}/n2discover.XXXXXX") || exit 1
+  trap 'rm -rf "$edt"' EXIT
+  : > "$edt/request"
+  for edp in $(fleet_peer_ids); do
+    [ "$edp" = "$(fleet_self_id)" ] && continue
+    fleet_approved "$edp" || continue
+    fleet_call "$edp" task-inventory "$edt/request" > "$edt/inventory" 2>/dev/null || continue
+    while IFS='	' read -r edi edv edm; do
+      exec_valid_id "$edi" || continue
+      [ -d "$(exec_task_dir "$edi")" ] && continue
+      printf 'task=%s\nkind=started\nmachine=%s\nvendor=%s\ndetail=Discovered running task\n' "$edi" "$edm" "$edv" > "$edt/event"
+      fleet_handle_task_event "$edp" "$edt/event" "$edt" >/dev/null
+    done < "$edt/inventory"
+  done
+)
 
 fleet_handle_task_status() {
   hst_id=$(fleet_header "$2" task)
@@ -579,10 +625,27 @@ fleet_handle_task_event() {  # <from> <payload> <dir>
   exec_valid_id "$hte_id" || { echo "ERR bad-task-id"; return 1; }
   case ${hte_k:-} in completed|failed|disconnected|reconnected|started) ;;
     *) echo "ERR bad-kind"; return 1 ;; esac
-  # If we are the dispatcher of this task, record the outcome on our copy too.
-  if [ -d "$(exec_task_dir "$hte_id")" ] && [ "$(exec_meta "$hte_id" role)" = dispatcher ]; then
-    case $hte_k in completed|failed) exec_set_state "$hte_id" "$hte_k" "$hte_d" ;; esac
+  # Started events establish a monitoring copy on every approved peer. The
+  # authenticated sender is the worker; a display name is never its identity.
+  if [ "$hte_k" = started ] && [ ! -d "$(exec_task_dir "$hte_id")" ]; then
+    mkdir -p "$(exec_task_dir "$hte_id")" || return 1
+    exec_meta_set "$hte_id" role observer
+    exec_meta_set "$hte_id" peer "$1"
+    exec_meta_set "$hte_id" machine "${hte_m:-$1}"
+    exec_meta_set "$hte_id" label "$hte_d"
+    exec_meta_set "$hte_id" vendor "$(fleet_header "$2" vendor)"
+    exec_meta_set "$hte_id" created "$(fleet_now)"
+    exec_set_state "$hte_id" running
   fi
+  case $(exec_meta "$hte_id" role) in dispatcher|observer)
+    # Only the recorded worker may report execution outcomes. Another peer
+    # can report a broken link, but cannot complete somebody else's task.
+    if [ "$(exec_meta "$hte_id" peer)" = "$1" ]; then
+      case $hte_k in
+        completed|failed) exec_set_state "$hte_id" "$hte_k" "$hte_d" ;;
+      esac
+    fi ;;
+  esac
   exec_notify "$hte_k" "$hte_id" "${hte_m:-$1}" "$hte_d"
   printf 'noted\n' > "$3/out"; fleet_ok "$3/out"
 }
@@ -593,9 +656,10 @@ exec_fanout() {  # <kind> <id> <detail>
   ef_k=$1 ef_id=$2 ef_det=$3
   ef_t=$(mktemp "${TMPDIR:-/tmp}/n2ev.XXXXXX") || return 0
   { printf 'task=%s\n' "$ef_id"; printf 'kind=%s\n' "$ef_k"
-    printf 'machine=%s\n' "$(fleet_self_machine)"
+    printf 'machine=%s\n' "$(exec_meta "$ef_id" machine)"
+    printf 'vendor=%s\n' "$(exec_meta "$ef_id" vendor)"
     printf 'detail=%s\n' "$ef_det"; } > "$ef_t"
-  exec_notify "$ef_k" "$ef_id" "$(fleet_self_machine)" "$ef_det"
+  exec_notify "$ef_k" "$ef_id" "$(exec_meta "$ef_id" machine)" "$ef_det"
   for ef_p in $(fleet_peer_ids); do
     [ "$ef_p" = "$(fleet_self_id)" ] && continue
     fleet_approved "$ef_p" || continue
@@ -622,6 +686,12 @@ exec_dispatch() {  # <command> <context-file|""> <workspace|""> <pin-machine> <p
   if ! N2_EXEC_TASK_MODE=$ed_mode exec_plan "$ed_t" "$ed_bytes" "$ed_pm" "$ed_pv" "$ed_req" "$ed_au"; then
     echo "agents: no eligible machine for this task" >&2
     [ -s "$ed_t/rejected" ] && cat "$ed_t/rejected" >&2
+    rm -rf "$ed_t"; return 1
+  fi
+  # Keep exactly the bundle submitted, before delivery can start the task.
+  # Every dispatch, including retries, has the same recoverable request.
+  ed_sent=$fleet_root/tasks/sent/$ed_id
+  if ! mkdir -p "$ed_sent" || ! cp "$ed_t/bundle" "$ed_sent/bundle.tar"; then
     rm -rf "$ed_t"; return 1
   fi
   # Persist the destination before delivery. A transport failure cannot tell
@@ -713,11 +783,24 @@ fleet_handle_task_deliver() {  # <from> <payload> <dir>
 
 exec_distribute() {  # <srcdir> <name> <target: peerid|machine|--all>
   ed2_src=$1 ed2_name=$2 ed2_to=$3
+  case ${ed2_name:-} in ''|*/*|.*) echo "agents: invalid distribution name" >&2; return 1 ;; esac
   [ -d "$ed2_src" ] || { echo "agents: not a directory: $ed2_src" >&2; return 1; }
   ed2_t=$(mktemp -d "${TMPDIR:-/tmp}/n2dist.XXXXXX") || return 1
   exec_ws_pack "$ed2_src" "$ed2_t/tar" || { rm -rf "$ed2_t"; return 1; }
   { printf 'name=%s\n' "$ed2_name"; printf -- '--\n'; base64 < "$ed2_t/tar"; } > "$ed2_t/req"
   ed2_any=1
+  if [ "$ed2_to" = "$(fleet_self_id)" ] || [ "$ed2_to" = "$(fleet_self_machine)" ]; then
+    ed2_local=$fleet_root/tasks/inbox/$ed2_name
+    if exec_ws_verify "$ed2_t/tar" && mkdir -p "$fleet_root/tasks/inbox"; then
+      rm -rf "$ed2_local"
+      if exec_ws_unpack "$ed2_t/tar" "$ed2_local"; then
+        printf 'sent\t%s\t%s\n' "$(fleet_self_machine)" "$ed2_local"
+        exec_notify delivered - "$(fleet_self_machine)" "received $ed2_name"
+        rm -rf "$ed2_t"; return 0
+      fi
+    fi
+    rm -rf "$ed2_t"; return 1
+  fi
   for ed2_p in $(fleet_peer_ids); do
     [ "$ed2_p" = "$(fleet_self_id)" ] && continue
     fleet_approved "$ed2_p" || continue
@@ -744,7 +827,7 @@ exec_reconcile() {  # [id…] — default: every non-terminal dispatched task
     : > "$er_t/ids"
     for er_d in "$(exec_db)"/*; do [ -d "$er_d" ] || continue
       er_i=$(basename "$er_d")
-      [ "$(exec_meta "$er_i" role)" = dispatcher ] || continue
+      case $(exec_meta "$er_i" role) in dispatcher|observer) ;; *) continue ;; esac
       case $(exec_meta "$er_i" state) in completed|failed) ;; *) echo "$er_i" >> "$er_t/ids" ;; esac
     done
   fi
@@ -786,10 +869,21 @@ exec_retry() {  # <id> <pin-machine> <pin-vendor> <allow-unknown>
   ert_id=$1
   [ -d "$(exec_task_dir "$ert_id")" ] || { echo "agents: unknown task: $ert_id" >&2; return 1; }
   ert_w=$fleet_root/tasks/sent/$ert_id
-  [ -d "$ert_w/spec" ] || { echo "agents: the original request for $ert_id was not kept here" >&2; return 1; }
+  if [ -f "$ert_w/bundle.tar" ]; then
+    ert_stage=$(mktemp -d "${TMPDIR:-/tmp}/n2retry.XXXXXX") || return 1
+    if ! exec_ws_unpack "$ert_w/bundle.tar" "$ert_stage"; then rm -rf "$ert_stage"; return 1; fi
+    if [ -f "$ert_stage/spec/workspace.tar" ]; then
+      if ! exec_ws_unpack "$ert_stage/spec/workspace.tar" "$ert_stage/workspace"; then rm -rf "$ert_stage"; return 1; fi
+    fi
+    ert_w=$ert_stage
+  else
+    ert_stage=
+    [ -d "$ert_w/spec" ] || { echo "agents: the original request for $ert_id was not kept here" >&2; return 1; }
+  fi
   ert_ws=; [ -d "$ert_w/workspace" ] && ert_ws=$ert_w/workspace
   ert_new=$(exec_dispatch "$(cat "$ert_w/spec/command")" "$ert_w/spec/context" "$ert_ws" \
-    "$2" "$3" "$ert_w/spec/requires" "$(exec_meta "$ert_id" label)" "$4" "$(cat "$ert_w/spec/mode" 2>/dev/null || echo shell)") || return 1
+    "$2" "$3" "$ert_w/spec/requires" "$(exec_meta "$ert_id" label)" "$4" "$(cat "$ert_w/spec/mode" 2>/dev/null || echo shell)") || { [ -z "$ert_stage" ] || rm -rf "$ert_stage"; return 1; }
+  [ -z "$ert_stage" ] || rm -rf "$ert_stage"
   # `read` on a line with no trailing newline sets the variable and still
   # returns non-zero, so a `while read` loop here silently never ran and the
   # retry lost its back-link. Take the field directly.
@@ -822,6 +916,10 @@ agents fleet task retry <id>           explicit retry as a NEW task
 agents fleet task fetch <id> <dir>     pull outputs here — explicit, never automatic
 agents fleet task distribute <dir> --name <n> (--machine <m> | --all)
 agents fleet task notices              the fleet notification feed
+
+Tasks may write requested deliverables to $N2_FLEET_OUTPUTS. Explicit fetch
+returns these under out/artifacts together with stdout and stderr. Source edits
+remain in the worker workspace unless the task explicitly publishes them.
 USAGE
 }
 
@@ -849,6 +947,7 @@ cmd_fleet_task() {
       esac; done
       [ -n "$tcmd" ] || { rm -f "$treq"; fleet_die "usage: agents fleet task run [options] <command>"; }
       [ -z "$tws" ] || [ -d "$tws" ] || { rm -f "$treq"; fleet_die "not a directory: $tws"; }
+      [ -z "$tctx" ] || [ -f "$tctx" ] || { rm -f "$treq"; fleet_die "context file not found: $tctx"; }
       if [ -n "$tplan" ]; then
         tpt=$(mktemp -d "${TMPDIR:-/tmp}/n2plan.XXXXXX")
         tbytes=0
@@ -865,15 +964,6 @@ cmd_fleet_task() {
         rm -rf "$tpt" "$treq"; return 0
       fi
       tout=$(exec_dispatch "$tcmd" "$tctx" "$tws" "$tpm" "$tpv" "$treq" "${tlab:-Fleet task}" "$tau" "$tmode") || { rm -f "$treq"; return 1; }
-      # Keep the request so an explicit retry does not have to reconstruct it.
-      tid=$(printf '%s' "$tout" | cut -f1)
-      tsent=$fleet_root/tasks/sent/$tid
-      mkdir -p "$tsent/spec"
-      printf '%s\n' "$tcmd" > "$tsent/spec/command"
-      printf '%s\n' "$tmode" > "$tsent/spec/mode"
-      cp "$treq" "$tsent/spec/requires"
-      if [ -n "$tctx" ] && [ -f "$tctx" ]; then cp "$tctx" "$tsent/spec/context"; else : > "$tsent/spec/context"; fi
-      [ -n "$tws" ] && { mkdir -p "$tsent/workspace"; ( cd "$tws" && tar -cf - . ) | ( cd "$tsent/workspace" && tar -xf - ) 2>/dev/null; }
       rm -f "$treq"
       printf '%s' "$tout"
       ;;

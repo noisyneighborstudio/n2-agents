@@ -13,6 +13,14 @@ if os.environ.get('N2_FLEET_QA') != '1':
     sys.exit('Import is available only in the fleet QA build.')
 if sys.argv[1:] not in ([], ['--credentials']):
     sys.exit('usage: agents fleet sync import-local [--credentials]')
+def carries_secret(path):
+    # Use the same source/arrival gate as normal fleet replication. Failure to
+    # inspect a file is not permission to import its credential material.
+    result = subprocess.run(['sh', '-c', '. "$1"; sync_file_carries_secret "$2"',
+                             'n2-import', str(Path(__file__).with_name('fleet-sync.sh')), str(path)],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return result.returncode != 1
+
 credentials = '--credentials' in sys.argv
 home = Path.home()
 source, target = home / '.n2-agents', home / '.n2-agents-qa'
@@ -49,12 +57,12 @@ for profile in sorted(source.iterdir()) if source.exists() else []:
                 rel = rel_dir / name
                 if rel_dir == Path('.') and name not in settings | auth | mcp:
                     continue
-                if not credentials and (name in auth | mcp or rel.parts[0] == 'mcp'):
-                    continue
                 src = slot / rel
                 try:
                     src.resolve().relative_to(resolved)
                 except ValueError:
+                    continue
+                if not credentials and (name in auth | mcp or rel.parts[0] == 'mcp' or carries_secret(src)):
                     continue
                 out = dest / rel
                 if any(p.is_symlink() for p in [out] + list(out.parents) if p == target or target in p.parents):

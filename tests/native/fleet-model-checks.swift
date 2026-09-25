@@ -53,17 +53,17 @@ check("conflict: remote:absent reads as a deletion",
       FleetConflict.parse("id\ta|b\tdig\tremote:absent\tscope:in")[0].isDeletion)
 
 check("notice: real feed line parses",
-      FleetNotice.parse("1758500000\tdone\tt-abc\tbeta\tfinished rc=0").first?.machine == "beta")
+      FleetNotice.parse("1758500000\tcompleted\tt-abc\tbeta\tfinished rc=0").first?.machine == "beta")
 check("notice: title names the machine",
-      FleetNotice.parse("1758500000\tdone\tt-abc\tbeta\tx").first?.title == "Task finished on beta")
+      FleetNotice.parse("1758500000\tcompleted\tt-abc\tbeta\tx").first?.title == "Task finished on beta")
 check("notice: unknown kind dropped", FleetNotice.parse("1758500000\tgossip\tt\tm\tx").isEmpty)
 
-let t = FleetTask.parse("t-abc\tdisconnected\tclaude\t\tbuild the thing\tbeta")
+let t = FleetTask.parse("t-abc\tunreachable\tclaude\t\tbuild the thing\tbeta")
 check("task: disconnected is stranded, not finished", t[0].isStranded && !t[0].isFinished)
 check("task: done rc=0 succeeded",
-      FleetTask.parse("t\tdone\tclaude\t0\tl\tm")[0].succeeded)
+      FleetTask.parse("t\tcompleted\tclaude\t0\tl\tm")[0].succeeded)
 check("task: done rc=1 did not succeed",
-      !FleetTask.parse("t\tdone\tclaude\t1\tl\tm")[0].succeeded)
+      !FleetTask.parse("t\tcompleted\tclaude\t1\tl\tm")[0].succeeded)
 
 // Exact bytes from `agents fleet tools list` / `status` in a live fixture.
 let toolList = "ripgrep|14.1.0|echo 13.0.0|true||approved\njq||false|true|disruptive|approved"
@@ -154,6 +154,21 @@ var other = FleetAnnouncer()
 check("announce: a second machine still announces its own first notice",
       { _ = other.adopt([]); return other.adopt([notice(4)]).count == 1 }())
 
-print(failed == 0 ? "ALL PASS" : "\(failed) FAILED")
 // Exit status too, so the runner catches a regression even if it only reads $?.
+let dispatch = FleetDispatchSpec(task: "Inspect $(touch NEVER)", prompt: true, workspace: "/tmp/work tree", contextFile: "/tmp/context", requirements: "git,node", machine: "beta", agent: "codex")
+check("dispatch: prompt, workspace and context are explicit", dispatch.arguments.contains("--prompt") && dispatch.arguments.contains("/tmp/work tree") && dispatch.arguments.contains("/tmp/context"))
+check("dispatch: shell text remains data", dispatch.task == "Inspect $(touch NEVER)")
+check("dispatch: exclusions alone are not a candidate", !FleetDispatchSpec.hasCandidate("excluded:\nx\tpeer\tbeta\tcodex\tagent-not-installed"))
+check("dispatch: a ranked plan has a candidate", FleetDispatchSpec.hasCandidate("rank\tpeer\tmachine\tagent\teta\tassumed\n1\tp\tbeta\tcodex\t1s\tnone"))
+
+check("task: production unreachable is stranded",
+      FleetTask.parse("t\tunreachable\tcodex\t\tl\tm\tdispatcher")[0].isStranded)
+check("task: observer cannot retry or fetch",
+      !FleetTask.parse("t\tcompleted\tcodex\t0\tl\tm\tobserver")[0].canFetch &&
+      !FleetTask.parse("t\tunreachable\tcodex\t\tl\tm\tobserver")[0].canRetry)
+check("task: dispatcher can retry and fetch",
+      FleetTask.parse("t\tcompleted\tcodex\t0\tl\tm\tdispatcher")[0].canFetch &&
+      FleetTask.parse("t\tunreachable\tcodex\t\tl\tm\tdispatcher")[0].canRetry)
+
+print(failed == 0 ? "ALL PASS" : "\(failed) FAILED")
 exit(failed == 0 ? 0 : 1)

@@ -10,6 +10,8 @@ repo=${N2_EXEC_REPO:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}
 # Fast transport-failure regressions run before the process integration suite.
 sh "$repo/scripts/test-exec-delivery.sh" || exit 1
 sh "$repo/scripts/test-exec-prepare.sh" || exit 1
+sh "$repo/scripts/test-exec-admission.sh" || exit 1
+sh "$repo/scripts/test-linked-workspace.sh" || exit 1
 sh "$repo/scripts/test-exec-preferences.sh" || exit 1
 sh "$repo/scripts/test-exec-prompt.sh" || exit 1
 base=${N2_EXEC_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/n2exec-test.XXXXXX")}
@@ -150,7 +152,7 @@ denied "a pin to an unknown machine is refused, not ignored" "$out" "$rc"
 mark "4. dispatch carries the dirty working tree and the context"
 out=$(peer alpha fleet task run --machine beta --agent cursor --allow-unknown-auth \
         --workspace "$ws" --context "$ctx" --label handoff \
-        'cat untracked.txt > result.txt; cat edited.txt >> result.txt; ls removed.txt 2>&1 | tail -1 > gone.txt; echo ran' 2>&1); rc=$?
+        'cat untracked.txt > result.txt; cat edited.txt >> result.txt; cp result.txt "$N2_FLEET_OUTPUTS/result.txt"; ls removed.txt 2>&1 | tail -1 > gone.txt; echo ran' 2>&1); rc=$?
 same "the dispatch reports success" 0 "$rc"
 T1=$(printf '%s' "$out" | cut -f1)
 check "the dispatch names the machine it chose" "beta" "$out"
@@ -188,6 +190,9 @@ mark "6. outputs never move on their own"
 refute "nothing was copied back automatically" "result.txt" "$(ls "$base/alpha" 2>&1)"
 peer alpha fleet task fetch "$T1" "$base/alpha/got" >/dev/null 2>&1
 check "an explicit fetch returns the output"  "ran" "$(cat "$base/alpha/got/out/stdout" 2>/dev/null)"
+check "an explicit fetch returns declared deliverables" "never committed" "$(cat "$base/alpha/got/out/artifacts/result.txt" 2>/dev/null)"
+peer alpha fleet task distribute "$base/alpha/got/out/artifacts" --name task-result --machine gamma >/dev/null 2>&1
+check "explicit distribution delivers task-created files" "never committed" "$(cat "$base/gamma/.n2-agents/fleet/tasks/inbox/task-result/result.txt" 2>/dev/null)"
 out=$(peer gamma fleet task fetch "$T1" "$base/gamma/got" 2>&1); rc=$?
 denied "a peer that did not dispatch the task cannot fetch it" "$out" "$rc"
 
@@ -203,6 +208,9 @@ check  "the named machine received it" "the utility" \
        "$(find "$base/beta" -path '*inbox/util*' -name tool.sh -exec cat {} \; 2>/dev/null)"
 refute "an untargeted machine did not"  "the utility" \
        "$(find "$base/gamma" -path '*inbox/util*' -name tool.sh -exec cat {} \; 2>/dev/null)"
+out=$(peer alpha fleet task distribute "$src" --name local-result --machine alpha 2>&1)
+check "local distribution reports its persistent destination" "$base/alpha/.n2-agents/fleet/tasks/inbox/local-result" "$out"
+check "local distribution copies the actual deliverable" "the utility" "$(cat "$base/alpha/.n2-agents/fleet/tasks/inbox/local-result/tool.sh" 2>/dev/null)"
 peer alpha fleet task distribute "$src" --name util --all >/dev/null 2>&1
 check "--all reaches the rest of the fleet" "the utility" \
       "$(find "$base/gamma" -path '*inbox/util*' -name tool.sh -exec cat {} \; 2>/dev/null)"
@@ -226,11 +234,30 @@ gh=$(grep -rl '^machine=gamma$' "$base/alpha/.n2-agents/fleet/peers" 2>/dev/null
 cut_link() {  # <meta> <home>  — rewrite only the home= line, leave the rest intact
   awk -v h="$2" -F= '$1=="home"{print "home=" h; next} {print}' "$1" > "$1.tmp" && mv "$1.tmp" "$1"
 }
+# Beta observes the same worker even with its links to both other peers cut.
+for attempt in 1 2 3 4 5; do
+  [ -d "$base/beta/.n2-agents/fleet/tasks/db/$T2" ] && break
+  sleep 1
+done
+# Simulate beta missing the original event. Inventory must recreate its
+# monitoring copy without the dispatcher's request bundle.
+rm -rf "$base/beta/.n2-agents/fleet/tasks/db/$T2"
+peer beta fleet sync tick --interval 1 >/dev/null 2>&1
+check "inventory recovers a missed start announcement" "observer" "$(peer beta fleet task show "$T2" 2>&1)"
+bg=$(grep -rl '^machine=gamma$' "$base/beta/.n2-agents/fleet/peers" | head -1)
+ba=$(grep -rl '^machine=alpha$' "$base/beta/.n2-agents/fleet/peers" | head -1)
+cut_link "$bg" "$base/gamma.unreachable"
+cut_link "$ba" "$base/alpha.unreachable"
+observed=$(peer beta fleet sync tick --interval 1 2>&1)
+check "another peer monitors without the dispatcher" "unreachable" "$observed"
+check "observer notice names the worker" "gamma" "$(peer beta fleet task notices 2>&1)"
+cut_link "$bg" "$base/gamma"
+cut_link "$ba" "$base/alpha"
 cut_link "$gh" "$base/gamma.unreachable"
 grep -q "^home=$base/gamma.unreachable\$" "$gh" || { echo "FAIL section 8 setup: home= not rewritten"; fail=$((fail+1)); }
 before=$(peer alpha fleet task list 2>&1 | wc -l | tr -d ' ')
-out=$(peer alpha fleet task reconcile "$T2" 2>&1)
-check "reconcile reports the worker unreachable" "unreachable" "$out"
+out=$(peer alpha fleet sync tick --interval 1 2>&1)
+check "background tick reports the worker unreachable" "unreachable" "$out"
 refute "reconcile does not dispatch anything"    "dispatched to" "$out"
 same  "no second task was created"               "$before" "$(peer alpha fleet task list 2>&1 | wc -l | tr -d ' ')"
 check "the disconnection is notified"            "disconnected" "$(peer alpha fleet task notices 2>&1)"
@@ -253,6 +280,10 @@ check "the retry records what it retried"   "$T2" "$(peer alpha fleet task show 
 check "the original records its retry"      "$T3" "$(peer alpha fleet task show "$T2" 2>&1)"
 check "the original keeps its own outcome"  "completed" \
       "$(peer alpha fleet task show "$T2" 2>&1 | awk -F'\t' '$1=="state"{print $2}')"
+
+T4=$(peer alpha fleet task retry "$T3" --machine beta --agent cursor --allow-unknown-auth 2>/dev/null | cut -f1)
+if [ -n "$T4" ] && [ "$T4" != "$T3" ]; then ok "a retry can itself be retried"; else bad "a retry can itself be retried" "missing new task"; fi
+check "second retry preserves request lineage" "$T3" "$(peer alpha fleet task show "$T4" 2>&1)"
 
 # --- 10. no required hub: a survivor dispatches without the originator -----
 # This sits ahead of the machine-loss section deliberately: that section

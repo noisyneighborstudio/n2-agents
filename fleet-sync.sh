@@ -394,7 +394,7 @@ sync_auth_optin() {  # sync_auth_optin <vendor> -> 0 if the operator opted in
 # one would read as a deletion. So the *gate* is content-aware instead. A
 # settings-class file carrying credential keys needs exactly the opt-in that
 # auth.json needs, and is refused on both the sending and the receiving side.
-SYNC_SECRET_KEYS='ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_OAUTH_TOKEN|apiKeyHelper|awsAuthRefresh|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|OPENAI_API_KEY|GEMINI_API_KEY|GOOGLE_API_KEY|OPENROUTER_API_KEY'
+SYNC_SECRET_KEYS='ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_OAUTH_TOKEN|apiKeyHelper|awsAuthRefresh|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|OPENAI_API_KEY|GEMINI_API_KEY|GOOGLE_API_KEY|OPENROUTER_API_KEY|mcpServers|mcp_servers|mcp'
 
 # An environment-variable name is not the only way a credential is written
 # down. A remote MCP server is authenticated with an HTTP header, and the
@@ -464,9 +464,9 @@ sync_json_unescape() {  # sync_json_unescape <file> -> text with \uXXXX decoded
     }
     {
       line = $0; out = ""
-      while (match(line, /\\u[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]/)) {
+      while (match(line, /\\u[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]|\\U[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]/)) {
         out = out substr(line, 1, RSTART - 1)
-        hex = substr(line, RSTART + 2, 4)
+        hex = substr(line, RSTART + 2, RLENGTH - 2)
         n = hexval(hex)
         if (n >= 32 && n < 127) out = out sprintf("%c", n)
         else out = out substr(line, RSTART, RLENGTH)
@@ -501,6 +501,12 @@ sync_scan_fold() {  # stdin -> every whitespace run collapsed to one space
 }
 
 sync_scan_secret_text() {  # sync_scan_secret_text <reader command...>
+  # Embedded MCP records have the same credential boundary as mcp.json.
+  # TOML tables can carry positional args, URLs and arbitrary env names.
+  "$@" | sync_scan_fold |
+    LC_ALL=C grep -qiE '\[[^]]*(mcp_servers|mcpServers|mcp)[^]]*\]' && return 0
+  "$@" | sync_scan_fold |
+    LC_ALL=C grep -qiE "(mcp_servers|mcpServers|mcp)[\"']?[[:space:]]*\\." && return 0
   "$@" | sync_scan_fold |
     LC_ALL=C grep -qE "[\"']?($SYNC_SECRET_KEYS)[\"']?[[:space:]]*[:=]" && return 0
   # Anchored the same way: the key name, an optional closing quote, then the
@@ -531,7 +537,7 @@ sync_file_carries_secret() {  # sync_file_carries_secret <file>
   sync_scan_secret_text cat "$1" && return 0
   # Fast path first: the decode only runs when the file actually contains a
   # `\u` escape, so the common case pays one extra grep and no awk.
-  LC_ALL=C grep -q '\\u' "$1" 2>/dev/null || return 1
+  LC_ALL=C grep -q '\\[uU]' "$1" 2>/dev/null || return 1
   sync_scan_secret_text sync_json_unescape "$1"
 }
 
@@ -1722,6 +1728,12 @@ sync_tick() {  # sync_tick [interval-seconds]
   sti=${1:-$SYNC_INTERVAL_DEFAULT}
   case $sti in ''|*[!0-9]*) sti=$SYNC_INTERVAL_DEFAULT ;; esac
   stnow=$(sync_epoch)
+  # Task disconnection is independent of profile-sync freshness. Reconcile
+  # every tick, without retrying work or moving its outputs.
+  if command -v exec_reconcile >/dev/null 2>&1; then
+    exec_discover_tasks
+    exec_reconcile | sed 's/^/task\t/'
+  fi
   for stpid in $(fleet_peer_ids); do
     [ -n "$stpid" ] || continue
     [ "$stpid" = "$(fleet_self_id)" ] && continue
@@ -2478,6 +2490,48 @@ agents fleet tools <verb>
 EOF
 }
 
+sync_tool_install() (
+  sync_need
+  sync_res_lock "tools-apply" || exit 1
+  trap 'sync_res_unlock "tools-apply"' EXIT
+  sync_tool_install_locked "$@"
+)
+
+# Internal entry point for preparation while it holds the same admission lock.
+sync_tool_install_locked() {
+  [ -n "${1:-}" ] || fleet_die "usage: agents fleet tools install <name>"
+  # The only single-tool entry point, and it refuses anything the operator
+  # has not designated. Reachability is never authorization.
+  sync_tool_managed "$1" ||
+    fleet_die "$1 is not fleet-managed — add it first with 'agents fleet tools add'"
+  l=$(sync_tool_line "$1") || fleet_die "$1 is no longer fleet-managed"
+  st=$(sync_tool_state "$1" "$l")
+  [ "$st" = ok ] && { printf 'ok\t%s\n' "$1"; return 0; }
+  # Naming the tool is not approving its command. A record that arrived
+  # from a peer carrying an installer this machine never agreed to run is
+  # refused here exactly as it is in `apply`, with the approval step named.
+  if [ "$st" = pending-approval ]; then
+    fleet_event tool-pending-approval "tool=$1"
+    printf 'pending-approval\t%s\n' "$1"
+    printf "run 'agents fleet tools approve %s' to allow its install command\n" "$1" >&2
+    return 1
+  fi
+  # Naming a tool explicitly is not permission to interrupt running work.
+  # Same rule as `tools apply`: disruptive + busy means defer, not force.
+  busy=$(sync_tasks_active)
+  if [ "$(sync_tool_field "$l" 5)" = disruptive ] && [ "$busy" -gt 0 ]; then
+    d=$(sync_tools_deferred); mkdir -p "$(dirname "$d")" 2>/dev/null
+    grep -q "^$1	" "$d" 2>/dev/null || printf '%s\t%s\n' "$1" "$st" >> "$d"
+    fleet_event tool-deferred "tool=$1 want=$st active_tasks=$busy"
+    printf 'deferred\t%s\t%s\tactive_tasks=%s\n' "$1" "$st" "$busy"; return 0
+  fi
+  if sh -c "$(sync_tool_value "$l" 4)" >/dev/null 2>&1 && [ "$(sync_tool_state "$1" "$l")" = ok ]; then
+    fleet_event tool-applied "tool=$1 action=$st"; printf '%s\t%s\n' "$st" "$1"
+  else
+    fleet_event tool-failed "tool=$1 action=$st"; printf 'failed\t%s\t%s\n' "$1" "$st"; return 1
+  fi
+}
+
 cmd_fleet_tools() {
   set +e
   tv=${1:-list}; [ $# -ge 1 ] && shift
@@ -2612,38 +2666,7 @@ cmd_fleet_tools() {
         else printf '%s\tinvalid\n' "$n"; fi
       done < "$f" ;;
     apply) sync_tools_apply ;;
-    install)
-      [ -n "${1:-}" ] || fleet_die "usage: agents fleet tools install <name>"
-      # The only single-tool entry point, and it refuses anything the operator
-      # has not designated. Reachability is never authorization.
-      sync_tool_managed "$1" ||
-        fleet_die "$1 is not fleet-managed — add it first with 'agents fleet tools add'"
-      l=$(sync_tool_line "$1") || fleet_die "$1 is no longer fleet-managed"
-      st=$(sync_tool_state "$1" "$l")
-      [ "$st" = ok ] && { printf 'ok\t%s\n' "$1"; return 0; }
-      # Naming the tool is not approving its command. A record that arrived
-      # from a peer carrying an installer this machine never agreed to run is
-      # refused here exactly as it is in `apply`, with the approval step named.
-      if [ "$st" = pending-approval ]; then
-        fleet_event tool-pending-approval "tool=$1"
-        printf 'pending-approval\t%s\n' "$1"
-        printf "run 'agents fleet tools approve %s' to allow its install command\n" "$1" >&2
-        return 1
-      fi
-      # Naming a tool explicitly is not permission to interrupt running work.
-      # Same rule as `tools apply`: disruptive + busy means defer, not force.
-      busy=$(sync_tasks_active)
-      if [ "$(sync_tool_field "$l" 5)" = disruptive ] && [ "$busy" -gt 0 ]; then
-        d=$(sync_tools_deferred); mkdir -p "$(dirname "$d")" 2>/dev/null
-        grep -q "^$1	" "$d" 2>/dev/null || printf '%s\t%s\n' "$1" "$st" >> "$d"
-        fleet_event tool-deferred "tool=$1 want=$st active_tasks=$busy"
-        printf 'deferred\t%s\t%s\tactive_tasks=%s\n' "$1" "$st" "$busy"; return 0
-      fi
-      if sh -c "$(sync_tool_value "$l" 4)" >/dev/null 2>&1 && [ "$(sync_tool_state "$1" "$l")" = ok ]; then
-        fleet_event tool-applied "tool=$1 action=$st"; printf '%s\t%s\n' "$st" "$1"
-      else
-        fleet_event tool-failed "tool=$1 action=$st"; printf 'failed\t%s\t%s\n' "$1" "$st"; return 1
-      fi ;;
+    install) sync_tool_install "$@" ;;
     deferred) cat "$(sync_tools_deferred)" 2>/dev/null || true ;;
     *) tools_usage >&2; fleet_die "unknown tools verb: $tv" ;;
   esac

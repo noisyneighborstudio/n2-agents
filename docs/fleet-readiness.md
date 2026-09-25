@@ -18,9 +18,9 @@ Work in progress for PR #3, followed by the T3 adapter in PR #26. This checklist
 - [x] Reverify enrollment and transport: 339 passed, zero failures/skips, live SSH required.
 - [x] Reverify profile/configuration/credential sync, conflicts and machine exceptions: 635 checks pass across all 75 sections.
 - [ ] Complete provider-specific authentication lifecycle evidence and explicit limitations.
-- [ ] Reverify managed-tool authorization, replication and safe update deferral.
+- [x] Reverify managed-tool authorization, replication and safe update deferral, including a barrier test of preparation versus disruptive installation.
 - [ ] Complete dispatch eligibility, preferences and expected-completion ranking.
-- [ ] Verify dirty-workspace/context handoff and intended output destinations.
+- [x] Verify ordinary dirty and linked-workspace/context handoff and declared deliverable destinations. Nested submodule metadata remains a documented limitation.
 - [ ] Verify native and in-app notifications, disconnection handling and reconciliation. Native parser/action tests pass; GUI end-to-end checks remain.
 - [ ] Verify complete CLI/native UI flows and source/release packaging.
 - [ ] Pass regression suites and native builds on the candidate.
@@ -46,3 +46,12 @@ The native release build and full regression suite also pass with the native
 Codex reader and structured output. Eleven reader tests pass, including a
 synthetic native JSON-RPC process. The native fleet UI parser/action suite passes. Transport passes 339 checks with mandatory live SSH and no skips. Sync passes
 635 checks across all 75 sections. No full fleet-completion claim is made yet.
+
+Review fixes now cover credential gating for embedded MCP and TOML escapes,
+settings-only QA import, installer admission, portable linked-worktree metadata,
+retry request retention, declared deliverable transfer, and peer monitoring
+without the original dispatcher. Native parsers now consume actual CLI lifecycle
+values and gate execution actions by task role. Focused security tests pass;
+independent follow-up found no remaining demonstrated security finding in these
+changes. The native tests and release build pass. Final regression checks remain
+in progress before this batch is recorded as complete.

@@ -62,7 +62,7 @@ out=$(peer a fleet task run --machine no-such-mac --plan -- true); rc=$?
 if [ "$rc" = 0 ] && [ -z "$out" ]; then
   echo "ok an unsatisfiable machine pin plans nothing (and exits 0)"
 else echo "FAIL unsatisfiable pin — rc=$rc out: $out"; fail=$((fail+1)); fi
-if grep -q 'plan.status == 0, !plan.output.isEmpty' tray/FleetControl.swift; then
+if grep -q 'plan.status == 0, FleetDispatchSpec.hasCandidate(plan.output)' tray/FleetControl.swift; then
   echo "ok the panel refuses an empty plan instead of offering Send"
 else echo "FAIL fleetDispatch would offer Send on an empty plan"; fail=$((fail+1)); fi
 

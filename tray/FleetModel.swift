@@ -238,6 +238,10 @@ struct FleetTask: Identifiable, Equatable {
     let label: String
     let machine: String
 
+    let role: String
+    var canRetry: Bool { role == "dispatcher" }
+    var canFetch: Bool { role == "dispatcher" }
+
     var isFinished: Bool { state == .done || state == .failed }
     /// The worker stopped answering. The fleet waits — it never retries on its
     /// own, because unreachable is not proof the work stopped.
@@ -249,11 +253,13 @@ struct FleetTask: Identifiable, Equatable {
             let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
             guard f.count >= 2, !f[0].isEmpty else { return nil }
             return FleetTask(id: f[0],
-                             state: State(rawValue: f[1]) ?? .unknown,
+                             state: ["completed": State.done, "unreachable": .disconnected, "accepted": .queued,
+                                     "dispatching": .transferring, "dispatched": .queued][f[1]] ?? State(rawValue: f[1]) ?? .unknown,
                              vendor: f.count > 2 ? f[2] : "",
                              rc: f.count > 3 ? f[3] : "",
                              label: f.count > 4 ? f[4] : "",
-                             machine: f.count > 5 ? f[5] : "")
+                             machine: f.count > 5 ? f[5] : "",
+                             role: f.count > 6 ? f[6] : "")
         }
     }
 }
@@ -292,7 +298,7 @@ struct FleetNotice: Identifiable, Equatable {
     static func parse(_ text: String) -> [FleetNotice] {
         text.split(separator: "\n").compactMap { line in
             let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
-            guard f.count >= 5, let epoch = TimeInterval(f[0]), let kind = Kind(rawValue: f[1])
+            guard f.count >= 5, let epoch = TimeInterval(f[0]), let kind = Kind(rawValue: f[1] == "completed" ? "done" : f[1])
             else { return nil }
             return FleetNotice(at: Date(timeIntervalSince1970: epoch),
                                kind: kind, task: f[2], machine: f[3], text: f[4])
@@ -416,5 +422,32 @@ struct FleetAnnouncer {
         hasRead = true
         for n in notices { seen.insert(n.id) }
         return firstRead ? [] : fresh
+    }
+}
+
+/// User input passed as argv to the authoritative fleet CLI.
+struct FleetDispatchSpec {
+    var task: String
+    var prompt: Bool
+    var workspace: String
+    var contextFile: String
+    var requirements: String
+    var machine: String?
+    var agent: String?
+
+    var arguments: [String] {
+        var args = ["fleet", "task", "run", "--label", "Panel dispatch"]
+        if prompt { args.append("--prompt") }
+        if !workspace.isEmpty { args += ["--workspace", workspace] }
+        if !contextFile.isEmpty { args += ["--context", contextFile] }
+        if !requirements.isEmpty { args += ["--requires", requirements] }
+        return args + FleetPins.flags(machine: machine, agent: agent)
+    }
+
+    static func hasCandidate(_ plan: String) -> Bool {
+        plan.split(separator: "\n").contains { line in
+            let fields = line.split(separator: "\t", omittingEmptySubsequences: false)
+            return fields.count >= 6 && Int(fields[0]).map { $0 > 0 } == true
+        }
     }
 }

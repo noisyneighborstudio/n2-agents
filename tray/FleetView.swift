@@ -428,16 +428,20 @@ private struct TaskRow: View {
                     Text("This Mac stopped answering. The task may still be running there, so nothing was started anywhere else.")
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    Button("Run It Somewhere Else") { actions.fleetRetry(task: task.id) }
-                        .buttonStyle(FleetPill())
+                    if task.canRetry {
+                        Button("Run It Somewhere Else") { actions.fleetRetry(task: task.id) }
+                            .buttonStyle(FleetPill())
+                    }
                 }
 
                 if task.isFinished {
                     HStack(spacing: 6) {
                         Button("Show Result") { actions.fleetShowTask(task.id) }
                             .buttonStyle(FleetPill(small: true))
-                        Button(distributing ? "Cancel" : "Copy Result To…") { distributing.toggle() }
-                            .buttonStyle(FleetPill(small: true))
+                        if task.canFetch {
+                            Button(distributing ? "Cancel" : "Copy Result To…") { distributing.toggle() }
+                                .buttonStyle(FleetPill(small: true))
+                        }
                         Spacer()
                     }
                     if distributing {

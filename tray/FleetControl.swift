@@ -108,13 +108,15 @@ extension AppDelegate {
             guard let addr = ask("Join a fleet over Tailscale",
                                  "Enter the Tailscale hostname of a Mac already in the fleet. It still has to approve this machine before any profile or credential moves.",
                                  placeholder: "seths-mac-mini") else { return }
-            runInTerminal("\"\(cliPath)\" fleet join --to \(shellQuote(addr))")
+            guard let key = ask("Peer SSH host key", "Paste the output of agents fleet id --host-key from that Mac, obtained through a trusted connection.", placeholder: "ssh-ed25519 …") else { return }
+            runInTerminal("\"\(cliPath)\" fleet join --to \(shellQuote(addr)) --host-key \(shellQuote(key))")
         case "ssh":
             guard let addr = ask("Pair over SSH",
                                  "Enter user@host of the Mac to pair with, then the one-time code it printed with “agents fleet invite”.",
                                  placeholder: "seth@192.168.1.20") else { return }
             guard let code = ask("Pairing code", "Paste the one-time code from the other Mac.", placeholder: "") else { return }
-            runInTerminal("\"\(cliPath)\" fleet pair --to \(shellQuote(addr)) --code \(shellQuote(code))")
+            guard let key = ask("Peer SSH host key", "Paste the output of agents fleet id --host-key from that Mac, obtained through a trusted connection.", placeholder: "ssh-ed25519 …") else { return }
+            runInTerminal("\"\(cliPath)\" fleet pair --to \(shellQuote(addr)) --code \(shellQuote(code)) --host-key \(shellQuote(key))")
         default:
             break
         }
@@ -220,34 +222,58 @@ extension AppDelegate {
     func fleetDispatch() {
         dismissPanel()
         guard let fleet = model.fleet, fleet.initialized else { return }
-        guard let command = ask("Send work to another Mac",
-                                "The command runs on the machine the fleet picks. Add a pin below to force one.",
-                                placeholder: "npm test") else { return }
-        var args = ["fleet", "task", "run", "--label", "Panel dispatch"]
-        if let pin = pinChoice(fleet) { args += pin }
-        let plan = runCLI(args + ["--plan", "--"] + [command])
-        // An unsatisfiable pin — a machine that is not in the fleet, an agent
-        // no eligible machine has — plans nothing and still exits 0. Offering
-        // "Send" there would dispatch work that is already refused, so an empty
-        // plan ends the flow instead of becoming a button.
-        guard plan.status == 0, !plan.output.isEmpty else {
-            alert("Nothing can run this",
-                  plan.output.isEmpty
-                    ? "No machine in the fleet is eligible for this task with those pins. Remove a pin, or bring the machine you pinned online."
-                    : plan.output)
-            return
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: 440, height: 310))
+        func field(_ label: String, _ placeholder: String, y: CGFloat) -> NSTextField {
+            let title = NSTextField(labelWithString: label)
+            title.frame = NSRect(x: 0, y: y + 25, width: 440, height: 18)
+            let input = NSTextField(frame: NSRect(x: 0, y: y, width: 440, height: 24))
+            input.placeholderString = placeholder
+            box.addSubview(title); box.addSubview(input)
+            return input
         }
-        let confirm = NSAlert()
-        confirm.messageText = "Send this work?"
-        confirm.informativeText = plan.output
-        confirm.addButton(withTitle: "Send")
-        confirm.addButton(withTitle: "Cancel")
+        let mode = NSPopUpButton(frame: NSRect(x: 0, y: 280, width: 440, height: 25))
+        mode.addItems(withTitles: ["Agent task", "Shell command"])
+        box.addSubview(mode)
+        let task = field("Task or command", "Describe the work to do", y: 230)
+        let workspace = field("Workspace directory", "Optional, includes uncommitted changes", y: 175)
+        let context = field("Context file", "Optional file with decisions and progress", y: 120)
+        let requirements = field("Required tools", "Optional, comma-separated: node,git", y: 65)
+        let machines = fleet.destinations.map(\.machine)
+        let agents = model.data?.snapshot.vendors.map(\.id) ?? []
+        let machine = NSPopUpButton(frame: NSRect(x: 0, y: 15, width: 215, height: 25))
+        machine.addItem(withTitle: "Fastest eligible Mac")
+        machines.forEach { machine.addItem(withTitle: $0) }
+        let agent = NSPopUpButton(frame: NSRect(x: 225, y: 15, width: 215, height: 25))
+        agent.addItem(withTitle: "Best eligible agent")
+        agents.forEach { agent.addItem(withTitle: $0) }
+        box.addSubview(machine); box.addSubview(agent)
+        let form = NSAlert()
+        form.messageText = "Send work"
+        form.informativeText = "Without a workspace, work runs in an empty task directory. Deliverable files written to $N2_FLEET_OUTPUTS can be fetched or distributed when you request them."
+        form.accessoryView = box
+        form.addButton(withTitle: "Send work")
+        form.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
-        guard confirm.runModal() == .alertFirstButtonReturn else { return }
+        guard form.runModal() == .alertFirstButtonReturn else { return }
+        let text = task.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { alert("Task required", "Enter a task or shell command."); return }
+        let spec = FleetDispatchSpec(task: text, prompt: mode.indexOfSelectedItem == 0,
+            workspace: (workspace.stringValue as NSString).expandingTildeInPath,
+            contextFile: (context.stringValue as NSString).expandingTildeInPath,
+            requirements: requirements.stringValue,
+            machine: machine.indexOfSelectedItem > 0 ? machines[machine.indexOfSelectedItem - 1] : nil,
+            agent: agent.indexOfSelectedItem > 0 ? agents[agent.indexOfSelectedItem - 1] : nil)
         DispatchQueue.global(qos: .userInitiated).async {
-            let r = self.runCLI(args + ["--"] + [command])
+            let plan = self.runCLI(spec.arguments + ["--plan", "--", spec.task])
+            guard plan.status == 0, FleetDispatchSpec.hasCandidate(plan.output) else {
+                DispatchQueue.main.async {
+                    self.alert("Nothing can run this", plan.output.isEmpty ? "No eligible machine and agent were found." : plan.output)
+                }
+                return
+            }
+            let result = self.runCLI(spec.arguments + ["--", spec.task])
             DispatchQueue.main.async {
-                if r.status != 0 { self.alert("Dispatch refused", r.output) }
+                if result.status != 0 { self.alert("Dispatch refused", result.output) }
                 self.refreshFleet()
             }
         }
@@ -260,7 +286,7 @@ extension AppDelegate {
     /// so the dispatcher still ranks that dimension.
     private func pinChoice(_ fleet: FleetData) -> [String]? {
         let machines = fleet.destinations.map(\.machine)
-        let agents = model.data?.snapshot.installedVendors.map(\.id) ?? []
+        let agents = model.data?.snapshot.vendors.map(\.id) ?? []
         let box = NSView(frame: NSRect(x: 0, y: 0, width: 280, height: 58))
         let machinePop = NSPopUpButton(frame: NSRect(x: 0, y: 33, width: 280, height: 25))
         machinePop.addItem(withTitle: "Let the fleet choose the Mac")
