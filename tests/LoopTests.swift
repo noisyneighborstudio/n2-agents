@@ -35,6 +35,17 @@ import Foundation
         if case .outage = Failure.classify("HTTP 503 Service Unavailable") {} else { expect(false, "503 is an outage") }
         if case .other = Failure.classify("TypeError: undefined is not a function") {} else { expect(false, "a crash is other") }
 
+        for message in ["You've hit your session limit", "You've hit your monthly spend limit",
+                        "You're out of usage credits. Switch to another model to continue."] {
+            if case .quota = Failure.classify(message) {} else { expect(false, "provider rejection: \(message)") }
+        }
+        for candidate in [slot("claude", "Unknown", used: nil),
+                          slot("codex", "Failed", used: 10, quota: "fetch-error"),
+                          slot("claude", "Throttled", used: 10, quota: "rate-limited")] {
+            expect(pick([candidate], effort: .deep, cooldowns: [:], busy: [:]) == nil,
+                   "missing or failed measurements cannot advertise capacity")
+        }
+
         // Paths: overlapping chunks never run together.
         expect(pathsOverlap(["src/api/**"], ["src/api/users.ts"]), "a glob covers a file under it")
         expect(pathsOverlap(["**"], ["docs/x.md"]), "** overlaps everything")

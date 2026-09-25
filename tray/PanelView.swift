@@ -509,6 +509,7 @@ private struct ProfileCard: View {
         switch reading.state {
         case .ready:             return (nil, "Ready", Ink.secondary)
         case .checking:          return (nil, "Checking…", Ink.secondary)
+        case .usageUnknown:      return ("questionmark.circle", "Usage unknown", Ink.amber)
         case .allOut:            return ("clock", "All out", maxedRed)
         case .labsOut(let out, let of, _):
             return ("clock", "\(out) of \(of) out", Ink.amber)
@@ -520,7 +521,7 @@ private struct ProfileCard: View {
 
     private var helpText: String {
         var parts: [String] = [status.text]
-        if let used = reading.used { parts.append("\(used)% used across \(slotted.count) labs") }
+        if let used = reading.used { parts.append("\(used)% used in the fullest measured lab") }
         switch reading.state {
         case .allOut(let until), .labsOut(_, _, let until):
             if let until { parts.append("first back \(clockTime(until))") }
@@ -608,9 +609,7 @@ private struct SlotRow: View {
                 .frame(width: 56, alignment: .trailing)
             meta(u, b)
         } else if usage?.note == .ok {
-            // Read cleanly with nothing to show: no window open (Muse between
-            // its 5-hour windows). Normal, so not amber.
-            flat(nil, "idle", Ink.secondary)
+            flat(nil, usage?.isFresh == false ? "stale reading" : "usage unknown", Ink.amber)
         } else if let note = usage?.note {
             if note == .sharedLogin {
                 flat("link", label(for: note), Ink.secondary)
@@ -640,6 +639,7 @@ private struct SlotRow: View {
         .foregroundStyle(u.maxed ? maxedRed : Ink.secondary)
         .lineLimit(1)
         .frame(width: 88, alignment: .trailing)
+        .help("Usage checked at \(u.fetchedAt.formatted(date: .abbreviated, time: .standard))")
     }
 
     private func flat(_ icon: String?, _ text: String, _ tint: Color) -> some View {
@@ -687,7 +687,7 @@ private struct SlotActions: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if let u = usage, u.note == .ok {
+            if let u = usage, u.note == .ok, u.isFresh {
                 if let five = u.fiveHour {
                     MeterRow(label: "5h", percent: five,
                              meta: u.resets.map(clockTime) ?? "", delay: 0)

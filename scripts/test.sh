@@ -1,5 +1,6 @@
 #!/bin/zsh
 set -euo pipefail
+TRAPZERR() { print -u2 -- "Test command failed at ${funcfiletrace[1]}"; }
 cd "${0:A:h}/.."
 
 test_root="$PWD/.test-tmp"
@@ -692,5 +693,7 @@ wait_for PAUSED
 [[ "$(field 's["reason"]')" == *"doesn't hold"* ]]
 
 run_agents help | grep -Fq 'agents loop "goal"'
+
+sh scripts/test-usage.sh
 
 echo "All tests passed"

@@ -200,6 +200,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         // two feed each other forever.
         if let last = drawnIcon, last == drawn { return }
         drawnIcon = drawn
+        statusItem.button?.toolTip = drawn.remaining.map {
+            "Lowest measured headroom: \($0)%. Open N2 for individual accounts and unknown readings."
+        } ?? "Usage unknown. Open N2 for account readings."
         let image = icon.image(remaining: drawn.remaining, dark: drawn.dark)
         button.image = UpdateChannel.isQABuild ? StatusIcon.taggedQA(image) : image
     }

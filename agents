@@ -593,7 +593,7 @@ PYEOF
 }
 
 # Lowest 5-hour utilization wins; ties fall to 7-day, then list order. A
-# maxed profile (95%+ in either window — the last few points are unusable)
+# maxed profile (95%+ in either window, our local scheduling reserve)
 # is out of the running exactly like one with a bad token.
 # Updates the rotation pointer so --next continues from the pick.
 # $1 vendor, $2 (optional): profile to exclude (a resumed session's source).
@@ -602,7 +602,8 @@ pick_best() {
   while IFS="$(printf '\t')" read -r n five seven _ note _; do
     [ "$note" = ok ] || continue
     [ "$n" = "${2:-}" ] && continue
-    # A plan may have only one of the windows; the other counts as empty.
+    # Require at least one measured window; missing both is not capacity.
+    case "$five:$seven" in -:-|:) continue ;; esac
     f=${five%.*} s=${seven%.*}
     case $f in ''|*[!0-9]*) f=0 ;; esac
     case $s in ''|*[!0-9]*) s=0 ;; esac
@@ -702,6 +703,7 @@ slot_has_room() {  # profile, vendor, usage rows
 $su_row
 EOF
   [ "$su_note" = ok ] || return 1
+  case "$su_f:$su_s" in -:-|:) return 1 ;; esac
   su_f=${su_f%.*} su_s=${su_s%.*}
   case $su_f in ''|*[!0-9]*) su_f=0 ;; esac
   case $su_s in ''|*[!0-9]*) su_s=0 ;; esac

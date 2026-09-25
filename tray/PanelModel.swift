@@ -20,28 +20,31 @@ struct Usage {
     let fiveHour: Int?
     let sevenDay: Int?
     let resets: Date?       // when the 5h window resets
-    let note: Note
+    var note: Note
     let sevenResets: Date?  // when the 7d window resets
     /// What the long window is for this lab ("7d", or Cursor's "mo").
     var longWindow = "7d"
     var fetchedAt = Date()
 
+    /// Expired observations cannot advertise capacity or select an account.
+    static let maximumAge: TimeInterval = 15 * 60
+    var isFresh: Bool { Date().timeIntervalSince(fetchedAt) < Self.maximumAge }
+
     /// Used in whichever window is tighter — the one that stops you first.
     /// A plan may have only one of the two.
     var used: Int? {
-        guard note == .ok, fiveHour != nil || sevenDay != nil else { return nil }
+        guard note == .ok, isFresh, fiveHour != nil || sevenDay != nil else { return nil }
         return max(fiveHour ?? 0, sevenDay ?? 0)
     }
 
-    /// 95%+ in either window. The endpoint reports utilisation and the last
-    /// few points are unusable in practice, so this is out, not "nearly".
+    /// Local scheduling reserve, not the provider's exhaustion threshold.
     static let maxedAt = 95
     var maxed: Bool { (used ?? 0) >= Self.maxedAt }
 
     /// The window that binds — the one that stops you first — with its reset.
     /// Depth 2 shows this one; depth 3 shows both.
     var binding: (tag: String, percent: Int, resets: Date?)? {
-        guard note == .ok else { return nil }
+        guard note == .ok, isFresh else { return nil }
         let f = fiveHour ?? -1, d = sevenDay ?? -1
         guard f >= 0 || d >= 0 else { return nil }
         return f >= d ? ("5h", max(f, 0), resets) : (longWindow, max(d, 0), sevenResets)
@@ -62,14 +65,19 @@ struct Usage {
         return f
     }()
 
+    private static func percent(_ text: String) -> Int? {
+        guard let value = Double(text), value.isFinite, value >= 0, value <= 100 else { return nil }
+        return Int(value.rounded())
+    }
+
     /// profile -> usage. Unknown notes are dropped: a newer CLI may add some.
     static func parse(_ text: String, longWindow: String = "7d") -> [String: Usage] {
         var rows: [String: Usage] = [:]
         for line in text.split(separator: "\n") {
             let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
             guard f.count >= 5, let note = Note(rawValue: f[4]) else { continue }
-            rows[f[0]] = Usage(fiveHour: Double(f[1]).map { Int($0.rounded()) },
-                               sevenDay: Double(f[2]).map { Int($0.rounded()) },
+            rows[f[0]] = Usage(fiveHour: percent(f[1]),
+                               sevenDay: percent(f[2]),
                                resets: resetFormat.date(from: f[3]),
                                note: note,
                                sevenResets: f.count > 5 ? resetFormat.date(from: f[5]) : nil,
@@ -78,13 +86,17 @@ struct Usage {
         return rows
     }
 
-    /// A failed read doesn't erase a good one: the last numbers stay, dated by
-    /// their own fetchedAt so the panel can say how old they are.
+    /// Keep the last observation for diagnosis, but retain the failed read's
+    /// status. A failed refresh must never leave a healthy capacity gauge.
     static func merge(_ old: [String: Usage], _ new: [String: Usage]) -> [String: Usage] {
         new.mapValues { $0 }.merging(old) { fresh, previous in
-            (fresh.note == .rateLimited || fresh.note == .fetchError) && previous.note == .ok ? previous : fresh
+            guard fresh.note == .rateLimited || fresh.note == .fetchError else { return fresh }
+            var stale = previous
+            stale.note = fresh.note
+            return stale
         }.filter { new[$0.key] != nil }
     }
+
 }
 
 /// Everything one refresh reads from disk and the CLI, published as a unit so
@@ -139,6 +151,7 @@ enum NextBest {
 enum ProfileState: Equatable {
     case ready
     case checking
+    case usageUnknown
     /// Some labs are out; `until` is the soonest one back.
     case labsOut(out: Int, of: Int, until: Date?)
     /// Nothing left to run at all.
@@ -198,7 +211,7 @@ final class PanelModel: ObservableObject {
         let live = metered.filter(signedIn)
         let readable = live.compactMap { row($0) }.filter { $0.note == .ok }
         let values = readable.compactMap(\.used)
-        let used = values.isEmpty ? nil : Int((Double(values.reduce(0, +)) / Double(values.count)).rounded())
+        let used = values.max()
 
         let out = readable.filter(\.maxed)
         let back = out.compactMap(\.maxedUntil).min()
@@ -216,6 +229,7 @@ final class PanelModel: ObservableObject {
         }
         if !out.isEmpty { return (.labsOut(out: out.count, of: slotted.count, until: back), used) }
         if !signedOut.isEmpty { return (.needsSignIn(signedOut.count), used) }
+        if live.contains(where: { row($0)?.used == nil }) { return (.usageUnknown, used) }
         return (.ready, used)
     }
 
@@ -232,26 +246,18 @@ final class PanelModel: ObservableObject {
         }
     }
 
-    private static func mean(_ values: [Int]) -> Int {
-        Int((Double(values.reduce(0, +)) / Double(values.count)).rounded())
-    }
-
-    /// Each profile's quota left — the mean over its slots — in panel order,
-    /// with how many slots it's taken over. Profiles with no reading are out.
+    /// Each profile's most constrained measured slot. Independent provider
+    /// allowances cannot be averaged into capacity usable by a single task.
     private var profilesLeft: [(name: String, left: Int, slots: Int)] {
         let byProfile = Dictionary(grouping: slotsLeft, by: \.profile)
         return (data?.profiles ?? []).compactMap { p in
-            byProfile[p.name].map { (p.name, Self.mean($0.map(\.left)), $0.count) }
+            byProfile[p.name].map { (p.name, $0.map(\.left).min() ?? 0, $0.count) }
         }
     }
 
-    /// Quota left overall, for the menu bar icon: the mean of the profiles'
-    /// numbers, so each profile weighs the same however many labs it holds.
-    /// Nil until a slot has read.
-    var remaining: Int? {
-        let left = profilesLeft.map(\.left)
-        return left.isEmpty ? nil : Self.mean(left)
-    }
+    /// The icon warns about the most constrained measured slot. The next-agent
+    /// action separately identifies a slot with capacity. Unknown is not zero.
+    var remaining: Int? { slotsLeft.map(\.left).min() }
 
     /// Low is the icon's orange tier or worse: under 50% left.
     static let lowFrom = StatusIcon.Tier.orange
@@ -263,7 +269,7 @@ final class PanelModel: ObservableObject {
         let profiles = profilesLeft
         var all: [LowQuota] = []
         if profiles.count > 1, let overall = remaining {
-            all.append(LowQuota(id: "*", title: "Overall", left: overall))
+            all.append(LowQuota(id: "*", title: "Lowest measured headroom", left: overall))
         }
         all += profiles.filter { $0.slots > 1 }.map { LowQuota(id: $0.name, title: $0.name, left: $0.left) }
         all += slotsLeft.map { LowQuota(id: "\($0.profile)/\($0.vendor.id)", title: "\($0.vendor.label) · \($0.profile)", left: $0.left) }
@@ -297,7 +303,7 @@ final class PanelModel: ObservableObject {
             }
             guard var u = rows[profile] else { continue }
             if u.note == .sharedLogin, let shared = rows["Default"] { u = shared }
-            guard u.note == .ok else { continue }
+            guard u.note == .ok, u.used != nil else { continue }
             if u.maxed {
                 sawMaxed = true
                 if let back = u.maxedUntil { firstBack.append(back) }

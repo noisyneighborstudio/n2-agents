@@ -73,6 +73,8 @@ final class SlotSource {
         }
         for lab in Set(slots.map(\.vendor)) where usageLabs.contains(lab) {
             let rows = run(cli, ["best", "--porcelain", "--vendor", lab])
+            for i in slots.indices where slots[i].vendor == lab { slots[i].quota = "fetch-error" }
+            guard rows.ok else { continue }
             for row in rows.out.split(separator: "\n") {
                 let f = row.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
                 guard f.count >= 5, let i = slots.firstIndex(where: { $0.vendor == lab && $0.profile == f[0] }) else { continue }
@@ -99,8 +101,11 @@ func unusable(_ s: Slot, cooldowns: [String: Cooldown], now: Date = Date()) -> S
     if let c = cooldowns[s.key], c.until > now { return c.reason }
     switch s.quota {
     case "no-token", "stale-token": return "sign-in expired (\(s.quota))"
-    case "ok": if let u = s.used, u >= 95 { return "\(Int(u))% of quota used" }
-    default: break
+    case "ok":
+        guard let u = s.used, u.isFinite, u >= 0, u <= 100 else { return "usage unknown" }
+        if u >= 95 { return "\(Int(u))% of quota used (local reserve)" }
+    case "no-usage-api": break
+    default: return "usage unavailable (\(s.quota))"
     }
     return nil
 }
@@ -111,7 +116,7 @@ func unusable(_ s: Slot, cooldowns: [String: Cooldown], now: Date = Date()) -> S
 func pick(_ slots: [Slot], effort: Effort, cooldowns: [String: Cooldown], busy: [String: Int],
           avoidVendors: Set<String> = [], avoidSlots: Set<String> = []) -> Slot? {
     let usable = slots.filter { unusable($0, cooldowns: cooldowns) == nil && !avoidSlots.contains($0.key) }
-    func headroom(_ s: Slot) -> Double { s.quota == "ok" ? 100 - (s.used ?? 0) : 30 }  // unmeasured ranks below healthy
+    func headroom(_ s: Slot) -> Double { s.quota == "ok" ? 100 - (s.used ?? 100) : 30 }  // unmeasured ranks below healthy
     return usable.sorted { a, b in
         let ia = avoidVendors.contains(a.vendor) ? 1 : 0, ib = avoidVendors.contains(b.vendor) ? 1 : 0
         if ia != ib { return ia < ib }
@@ -156,7 +161,9 @@ enum Failure {
     static func classify(_ text: String, now: Date = Date()) -> Failure {
         let t = text.lowercased()
         let quota = ["usage limit", "rate limit", "quota", "out of credits", "insufficient credits",
-                     "limit reached", "too many requests", " 429"]
+                     "limit reached", "too many requests", " 429", "hit your session limit",
+                     "hit your weekly limit", "hit your monthly spend limit", "out of usage credits",
+                     "opus usage limit", "sonnet usage limit"]
         if quota.contains(where: t.contains) { return .quota(until: resetTime(in: text, now: now) ?? now.addingTimeInterval(3600)) }
         let attention = ["action required", "you must run", "review the updated terms", "accept the terms"]
         if attention.contains(where: t.contains) { return .attention }
