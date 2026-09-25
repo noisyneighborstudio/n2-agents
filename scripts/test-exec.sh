@@ -86,6 +86,14 @@ await_state() {  # <peer> <id> <state> [secs]
   echo "${as_s:-<none>}"; return 1
 }
 
+# Execution fixtures must not depend on installed commercial CLIs or read the
+# operator's Keychain. Cursor has unknown auth, used explicitly by these tests.
+mkdir -p "$base/bin"
+printf '#!/bin/sh\nexit 0\n' > "$base/bin/cursor-agent"
+printf '#!/bin/sh\nexit 1\n' > "$base/bin/security"
+chmod +x "$base/bin/cursor-agent" "$base/bin/security"
+export PATH="$base/bin:$PATH"
+
 for h in alpha beta gamma; do mkdir -p "$base/$h"; done
 A=$(peer alpha fleet init --machine alpha | awk '{print $2}')
 B=$(peer beta  fleet init --machine beta  | awk '{print $2}')
