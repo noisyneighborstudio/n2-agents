@@ -659,6 +659,9 @@ private struct SlotRow: View {
         case .staleToken:  return "token expired"
         case .rateLimited: return "rate-limited"
         case .fetchError:  return "check failed"
+        case .restricted: return "provider restriction"
+        case .credentialOverride: return "credential override"
+        case .credentialStoreUnavailable: return "credential store locked"
         case .sharedLogin: return "shared login"
         default:           return "no reading"
         }

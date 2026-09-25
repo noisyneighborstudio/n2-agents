@@ -12,6 +12,9 @@ struct Usage {
         case staleToken = "stale-token"
         case rateLimited = "rate-limited"
         case fetchError = "fetch-error"
+        case restricted
+        case credentialOverride = "credential-override"
+        case credentialStoreUnavailable = "credential-store-unavailable"
         case noUsageAPI = "no-usage-api"
         /// The lab has one login for the machine; Default's row carries it.
         case sharedLogin = "shared-login"

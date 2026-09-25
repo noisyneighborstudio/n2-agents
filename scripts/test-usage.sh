@@ -7,3 +7,5 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 awk '/^struct PanelData/ {exit} {print}' tray/PanelModel.swift > "$work/Usage.swift"
 swiftc "$work/Usage.swift" tests/UsageTests.swift -o "$work/test-usage"
 "$work/test-usage"
+
+python3 scripts/test-usage-reader.py

@@ -7,7 +7,7 @@
 #   agents active [--vendor <v>]          print the active profile
 #   agents use <Profile|Default> [--vendor <v>]
 #   agents run [Profile|--next|--best] [--vendor <v>] [--start-from-session=<id>] [args]   (unsaid = next best)
-#   agents best [--vendor <v>] [--porcelain]  per-profile usage (5h/7d windows)
+#   agents best [--vendor <v>] [--porcelain|--json]  per-profile usage (5h/7d windows)
 #   agents new <Name> [--vendors a,b]
 #   agents delete <Name> [--yes]
 #   agents adopt [--yes]                  import existing `claudes` profiles (shared, not copied)
@@ -387,209 +387,7 @@ usage_table() {  # vendor
   done
   [ -n "$ut_args" ] || return 0
   # shellcheck disable=SC2086
-  /usr/bin/python3 - "$1" $ut_args <<'PYEOF'
-import hashlib, json, os, signal, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request
-from datetime import datetime, timezone
-
-def claude_creds(cfg, is_default):
-    # Keychain service is "Claude Code-credentials[-<sha256(cfgdir)[:8]>]";
-    # the unsuffixed entry belongs to the default ~/.claude config dir. The
-    # hash is of whatever path the CLI was handed, so a slot that is a symlink
-    # (adopted from `claudes`) has an entry under each path; the one written
-    # last is the live login.
-    paths = {cfg, os.path.realpath(cfg)}
-    svcs = ['Claude Code-credentials-' + hashlib.sha256(p.encode()).hexdigest()[:8] for p in paths]
-    if is_default:
-        svcs.append('Claude Code-credentials')
-    found = []
-    for svc in svcs:
-        p = subprocess.run(['security', 'find-generic-password', '-s', svc, '-w'],
-                           capture_output=True, text=True)
-        if p.returncode == 0:
-            try:
-                found.append(json.loads(p.stdout.strip()).get('claudeAiOauth', {}))
-            except ValueError:
-                pass
-    try:
-        found.append(json.load(open(cfg + '/.credentials.json')).get('claudeAiOauth', {}))
-    except (OSError, ValueError):
-        pass
-    found = [c for c in found if c.get('accessToken')]
-    if not found:
-        return None, 'no-token'
-    c = max(found, key=lambda c: c.get('expiresAt', 0))
-    return c, 'ok' if c.get('expiresAt', 0) / 1000 > time.time() else 'stale-token'
-
-def claude(name, cfg):
-    c, status = claude_creds(cfg, name == 'Default')
-    if status != 'ok':
-        return status, None
-    return 'ok', urllib.request.Request('https://api.anthropic.com/api/oauth/usage',
-        headers={'Authorization': 'Bearer ' + c['accessToken'],
-                 'anthropic-beta': 'oauth-2025-04-20', 'User-Agent': 'n2-agents'})
-
-def claude_row(r):
-    five, seven = r.get('five_hour') or {}, r.get('seven_day') or {}
-    return (five.get('utilization', '-'), seven.get('utilization', '-'),
-            (five.get('resets_at') or '-')[:16], (seven.get('resets_at') or '-')[:16])
-
-def codex(name, cfg):
-    # An API-key login has no plan quota to read, and no tokens.
-    try:
-        t = json.load(open(cfg + '/auth.json')).get('tokens') or {}
-    except (OSError, ValueError):
-        t = {}
-    if not t.get('access_token'):
-        return 'no-token', None
-    url = os.environ.get('N2_CODEX_USAGE_URL', 'https://chatgpt.com/backend-api/wham/usage')
-    return 'ok', urllib.request.Request(url,
-        headers={'Authorization': 'Bearer ' + t['access_token'],
-                 'ChatGPT-Account-Id': t.get('account_id', ''), 'User-Agent': 'n2-agents'})
-
-def codex_row(r):
-    # Plans differ in which windows they have (a 5-hour one, a weekly one, or
-    # both), so each window is placed by its length, not its position.
-    rl = r.get('rate_limit') or {}
-    cols = {}
-    for w in (rl.get('primary_window'), rl.get('secondary_window')):
-        if w:
-            used = 100 if rl.get('limit_reached') else w.get('used_percent', '-')
-            reset = time.strftime('%Y-%m-%dT%H:%M', time.gmtime(w['reset_at'])) if w.get('reset_at') else '-'
-            cols['five' if w.get('limit_window_seconds', 0) <= 5 * 3600 else 'seven'] = (used, reset)
-    five, seven = cols.get('five', ('-', '-')), cols.get('seven', ('-', '-'))
-    return five[0], seven[0], five[1], seven[1]
-
-def grok(name, cfg):
-    # Signed in = an auth.x.ai entry in the slot's auth.json. Its key lasts six
-    # hours, so the read goes through the CLI, which renews it on the way.
-    try:
-        a = json.load(open(cfg + '/auth.json'))
-    except (OSError, ValueError):
-        a = {}
-    if not any(k.startswith('https://auth.x.ai::') and v.get('key') for k, v in a.items()):
-        return 'no-token', None
-    return 'ok', lambda: grok_billing(cfg)
-
-def grok_billing(cfg):
-    # grok's own billing call over ACP (JSON-RPC on stdio), pinned to the slot.
-    # Only the replies are parsed: its startup notices carry MCP servers' env.
-    # SIGTERM ends it in ~1.5 s (closing stdin takes 4); SIGKILL if it hangs.
-    p = subprocess.Popen(['grok', 'agent', 'stdio'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                         stderr=subprocess.DEVNULL, text=True, cwd=tempfile.gettempdir(),
-                         env=dict(os.environ, GROK_HOME=cfg), start_new_session=True)
-    kill = lambda sig: os.killpg(p.pid, sig)
-    timer = threading.Timer(20, kill, (signal.SIGKILL,))
-    timer.start()
-    def call(i, method, params):
-        p.stdin.write(json.dumps({'jsonrpc': '2.0', 'id': i, 'method': method, 'params': params}) + '\n')
-        p.stdin.flush()
-        for line in p.stdout:
-            try:
-                m = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(m, dict) and m.get('id') == i:
-                if 'result' not in m:
-                    raise RuntimeError(m.get('error'))
-                return m['result']
-        raise RuntimeError('grok exited')
-    try:
-        call(1, 'initialize', {'protocolVersion': 1, 'clientCapabilities': {}})
-        return call(2, '_x.ai/billing', {})
-    finally:
-        timer.cancel()
-        try:
-            kill(signal.SIGTERM)
-            p.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            kill(signal.SIGKILL)
-            p.wait()
-        except ProcessLookupError:
-            p.wait()
-
-def grok_row(r):
-    # One credit pool per billing period (a week on today's plans) and no
-    # 5-hour window, so it fills the 7d column alone.
-    c = r.get('config') or {}
-    end = (c.get('currentPeriod') or {}).get('end') or c.get('billingPeriodEnd')
-    reset = datetime.fromisoformat(end.replace('Z', '+00:00')).astimezone(timezone.utc) \
-        .strftime('%Y-%m-%dT%H:%M') if end else '-'
-    return '-', c.get('creditUsagePercent', '-'), '-', reset
-
-def muse(name, cfg):
-    # A profile's login is in its slot's auth.json (the file backend N2 pins);
-    # Default's is the one keychain item a plain `muse` uses. Never the
-    # keychain for a profile: that would show Default's numbers under its name.
-    try:
-        t = (json.load(open(cfg + '/auth.json')).get('providers') or {}).get('meta', {}).get('access_token', '')
-    except (OSError, ValueError):
-        t = ''
-    if not t and name == 'Default':
-        p = subprocess.run(['security', 'find-generic-password', '-s', 'ai.meta.dev.credentials',
-                            '-a', 'meta', '-w'], capture_output=True, text=True)
-        try:
-            t = json.loads(p.stdout).get('access_token', '') if p.returncode == 0 else ''
-        except ValueError:
-            t = ''
-    if not t.startswith('dca:'):
-        return 'no-token', None
-    url = os.environ.get('N2_MUSE_USAGE_URL', 'https://api.meta.ai/muse-code/key')
-    return 'ok', urllib.request.Request(url, data=b'{}', method='POST',
-        headers={'Authorization': 'Bearer ' + t, 'x-api-version': '1.0.0',
-                 'Content-Type': 'application/json', 'User-Agent': 'n2-agents'})
-
-def muse_row(r):
-    # The key endpoint (it mints an inference key we drop) reports both
-    # windows: `window` is the 5-hour one, `weekly` the week.
-    u = r.get('subs_usage') or {}
-    cols = []
-    for w in (u.get('window') or {}, u.get('weekly') or {}):
-        at = w.get('resets_at')
-        cols.append((w.get('used_percent', '-'),
-                     time.strftime('%Y-%m-%dT%H:%M', time.gmtime(at)) if at else '-'))
-    return cols[0][0], cols[1][0], cols[0][1], cols[1][1]
-
-def cursor(name, cfg):
-    # cursor-agent keeps ONE login in the keychain whatever CURSOR_CONFIG_DIR
-    # says, so there is one account to read. It's shown once, on Default;
-    # other slots say they share it rather than repeat the numbers.
-    if name != 'Default':
-        return 'shared-login', None
-    p = subprocess.run(['security', 'find-generic-password', '-s', 'cursor-access-token',
-                        '-a', 'cursor-user', '-w'], capture_output=True, text=True)
-    if p.returncode != 0 or not p.stdout.strip():
-        return 'no-token', None
-    url = os.environ.get('N2_CURSOR_USAGE_URL',
-                         'https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage')
-    return 'ok', urllib.request.Request(url, data=b'{}', method='POST',
-        headers={'Authorization': 'Bearer ' + p.stdout.strip(), 'Content-Type': 'application/json',
-                 'Connect-Protocol-Version': '1', 'User-Agent': 'n2-agents'})
-
-def cursor_row(r):
-    # One pool per monthly billing cycle, in the long-window column; the
-    # percent is already in percent units (0.4 means 0.4%).
-    end = r.get('billingCycleEnd')
-    reset = time.strftime('%Y-%m-%dT%H:%M', time.gmtime(int(end) / 1000)) if end else '-'
-    return '-', (r.get('planUsage') or {}).get('totalPercentUsed', '-'), '-', reset
-
-request, row = {'claude': (claude, claude_row), 'codex': (codex, codex_row),
-                'grok': (grok, grok_row), 'muse': (muse, muse_row),
-                'cursor': (cursor, cursor_row)}[sys.argv[1]]
-for pair in sys.argv[2:]:
-    name, cfg = pair.split('=', 1)
-    status, req = request(name, cfg)
-    if status != 'ok':
-        print(f"{name}\t-\t-\t-\t{status}")
-        continue
-    try:
-        five, seven, five_at, seven_at = row(req() if callable(req) else json.load(urllib.request.urlopen(req, timeout=10)))
-        print(f"{name}\t{five}\t{seven}\t{five_at}\tok\t{seven_at}")
-    except urllib.error.HTTPError as e:
-        note = {429: 'rate-limited', 401: 'stale-token', 403: 'stale-token'}.get(e.code, 'fetch-error')
-        print(f"{name}\t-\t-\t-\t{note}")
-    except Exception:
-        print(f"{name}\t-\t-\t-\tfetch-error")
-PYEOF
+  /usr/bin/python3 "$scripts_dir/usage.py" "$1" $ut_args
 }
 
 # Lowest 5-hour utilization wins; ties fall to 7-day, then list order. A
@@ -626,12 +424,13 @@ EOF
 # The 7d columns hold the lab's long window, whatever its length
 # (vendor_long_window). shared-login: the slot uses Default's login and quota.
 cmd_best() {
-  vsel="" porcelain=0
+  vsel="" porcelain=0 json_output=0
   while [ $# -gt 0 ]; do
     case $1 in
       --vendor) vsel=${2:-}; shift 2 ;;
       --vendor=*) vsel=${1#--vendor=}; shift ;;
       --porcelain) porcelain=1; shift ;;
+      --json) json_output=1; shift ;;
       *) shift ;;
     esac
   done
@@ -640,11 +439,15 @@ cmd_best() {
     bv=$(for x in $(vendors_installed); do vendor_has_usage "$x" && echo "$x"; done; true)
     [ -n "$bv" ] || die "none of the installed labs reports usage"
     for x in $bv; do
-      if [ "$porcelain" = 1 ]; then cmd_best --vendor "$x" --porcelain; else cmd_best --vendor "$x"; fi
+      if [ "$json_output" = 1 ]; then cmd_best --vendor "$x" --json; elif [ "$porcelain" = 1 ]; then cmd_best --vendor "$x" --porcelain; else cmd_best --vendor "$x"; fi
     done
     return 0
   fi
   v=$(one_vendor "$vsel")
+  if [ "$json_output" = 1 ]; then
+    N2_USAGE_FORMAT=json usage_table "$v"
+    return 0
+  fi
   if [ "$porcelain" = 1 ]; then
     usage_table "$v"
     return 0
