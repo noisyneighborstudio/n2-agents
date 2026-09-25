@@ -18,12 +18,14 @@ struct FleetSyncSettings: View {
             Text("QA profile copies · changes stay separate from the primary app.")
                 .font(.system(size: 12)).foregroundStyle(Ink.secondary)
             Button("Import local profiles and credentials") { perform(["sync", "import-local", "--credentials"]) }
+                .disabled(busy)
             Text("Imports missing files only. Existing QA edits and primary profiles are preserved.")
                 .font(.system(size: 11)).foregroundStyle(Ink.secondary)
             ForEach(labels, id: \.0) { key, label in
                 Toggle(label, isOn: Binding(get: { categories[key] ?? false }, set: { enabled in
                     perform(["sync", "categories", key, enabled ? "on" : "off"])
                 }))
+                .disabled(busy)
             }
             Text("Credential sharing also requires a per-provider choice. MCP files can contain secrets and require that choice too.")
                 .font(.system(size: 11)).foregroundStyle(Ink.secondary)
@@ -31,14 +33,16 @@ struct FleetSyncSettings: View {
                 Toggle("\(vendor.capitalized) credentials · \(support)", isOn: Binding(get: { enabled }, set: { value in
                     perform(["sync", "auth", value ? "enable" : "disable", vendor])
                 }))
-                .disabled(support == "unsupported" || categories["auth"] == false)
+                .disabled(busy || support == "unsupported" || categories["auth"] == false)
             }
             HStack {
                 Button("Sync now") { perform(["sync", "now"]) }
                 Button("Enable background sync") { perform(["sync", "service", "install", "--interval", "60"]) }
                 Button("Stop") { perform(["sync", "service", "uninstall"]) }
             }
+            .disabled(busy)
             Button("Refresh status") { refresh() }
+                .disabled(busy)
             Text(status).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
             ForEach(conflicts, id: \.0) { id, address in
                 VStack(alignment: .leading) {
@@ -47,12 +51,12 @@ struct FleetSyncSettings: View {
                         Button("Keep this Mac’s version") { perform(["sync", "resolve", id, "--local"]) }
                         Button("Use peer’s version") { perform(["sync", "resolve", id, "--remote"]) }
                     }
+                    .disabled(busy)
                 }
             }
             if !message.isEmpty { Text(message).font(.system(size: 11)).textSelection(.enabled) }
             if busy { ProgressView().controlSize(.small) }
         }
-        .disabled(busy)
         .task { refresh() }
     }
 
@@ -60,7 +64,7 @@ struct FleetSyncSettings: View {
         guard !busy else { return }
         busy = true
         Task {
-            let result = await Task.detached { Self.run(args) }.value
+            let result = await Task.detached { FleetSettingsLoader.run(args) }.value
             message = result
             await load()
             busy = false
@@ -74,10 +78,7 @@ struct FleetSyncSettings: View {
     }
 
     @MainActor private func load() async {
-        let values = await Task.detached {
-            [Self.run(["sync", "categories"]), Self.run(["sync", "auth", "list"]),
-             Self.run(["peers"]), Self.run(["sync", "service", "status"]), Self.run(["sync", "conflicts"])]
-        }.value
+        let values = await FleetSettingsLoader.load { FleetSettingsLoader.run($0) }
         categories = Dictionary(uniqueKeysWithValues: rows(values[0]).compactMap { fields in
             fields.count == 2 ? (fields[0], fields[1] == "on") : nil
         })
@@ -91,18 +92,4 @@ struct FleetSyncSettings: View {
         text.split(separator: "\n").map { $0.split(separator: "\t", omittingEmptySubsequences: false).map(String.init) }
     }
 
-    private static func run(_ args: [String]) -> String {
-        guard let resources = Bundle.main.resourcePath else { return "App resources unavailable" }
-        let process = Process(), pipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = [resources + "/agents", "fleet"] + args
-        var env = ProcessInfo.processInfo.environment
-        env["PATH"] = ShellPath.fromLoginShell() ?? "/usr/bin:/bin:/usr/sbin:/sbin"
-        process.environment = env
-        process.standardOutput = pipe; process.standardError = pipe
-        do { try process.run() } catch { return error.localizedDescription }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    }
 }
