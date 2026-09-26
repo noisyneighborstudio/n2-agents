@@ -222,7 +222,11 @@ denied "a traversing distribution name is refused" "$out" "$rc"
 # --- 8. a disconnected worker is reported, never retried behind the user ---
 mark "8. an unreachable worker waits for the user"
 T2=$(peer alpha fleet task run --machine gamma --agent cursor --allow-unknown-auth \
-       --label slowjob 'sleep 6; echo finished-offline > done.txt' 2>/dev/null | cut -f1)
+       --label slowjob 'n=0; while [ ! -f "$HOME/.release-disconnection-test" ]; do
+         [ -d "$HOME" ] && [ "$n" -lt 1200 ] || exit 98
+         n=$((n+1)); sleep 0.1
+       done; echo finished-offline > done.txt' 2>/dev/null | cut -f1)
+same "disconnection fixture is running before links are cut" running "$(await_state gamma "$T2" running)"
 # Cut the LINK, not the machine. Moving the worker's HOME aside also moves the
 # running worker's state and the still-live process simply recreates the
 # directory, so the "reconnect" would rejoin a different, empty machine. The
@@ -261,16 +265,31 @@ check "background tick reports the worker unreachable" "unreachable" "$out"
 refute "reconcile does not dispatch anything"    "dispatched to" "$out"
 same  "no second task was created"               "$before" "$(peer alpha fleet task list 2>&1 | wc -l | tr -d ' ')"
 check "the disconnection is notified"            "disconnected" "$(peer alpha fleet task notices 2>&1)"
-# The worker keeps running its own copy while unreachable.
-sleep 6
+# Also block the worker's completion event back to the dispatcher. Otherwise
+# that event can arrive before reconnection and conceal a broken reconcile.
+ga=$(grep -rl '^machine=alpha$' "$base/gamma/.n2-agents/fleet/peers" | head -1)
+[ -n "$ga" ] || { echo "FAIL section 8 setup: no return route to alpha"; exit 1; }
+cut_link "$ga" "$base/alpha.unreachable"
+# Release only after all disconnection assertions. A fixed sleep could finish
+# before those probes under load, testing completed work instead of a live loss.
+# Beta's later explicit retries run the same retained command and can complete.
+: > "$base/gamma/.release-disconnection-test"
+: > "$base/beta/.release-disconnection-test"
+same "worker finishes while the dispatcher's link is cut" completed "$(await_state gamma "$T2" completed)"
+same "dispatcher remains unreachable without the completion event" unreachable \
+  "$(peer alpha fleet task show "$T2" | awk -F'\t' '$1=="state"{print $2}')"
 cut_link "$gh" "$base/gamma"          # the link comes back; the worker never left
 out=$(peer alpha fleet task reconcile "$T2" 2>&1)
+check "reconcile returns the recovered completion" "completed" "$out"
 check "reconnect reconciles the task that finished offline" "completed" \
       "$(peer alpha fleet task show "$T2" 2>&1 | awk -F'\t' '$1=="state"{print $2}')"
 check "the work it did offline is intact" "finished-offline" \
       "$(find "$base/gamma" -name done.txt -exec cat {} \; 2>/dev/null)"
 check "the worker itself recorded the completion" "completed" \
       "$(peer gamma fleet task show "$T2" 2>&1 | awk -F'\t' '$1=="state"{print $2}')"
+
+# Keep gamma's event route blocked until reconciliation has proved recovery.
+cut_link "$ga" "$base/alpha"
 
 # --- 9. a retry is explicit and is a different task ------------------------
 mark "9. retry is a new task, cross-linked to the original"

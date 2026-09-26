@@ -19,7 +19,7 @@ Work in progress for PR #3, followed by the T3 adapter in PR #26. This checklist
 - [x] Reverify profile/configuration/credential sync, conflicts and machine exceptions: 639 checks pass across all 75 sections.
 - [ ] Complete provider-specific authentication lifecycle evidence and explicit limitations.
 - [x] Reverify managed-tool authorization, replication and safe update deferral, including a barrier test of preparation versus disruptive installation.
-- [ ] Complete dispatch eligibility, preferences and expected-completion ranking.
+- [x] Verify dispatch eligibility, preferences and expected-completion ranking: 97 execution checks and focused preference/prompt/delivery checks pass.
 - [x] Verify ordinary dirty and linked-workspace/context handoff and declared deliverable destinations. Nested submodule metadata remains a documented limitation.
 - [ ] Verify native and in-app notifications, disconnection handling and reconciliation. Native parser/action tests pass; GUI end-to-end checks remain.
 - [ ] Verify complete CLI/native UI flows and source/release packaging.
@@ -140,3 +140,12 @@ from unverified refresh coordination and revocation. The current contract is in
 and settings sharing while explicitly excluding its machine-wide login. All 639
 sync checks across 75 sections pass, including a two-peer Cursor MCP regression.
 Independent correctness and security reviews are clear for this correction.
+
+Execution readiness now passes 97 checks, including requirements and preference
+filtering before completion-time ranking, explicit pins, observer monitoring,
+no automatic retry, and recovery of a missed completion. The disconnection test
+uses a release barrier instead of a six-second task: the previous fixture could
+finish before links were cut. It now blocks the worker's return notification too,
+proves the dispatcher remains unreachable after worker completion, and requires
+reconciliation to recover the result. Independent reviews are clear. The native
+parser/action suite also passes; native GUI end-to-end verification remains open.
