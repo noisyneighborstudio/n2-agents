@@ -17,6 +17,7 @@ struct Usage {
         case restricted
         case credentialOverride = "credential-override"
         case credentialStoreUnavailable = "credential-store-unavailable"
+        case ownerUnavailable = "owner-unavailable"
         case noUsageAPI = "no-usage-api"
         /// The lab has one login for the machine; Default's row carries it.
         case sharedLogin = "shared-login"

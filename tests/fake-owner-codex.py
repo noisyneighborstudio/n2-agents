@@ -11,8 +11,9 @@ settings = json.loads((base/'settings.json').read_text())
 mode = settings.get('mode', '')
 home = Path(os.environ['CODEX_HOME'])
 managed = 'cli_auth_credentials_store="file"' in sys.argv
-assert not any(key in os.environ for key in ('OPENAI_API_KEY', 'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN', 'OPENAI_BASE_URL', 'HTTPS_PROXY'))
-assert os.environ['HOME'] == str(home)
+if managed or not settings.get('allowExternalHome', False):
+    assert not any(key in os.environ for key in ('OPENAI_API_KEY', 'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN', 'OPENAI_BASE_URL', 'HTTPS_PROXY'))
+    assert os.environ['HOME'] == str(home)
 token = None
 for line in sys.stdin:
     request = json.loads(line)
@@ -37,7 +38,7 @@ for line in sys.stdin:
             if mode == 'timeout': time.sleep(30)
             if mode != 'unchanged':
                 path=home/'auth.json'
-                path.write_text(json.dumps({'tokens': {'access_token': 'rotated-secret', 'account_id': 'workspace'}}))
+                path.write_text(json.dumps({'tokens': {'access_token': settings.get('replacementToken', 'rotated-secret'), 'account_id': 'workspace'}}))
                 path.chmod(0o600)
             if mode == 'orphan':
                 (base/'refresh-started').write_text(str(os.getpid()))
@@ -48,6 +49,10 @@ for line in sys.stdin:
         result = {'account': {'type': 'chatgpt', 'email': 'other@example.invalid' if token == 'rotated-secret' and mode == 'wrong-account' else 'fixture@example.invalid'},
                   'workspaceRouting': {'chatgptAccountId': 'workspace', 'backendOrigin': 'https://chatgpt.com'}}
     elif method == 'account/rateLimits/read':
+        if settings.get('rejectInitial') and (token == 'original-secret' or settings.get('rejectEveryToken')):
+            print(json.dumps({'id':900,'method':'account/chatgptAuthTokens/refresh',
+                              'params':{'reason':'unauthorized','previousAccountId':'workspace'}}),flush=True)
+            continue
         if mode == 'verification-error':
             print(json.dumps({'id': request['id'], 'error': {'message': 'sensitive-provider-diagnostic'}}), flush=True)
             continue

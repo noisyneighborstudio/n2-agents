@@ -59,12 +59,19 @@ def reported_quota_reset(error, now):
     return reset if math.isfinite(reset) and now < reset <= now + 366 * 86400 else None
 
 
+class InitialTokenRejected(RuntimeError):
+    def __init__(self, deadline):
+        super().__init__('Codex rejected the initial owner token')
+        self.deadline = deadline
+
+
 class CodexRPC:
     def __init__(self, cfg, cwd, timeout=15, executable='codex', ephemeral_auth=False, own_process_group=True, environment=None, managed_file_auth=False, lifetime_lock_fd=None, lifetime_deadline=None):
         self.timeout = timeout
         self.executable = executable
         self.ephemeral_auth = ephemeral_auth
         self._renewal_source = None
+        self._initial_owner_account = None
         self._bound_account_id = None
         self._token_digest = None
         self._renewal_ids = set()
@@ -270,6 +277,17 @@ class CodexRPC:
                 if self._bound_account is not None:
                     self._binding_failed = True
                     raise RuntimeError('bound Codex account changed')
+            if message.get('method') == 'account/chatgptAuthTokens/refresh' and self._initial_owner_account is not None:
+                params = message.get('params')
+                request_id = message.get('id')
+                valid_id = type(request_id) is int or (isinstance(request_id, str) and 0 < len(request_id) <= 256)
+                if (valid_id and isinstance(params, dict) and params.get('reason') == 'unauthorized'
+                        and params.get('previousAccountId') in (None, self._initial_owner_account)):
+                    # No execution has started and no account is bound yet.
+                    # The owner client closes this server, renews that rejected
+                    # generation once, then independently pins a new server.
+                    raise InitialTokenRejected(min(deadline, received_at + RENEWAL_REPLY_SECONDS))
+                raise RuntimeError('invalid initial owner renewal request')
             if message.get('method') == 'account/chatgptAuthTokens/refresh' and self._bound_account is not None:
                 # Reserve one second of the provider's approximate 10-second
                 # deadline, including time already spent in our inbound queue.
@@ -371,7 +389,7 @@ class CodexRPC:
                            'workspaceRouting': observation.get('workspaceRouting')},
                           sort_keys=True, separators=(',', ':'))
 
-    def pin_external_account(self, access_token, account_id, renewal_source=None, deadline=None):
+    def pin_external_account(self, access_token, account_id, renewal_source=None, deadline=None, allow_initial_rejection=False):
         """Pin this process's auth in memory and authenticate its allowance read.
 
         The caller owns token lifecycle and must supply an isolated Codex home.
@@ -386,6 +404,10 @@ class CodexRPC:
                 raise ValueError('missing Codex account credential')
             if renewal_source is not None and (not callable(renewal_source) or not self.ephemeral_auth):
                 raise ValueError('renewal requires an ephemeral owner-bound client')
+            if allow_initial_rejection:
+                if renewal_source is None or not self.ephemeral_auth:
+                    raise ValueError('initial recovery requires an owner source')
+                self._initial_owner_account = account_id
             result = self.call('account/login/start', {
                 'type': 'chatgptAuthTokens', 'accessToken': access_token, 'chatgptAccountId': account_id}, deadline=deadline)
             if result.get('type') != 'chatgptAuthTokens':
@@ -407,6 +429,8 @@ class CodexRPC:
             # A failed pin cannot be followed by a turn on a fallback account.
             self._binding_failed = True
             raise
+        finally:
+            self._initial_owner_account = None
 
     def validate_account_binding(self):
         if self._bound_account is None:

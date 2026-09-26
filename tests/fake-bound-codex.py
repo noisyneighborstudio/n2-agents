@@ -9,6 +9,7 @@ import time
 mode = os.environ.get('N2_BOUND_FIXTURE', '')
 trace = Path(os.environ['N2_BOUND_TRACE'])
 renewed = False
+current_token = None
 
 def send(value):
     print(json.dumps(value), flush=True)
@@ -26,6 +27,7 @@ for line in sys.stdin:
         continue
     result = {}
     if method == 'account/login/start':
+        current_token = request['params']['accessToken']
         result = {'type': 'chatgptAuthTokens'}
         notice('account/updated', {'authMode': 'chatgptAuthTokens'})
     elif method == 'config/read':
@@ -34,7 +36,12 @@ for line in sys.stdin:
         result = {'account': {'type': 'chatgpt', 'email': 'fixture@example.invalid'},
                   'workspaceRouting': {'chatgptAccountId': 'workspace', 'backendOrigin': 'https://chatgpt.com'}}
         if renewed and mode == 'renew-mid-change': result['account']['email'] = 'changed@example.invalid'
+        if mode == 'initial-expired-wrong-account' and current_token == 'renewed-token': result['account']['email'] = 'changed@example.invalid'
     elif method == 'account/rateLimits/read':
+        if mode.startswith('initial-expired') and current_token == 'original-secret':
+            send({'id':900,'method':'account/chatgptAuthTokens/refresh',
+                  'params':{'reason':'unauthorized','previousAccountId':'workspace'}})
+            continue
         result = {'accountId': 'workspace', 'rateLimits': {'primary': {'usedPercent': 12}}}
     elif method == 'thread/start':
         params = request['params']

@@ -573,3 +573,50 @@ endpoint framing guards additionally passed the focused source/package endpoint
 suite after they were added during that broad run. This is checkpoint evidence,
 not a claim that the final PR candidate has completed acceptance. Scoped reviews
 of the public binding module are clear after the profile-directory fix.
+
+### Owner-backed bound execution
+
+The session client now freezes a public ownership record, pins the measured
+account and tracks one token-generation chain. Remote fetch/renewal uses signed
+private fleet transport; local owners use the same private grant lock and native
+renewal path. Failures invalidate the session instead of selecting another grant.
+The existing RPC verification authenticates every token before execution.
+
+`agents run --bound-account` forwards its root and selected profile. A present
+ownership record requires ready, nonduplicate profile metadata and the expected
+account. That route ignores legacy credentials and supplies the pinned renewal
+callback. Invalid records fail without a legacy fallback. Profiles without a
+record retain their existing route until explicit migration.
+
+Seven integration tests pass from source and packaged helpers, including the
+actual bound CLI and a full mid-turn renewal through signed dispatch with an
+unchanged account/usage receipt. Tests preserve deliberately invalid legacy
+credentials, reject account mismatch and malformed records, and cover a timeout
+race. The 31 protocol and 12 existing bound-runner tests also pass. The ad-hoc QA
+build and helper/CLI byte parity pass; packaged fixtures omit the QA root marker
+and use disposable HOME/profile roots. Registration, migration, owner-backed
+measurement and general unbound CLI/T3 routes remain required.
+
+Owner-backed measurement is now connected to the same resolver and token client
+as bound execution. Fourteen integration tests cover both flows, including
+initial token expiry after idle time, exactly one renewal followed by reuse,
+failed replacement verification without a refresh loop, and zero model turns
+when a replacement authenticates to the wrong account. Denied owner access,
+wrong bindings and URL overrides expose no headroom. The journal and native UI
+retain an explicit owner-unavailable state; a native regression prevents that
+state from retaining an earlier healthy capacity gauge.
+
+Initial recovery handles only a valid native unauthorized-refresh request. It
+closes the unbound process and independently authenticates a replacement under
+the original deadline before publishing usage or starting execution. Registration,
+migration, general unbound CLI/T3 routes and live provider acceptance remain
+required. These tests use synthetic providers and disposable fleet identities.
+
+The combined execution/measurement checkpoint passes all 14 integration tests
+from source and packaged helpers with byte parity. The consolidated usage suite
+passes native freshness/restriction/failure checks, 31 RPC tests, 12 legacy bound
+runner tests, actual loop launch/journal/crash/cancellation checks, 27 usage
+reader tests, 26 journal tests, signed paginated exchange of 8,106 restrictions,
+enrollment identity continuity and task/slot parsing. The QA build passes.
+Independent correctness/security reviews are clear after the initial-expiry fix.
+No app was installed and no live provider renewal was performed.

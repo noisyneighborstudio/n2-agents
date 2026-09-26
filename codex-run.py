@@ -68,24 +68,30 @@ def failure_message(code):
     return 'Codex turn did not complete'
 
 
-def run(config, expected_account, effort, prompt, timeout=3600, executable='codex', own_process_group=True, execution_home=None):
+def run(config, expected_account, effort, prompt, timeout=3600, executable='codex', own_process_group=True, execution_home=None, owner_root=None, profile_name=None):
     if not re.fullmatch('[0-9a-f]{64}', expected_account):
         raise ValueError('invalid expected account')
     source = Path(config).resolve(strict=True)
-    credential = source / 'auth.json'
-    if not credential.is_file() or credential.stat().st_size > 2 * 1024 * 1024:
-        raise ValueError('Codex file credential unavailable')
-    with credential.open('rb') as stream:
-        raw = stream.read(2 * 1024 * 1024 + 1)
-    if len(raw) > 2 * 1024 * 1024:
-        raise ValueError('Codex credential file grew during read')
-    saved = json.loads(raw)
-    tokens = saved.get('tokens') if isinstance(saved, dict) else None
-    if not isinstance(tokens, dict):
-        raise ValueError('Codex subscription credential unavailable')
-    token, account = tokens.get('access_token'), tokens.get('account_id')
-    if not isinstance(token, str) or not token or not isinstance(account, str) or not account:
-        raise ValueError('Codex subscription credential unavailable')
+    owner_client = None
+    marker = source / '.n2-owner.json'
+    if marker.exists() or marker.is_symlink():
+        broker = load('n2_owner_client', 'fleet-auth-client.py')
+        owner_client = broker.for_profile(owner_root, source, profile_name, expected_account)
+    else:
+        credential = source / 'auth.json'
+        if not credential.is_file() or credential.stat().st_size > 2 * 1024 * 1024:
+            raise ValueError('Codex file credential unavailable')
+        with credential.open('rb') as stream:
+            raw = stream.read(2 * 1024 * 1024 + 1)
+        if len(raw) > 2 * 1024 * 1024:
+            raise ValueError('Codex credential file grew during read')
+        saved = json.loads(raw)
+        tokens = saved.get('tokens') if isinstance(saved, dict) else None
+        if not isinstance(tokens, dict):
+            raise ValueError('Codex subscription credential unavailable')
+        token, account = tokens.get('access_token'), tokens.get('account_id')
+        if not isinstance(token, str) or not token or not isinstance(account, str) or not account:
+            raise ValueError('Codex subscription credential unavailable')
     rpc = load('n2_codex_rpc', 'codex-rpc.py')
     usage = load('n2_usage', 'usage.py')
     if execution_home is not None:
@@ -98,9 +104,15 @@ def run(config, expected_account, effort, prompt, timeout=3600, executable='code
     with context as directory:
         home = Path(directory)
         prepare_home(source, home)
-        with rpc.CodexRPC(str(home), os.getcwd(), executable=executable, ephemeral_auth=True, own_process_group=own_process_group) as client:
-            client.initialize()
-            observation = client.pin_external_account(token, account)
+        with contextlib.ExitStack() as stack:
+            if owner_client:
+                client, observation = stack.enter_context(owner_client.connection(str(home), os.getcwd(),
+                    time.monotonic()+20, executable=executable, own_process_group=own_process_group))
+            else:
+                client = stack.enter_context(rpc.CodexRPC(str(home), os.getcwd(), executable=executable,
+                    ephemeral_auth=True, own_process_group=own_process_group))
+                client.initialize()
+                observation = client.pin_external_account(token, account)
             identity = usage.details('codex', observation)['identity']
             if identity.get('status') != 'verified' or identity.get('accountHash') != expected_account:
                 raise RuntimeError('selected Codex account changed before execution')
@@ -130,6 +142,8 @@ def main():
     parser.add_argument('--expected-account', required=True)
     parser.add_argument('--shared-process-group', action='store_true')
     parser.add_argument('--execution-home')
+    parser.add_argument('--owner-root')
+    parser.add_argument('--profile-name')
     parser.add_argument('--effort', choices=('low', 'medium', 'high'), default='medium')
     args = parser.parse_args()
     def interrupted(signum, frame):
@@ -149,7 +163,7 @@ def main():
         prompt = sys.stdin.read(1024 * 1024 + 1)
         if not prompt or len(prompt.encode()) > 1024 * 1024:
             raise ValueError('invalid prompt size')
-        return run(args.config, args.expected_account, args.effort, prompt, own_process_group=not args.shared_process_group, execution_home=args.execution_home)
+        return run(args.config, args.expected_account, args.effort, prompt, own_process_group=not args.shared_process_group, execution_home=args.execution_home, owner_root=args.owner_root, profile_name=args.profile_name)
     except Exception as error:
         # Provider/configuration exceptions may contain secrets. Only a fixed
         # diagnostic crosses stdout/stderr; never emit a guessed account receipt.

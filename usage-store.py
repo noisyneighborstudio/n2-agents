@@ -15,7 +15,7 @@ import uuid
 MAX_BATCH = 1000
 MAX_BYTES = 2 * 1024 * 1024
 STATUSES = {'ok', 'restricted', 'no-token', 'stale-token', 'fetch-error', 'rate-limited',
-            'no-usage-api', 'shared-login', 'credential-override', 'credential-store-unavailable', 'execution-failed'}
+            'no-usage-api', 'shared-login', 'credential-override', 'credential-store-unavailable', 'owner-unavailable', 'execution-failed'}
 
 
 def canonical(value):

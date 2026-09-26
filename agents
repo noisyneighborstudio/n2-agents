@@ -626,9 +626,9 @@ cmd_run() {
     remember_slot "$name" "$v"
     if [ "$bound_group" = 1 ]; then
       [ -n "$bound_home" ] || die "bound process groups require an owner-managed execution home"
-      exec /usr/bin/python3 "$scripts_dir/codex-run.py" --config "$cfg" --expected-account "$bound_account" --effort "$bound_effort" --shared-process-group --execution-home "$bound_home"
+      exec /usr/bin/python3 "$scripts_dir/codex-run.py" --config "$cfg" --owner-root "$root" --profile-name "$name" --expected-account "$bound_account" --effort "$bound_effort" --shared-process-group --execution-home "$bound_home"
     fi
-    exec /usr/bin/python3 "$scripts_dir/codex-run.py" --config "$cfg" --expected-account "$bound_account" --effort "$bound_effort"
+    exec /usr/bin/python3 "$scripts_dir/codex-run.py" --config "$cfg" --owner-root "$root" --profile-name "$name" --expected-account "$bound_account" --effort "$bound_effort"
   fi
   remember_slot "$name" "$v"
 

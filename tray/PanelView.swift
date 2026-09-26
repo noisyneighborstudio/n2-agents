@@ -669,6 +669,7 @@ private struct SlotRow: View {
         case .restricted: return "provider restriction"
         case .credentialOverride: return "credential override"
         case .credentialStoreUnavailable: return "credential store locked"
+        case .ownerUnavailable: return "account owner unavailable"
         case .sharedLogin: return "shared login"
         default:           return "no reading"
         }

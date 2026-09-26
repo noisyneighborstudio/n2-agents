@@ -374,3 +374,51 @@ user, provided group/other write bits are clear. The record itself remains
 mode-0600. Symlink slot directories are refused by this layer; adoption must
 resolve and validate the local route before registration. An actual `agents new`
 fixture verifies compatibility without changing profile permissions.
+
+## Session-pinned owner client and bound execution
+
+`fleet-auth-client.py` freezes the public record for one execution session and
+checks it against the selected profile UUID and expected measured account hash.
+Remote owners use the signed private SSH transport; a local owner uses the same
+private grant lock and native renewal checks without an SSH hop. Both paths pin
+the ownership generation and track the returned token generation. Renewal sends
+the generation the execution process rejected, so concurrent fleet clients can
+reuse one verified replacement.
+
+The client returns only access-token/account-ID pairs in memory. It rejects an
+unexpected account, unchanged generation, expired deadline or changed requester
+identity. Failure invalidates the client session, including a timed-out concurrent
+request. A later edit to the profile record does not retarget an existing session.
+Provider verification remains mandatory in the bound RPC runner for initial and
+replacement tokens.
+
+`agents run --bound-account` now forwards its selected root and profile name.
+When the slot contains an ownership record, `codex-run.py` requires ready,
+nonduplicate profile metadata, validates the record, fetches from the pinned
+owner and supplies the renewal callback to its ephemeral execution process.
+It never reads legacy `auth.json` on that path. Malformed or dangling ownership
+records fail instead of falling back. Slots with no ownership record retain
+the existing legacy execution path until explicit migration.
+
+Synthetic integration tests cover local and remote renewal, record pinning,
+wrong-account rejection, timeout races and malformed records. A complete bound
+turn and the actual `agents run` command renew through signed fleet dispatch,
+preserve the verified account and produce the same usage receipt. These fixtures
+leave deliberately invalid legacy credentials untouched. Registration, migration,
+owner-backed measurements and general unbound CLI/T3 routes remain required.
+
+Owner-backed usage now resolves the same profile record as bound execution,
+fetches from that owner and independently authenticates the exact token/account
+before publishing allowance windows. An unavailable owner or mismatched account
+produces `owner-unavailable`, unknown identity and no headroom. The journal
+retains that status and the native UI labels it `account owner unavailable`.
+A legacy usage-URL override cannot bypass an ownership record.
+
+A token may expire while no client is running. During the first pin, a valid
+native `account/chatgptAuthTokens/refresh` request with reason `unauthorized` and
+the expected workspace triggers one bounded recovery. The client closes that
+unbound process, renews its rejected generation through the owner, then pins a
+fresh ephemeral process. The expected account hash must verify before any usage
+or executable connection is returned. The inbound request's age and original
+deadline bound renewal. An invalid request, unusable replacement or second
+initial rejection fails; it never loops refresh attempts or starts a turn first.

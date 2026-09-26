@@ -141,6 +141,32 @@ def codex_native(cfg):
             return client.read_usage()
 
 
+class OwnerUnavailable(RuntimeError):
+    pass
+
+
+def codex_owner_usage(name, cfg):
+    """Measure the same pinned grant used by owner-backed execution."""
+    try:
+        def load_owner_module(name, file):
+            spec=importlib.util.spec_from_file_location(name,os.path.join(os.path.dirname(__file__),file))
+            module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
+        broker=load_owner_module('n2_usage_owner_client','fleet-auth-client.py')
+        runner=load_owner_module('n2_usage_owner_runner','codex-run.py')
+        client=broker.for_profile(os.environ.get('N2_USAGE_ROOT'),cfg,name)
+        deadline=time.monotonic()+20
+        with tempfile.TemporaryDirectory(prefix='n2-owner-usage-') as directory:
+            from pathlib import Path
+            runner.prepare_home(Path(cfg),Path(directory))
+            with client.connection(directory,directory,deadline) as (provider,observation):
+                identity=details('codex',observation)['identity']
+                if identity.get('status')!='verified' or identity.get('accountHash')!=client.record['accountHash']:
+                    raise ValueError('owner measurement account mismatch')
+                return observation
+    except Exception:
+        raise OwnerUnavailable('owner-backed usage unavailable') from None
+
+
 def number(value):
     import math
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -251,6 +277,10 @@ def codex_native_row(data):
 
 
 def codex(name, cfg):
+    if os.path.lexists(os.path.join(cfg,'.n2-owner.json')):
+        if os.environ.get('N2_CODEX_USAGE_URL'):
+            return 'credential-override', None
+        return 'ok', lambda: codex_owner_usage(name,cfg)
     if not os.environ.get('N2_CODEX_USAGE_URL'):
         return 'ok', lambda: codex_native(cfg)
     # An API-key login has no plan quota to read, and no tokens.
@@ -418,6 +448,8 @@ def main():
                     # A healthy general window cannot hide an unreadable model
                     # limit. Apply the same rule to JSON and legacy consumers.
                     status = 'fetch-error'
+        except OwnerUnavailable:
+            status = 'owner-unavailable'
         except urllib.error.HTTPError as e:
             status = {429: 'rate-limited', 401: 'stale-token', 403: 'stale-token'}.get(e.code, 'fetch-error')
         except Exception:

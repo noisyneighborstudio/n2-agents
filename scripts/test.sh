@@ -755,5 +755,6 @@ python3 scripts/test-fleet-auth-owner.py
 python3 scripts/test-fleet-auth-native.py
 python3 scripts/test-fleet-auth-server.py
 python3 scripts/test-fleet-auth-binding.py
+python3 scripts/test-fleet-auth-client.py
 
 echo "All tests passed"

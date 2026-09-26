@@ -45,6 +45,17 @@ import Foundation
         func read(_ value: [String: Any], provider: String = "claude") -> Usage {
             Usage.parseJSON(json(value), provider: provider)["Default"]!
         }
+        var ownerFailure = record
+        ownerFailure["provider"] = "codex"
+        ownerFailure["status"] = "owner-unavailable"
+        ownerFailure["windows"] = []
+        ownerFailure["identity"] = ["status": "unknown"]
+        let ownerUnavailable = read(ownerFailure, provider: "codex")
+        check(ownerUnavailable.note == .ownerUnavailable && ownerUnavailable.used == nil,
+              "owner failure has an explicit unavailable state")
+        let afterOwnerFailure = Usage.merge(["Default": fresh], ["Default": ownerUnavailable])["Default"]!
+        check(afterOwnerFailure.note == .ownerUnavailable && afterOwnerFailure.used == nil && afterOwnerFailure.binding == nil,
+              "owner failure cannot retain a healthy capacity gauge")
         let structured = read(record)
         check(structured.windows?.count == 4 && structured.used == 98 && structured.maxed,
               "model-specific buckets must constrain capacity")
