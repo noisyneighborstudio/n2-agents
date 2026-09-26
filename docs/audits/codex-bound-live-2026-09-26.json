@@ -1,0 +1,28 @@
+{
+  "probe": "native-bound-turn-live",
+  "modelTurnsStarted": 1,
+  "status": "completed",
+  "recordedAt": "2026-09-26T10:08:22.777123+00:00",
+  "providerCLI": "codex-cli 0.157.1",
+  "identity": {
+    "status": "verified",
+    "accountHash": "2ddea33d1f4be9e891cdb1032ff57c19840d359bd5aaf1e21f9d8a48b5ea87af"
+  },
+  "responseMatched": true,
+  "model": "gpt-6-astra",
+  "tokens": {
+    "inputTokens": 14696,
+    "cachedInputTokens": 12160,
+    "outputTokens": 11,
+    "totalTokens": 14707
+  },
+  "sessionPresent": true,
+  "turnPresent": true,
+  "observedItemTypes": [
+    "agentMessage",
+    "userMessage"
+  ],
+  "isolatedAuthFileCreated": false,
+  "canonicalCredentialUnchanged": true,
+  "scope": "One live minimal turn through production CodexRPC.run_bound_turn in an isolated empty home. Existing access token supplied in memory. Account/session and provider-reported token evidence; not independent billing reconciliation or full profile resource parity."
+}

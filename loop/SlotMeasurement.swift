@@ -9,6 +9,7 @@ struct SlotMeasurement {
     let status: String
     let used: Double?
     let resets: Date?
+    var accountHash: String? = nil
 
     static func date(_ value: Any?) -> Date? {
         if let n = value as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(), n.doubleValue.isFinite {
@@ -77,8 +78,14 @@ struct SlotMeasurement {
             + (status == "restricted" && restrictions.isEmpty ? [nil] : [])
         let resets = !resetEvidence.isEmpty && resetEvidence.allSatisfy { $0 != nil } && !incomplete
             ? resetEvidence.compactMap { $0 }.max() : nil
-        return SlotMeasurement(provider: provider, profile: profile,
+        var measurement = SlotMeasurement(provider: provider, profile: profile,
                                status: restricted ? "restricted" : (incomplete || readings.isEmpty ? "fetch-error" : (!full.isEmpty ? "local-reserve" : "ok")),
                                used: readings.map { $0.0 }.max(), resets: resets)
+        if let identity = value["identity"] as? [String: Any], identity["status"] as? String == "verified",
+           let hash = identity["accountHash"] as? String,
+           hash.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil {
+            measurement.accountHash = hash
+        }
+        return measurement
     }
 }

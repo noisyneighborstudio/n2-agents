@@ -14,6 +14,7 @@ struct Slot {
     var quota: String
     /// When a full window frees up, if the lab says.
     var resets: Date? = nil
+    var accountHash: String? = nil
     var key: String { "\(vendor)|\(profile)" }
 }
 
@@ -83,11 +84,13 @@ final class SlotSource {
                     slots[i].quota = "fetch-error"
                     slots[i].used = nil
                     slots[i].resets = nil
+                    slots[i].accountHash = nil
                     continue
                 }
                 slots[i].quota = measurement.status
                 slots[i].used = measurement.used
                 slots[i].resets = measurement.resets
+                slots[i].accountHash = measurement.accountHash
             }
         }
         cached = (Date(), slots)
@@ -226,7 +229,7 @@ func recordUsageOutcome(cli: String, slot: String, outcome: String, task: String
     let reset = outcome == "quota" ? Failure.reportedResetTime(in: failureText, now: Date()) : nil
     let value: [String: Any] = [
         "status": outcome == "quota" ? "restricted" : (outcome == "ok" ? "ok" : "execution-failed"), "source": "n2-loop",
-        "identity": ["status": "unknown"], "session": usage.session as Any? ?? NSNull(), "model": usage.model as Any? ?? NSNull(),
+        "identity": usage.accountHash.map { ["status": "verified", "accountHash": $0] } ?? ["status": "unknown"], "session": usage.session as Any? ?? NSNull(), "model": usage.model as Any? ?? NSNull(),
         "requestedModel": requestedModel, "usageScope": usage.scope,
         "startedAt": startedAt?.timeIntervalSince1970 as Any? ?? NSNull(),
         "modelUsage": usage.models.mapValues { $0.counts },

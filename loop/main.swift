@@ -98,7 +98,9 @@ func agentsCLI() throws -> String {
 func planOnce(_ s: inout RunState, cli: String, source: SlotSource, cwd: String, errors: [String]) throws -> [String: Any] {
     var avoid = Set<String>()
     var failedPlans = 0
+    let cancellationFile = Store.standard().pauseFile(s.id)
     while failedPlans < 4 {
+        guard !FileManager.default.fileExists(atPath: cancellationFile) else { throw LoopError("planning cancelled") }
         guard let slot = pick(try source.slots(), effort: .deep, cooldowns: s.cooldowns, busy: [:], avoidSlots: avoid) else {
             throw LoopError("no signed-in slot with quota left to plan with (see: agents list, agents best)")
         }
@@ -109,11 +111,23 @@ func planOnce(_ s: inout RunState, cli: String, source: SlotSource, cwd: String,
         let out = try runTurn(TurnRequest(cli: cli, slot: slot, effort: .deep, cwd: cwd,
                                           prompt: plannerPrompt(goal: s.plan.goal, sources: s.sources, answers: s.questions,
                                                                 budgetMs: s.budgetMs, errors: errors),
-                                          files: Store.standard().turnFiles(s.id, id), timeout: Limits.review, detach: false),
-                              abort: Flag())
+                                          files: Store.standard().turnFiles(s.id, id), timeout: Limits.review, detach: false, cancellationFile: cancellationFile),
+                              abort: Flag()) { pid in
+            guard !FileManager.default.fileExists(atPath: cancellationFile) else { throw LoopError("planning cancelled") }
+            if slot.vendor == "codex", slot.accountHash != nil {
+                s.turns[s.turns.count - 1].pgid = pid
+                try Store.standard().save(s)
+            }
+        }
         s.usedMs += Int(out.seconds * 1000)
         let i = s.turns.count - 1
         s.turns[i].endedAt = Date()
+        if out.aborted || FileManager.default.fileExists(atPath: cancellationFile) {
+            s.turns[i].outcome = "aborted"
+            s.reason = "planning stopped; the draft still needs a valid plan and approval"
+            try Store.standard().save(s)
+            throw LoopError("planning cancelled")
+        }
         if out.exit == 0, let report = parseReport(out.stdout) {
             s.turns[i].outcome = "ok"
             recordUsageOutcome(cli: cli, slot: slot.key, outcome: "ok", task: "\(s.id)/\(id)", effort: .deep, usage: out.usage, failureText: out.tail, startedAt: s.turns[i].startedAt)
@@ -234,6 +248,11 @@ func newRun(_ a: Args, store: Store) throws -> RunState {
 /// Plan in a throwaway worktree of the starting commit: planners read, and
 /// the user's checkout is never where an agent runs.
 func planRun(_ s: inout RunState, store: Store, cli: String) throws {
+    guard let lock = store.lock(s.id) else { throw LoopError("run already has an active planner or controller") }
+    defer {
+        try? FileManager.default.removeItem(atPath: store.pauseFile(s.id))
+        flock(lock, LOCK_UN); close(lock)
+    }
     let dir = store.dir(s.id) + "/plan"
     _ = try gitOrThrow(s.repo, ["worktree", "add", "--detach", dir, s.baseCommit])
     defer { _ = git(s.repo, "worktree", "remove", "--force", dir) }
@@ -248,6 +267,9 @@ func planRun(_ s: inout RunState, store: Store, cli: String) throws {
 }
 
 func approveAndStart(_ s: inout RunState, store: Store, cli: String) throws {
+    guard !store.controllerRunning(s.id) else { throw LoopError("run already has an active planner or controller") }
+    recoverTurnProcesses(&s.turns, runId: s.id, store: store)
+    try? FileManager.default.removeItem(atPath: store.pauseFile(s.id))
     _ = try gitOrThrow(s.repo, ["branch", s.branch, s.baseCommit])
     _ = try gitOrThrow(s.repo, ["worktree", "add", store.dir(s.id) + "/integration", s.branch])
     s.status = .running
@@ -319,13 +341,20 @@ func main() throws {
     case "pause":
         let id = try store.resolve(a.positional.first)
         var s = try store.load(id)
-        guard [.running, .waiting].contains(s.status) else { throw LoopError("run \(s.shortId) is \(s.status.rawValue)") }
+        let unfinishedDraft = s.status == .draft && s.turns.contains { $0.endedAt == nil }
+        guard [.running, .waiting].contains(s.status) || unfinishedDraft else { throw LoopError("run \(s.shortId) is \(s.status.rawValue)") }
         if store.controllerRunning(id) {
             FileManager.default.createFile(atPath: store.pauseFile(id), contents: nil)
             print("pausing \(s.shortId): stopping running turns; their work stays in the worktrees…")
             while store.controllerRunning(id) { usleep(200_000) }
         } else {
-            s.pause("paused by you — resume with: agents loop resume \(s.shortId)")
+            recoverTurnProcesses(&s.turns, runId: s.id, store: store)
+            if unfinishedDraft {
+                s.reason = "planning stopped; the draft still needs a valid plan and approval"
+                s.log("planning-stopped", s.reason!)
+            } else {
+                s.pause("paused by you — resume with: agents loop resume \(s.shortId)")
+            }
             try store.save(s)
         }
         print(describeRun(try store.load(id), controllerAlive: false), terminator: "")

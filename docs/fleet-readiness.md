@@ -185,8 +185,8 @@ The installed Codex CLI's generated experimental schema includes
 external-token authentication. The ordinary schema omits the experimental
 routing field. The [official app-server documentation](https://learn.chatgpt.com/docs/app-server)
 describes externally supplied tokens and host-owned refresh; this is a possible
-binding mechanism, not an implemented N2 launch receipt. The current loop still
-executes a separate CLI process after measurement. Claude's
+binding mechanism, not an implemented N2 launch receipt. At that stage, the loop
+executed a separate CLI process after measurement. Claude's
 [documented authentication precedence](https://code.claude.com/docs/en/authentication)
 also permits project/settings and environment credentials to change the route.
 Execution identity must therefore remain explicitly unverified until the launch
@@ -203,8 +203,8 @@ reader loads its bundled RPC helper. Independent follow-up reviews are clear.
 The QA build was not installed. A live read through the refactored client kept
 both local Codex identities verified, with Default at 2% weekly and ExpoIO at
 100% with a provider restriction. This change establishes the shared connection
-code; replacing the loop's separate CLI launch and issuing execution account
-receipts are still required.
+code. The subsequent account-bound launch below replaces the separate launch
+for verified Codex file-credential slots; other providers still need binding.
 
 The shared client now has explicit external-token pinning and account validation.
 A failed pin disables further requests. Once bound, login/logout replacement is
@@ -229,8 +229,8 @@ This helper pins authentication only. The execution owner must enforce home
 isolation, validate project/provider routing and the selected profile revision,
 handle renewal for the same account, and bind session/token outcomes to the
 result. A notification not yet consumed cannot prevent an already-sent request.
-The loop still uses its separate CLI launch; execution integration and receipts
-remain unfinished. No merge, installation or deployment was performed.
+The subsequent bound-turn implementation connects this helper to the loop for
+verified Codex file-credential slots. Broader execution coverage remains open. No merge, installation or deployment was performed.
 
 
 Codex measurements now check effective provider configuration before and after
@@ -259,3 +259,74 @@ process/reader cleanup checks and bounded completion assertion. A fresh normal
 Default external-auth allowance read still verified its account and left the
 canonical credential file unchanged. These checks did not execute a model turn.
 The final full regression suite also passes.
+
+
+Verified Codex slots now use one account-bound native connection for execution.
+The loop carries the measured account hash into `agents run --bound-account`,
+which reads the selected file credential, creates a private execution home and
+pins external authentication with ephemeral credential storage. A different
+account or unsupported binding fails without launching through the legacy path.
+The selected configuration, `AGENTS.md`, `AGENTS.override.md` and managed config
+are copied privately; rules, skills and plugins retain their selected resource
+paths. Authentication storage, sessions and the whole home are never linked.
+
+The native thread must return the expected provider, working directory,
+`on-request` approvals, `auto_review` reviewer and workspace-write sandbox before
+any turn starts. Auth transitions and host approval requests fail closed. A
+terminal result is checked against the same process's account and route, then
+returns a session/account receipt and reported thread token totals. Model reroutes
+leave model attribution unknown. The loop requires exactly one matching receipt
+before accepting a successful bound turn; unbound provider output cannot claim
+one. Journal restrictions and token observations now carry this verified account.
+Missing token counts remain unknown. Non-Codex and unverified legacy executions
+remain unverified; they are not promoted using a cached measurement.
+
+Execution servers share the loop's tracked process group. The owner records a
+group marker before server admission, cleans descendants after wrapper exit and
+removes the private configuration home. Planner groups are persisted too. A
+close-on-exec planner lock and cancellation checks prevent a live draft pause
+from retrying another profile. Recovery can stop work after parent death using
+the state record or group marker; interrupted drafts still need a valid plan and
+approval before execution can resume.
+
+Verification includes nine subprocess runner tests, the 21 protocol tests,
+Swift launch-to-journal tests and three actual planner-process fixtures. These
+cover wrong account selection, permissions/provider mismatch, renewal requests,
+rejected host interaction, malformed counts, missing/duplicate/mismatched
+receipts, wrapper SIGKILL, parent SIGKILL, marker-only recovery and live pause
+with a second healthy profile. Scoped correctness and security reviews are
+clear. The [native preflight audit](audits/codex-bound-preflight-2026-09-26.json)
+used Codex 0.157.1 and reached the production bound-thread checks with the expected
+account and approval/sandbox settings. It intercepted `turn/start` before sending
+it, made no model turn, created no isolated auth file and left the canonical
+credential file unchanged. Synthetic counts do not prove live token accuracy.
+
+Remaining before readiness: same-account token renewal, keychain-only credential
+capture, complete resource parity including MCP authentication/hook trust,
+broader live lifecycle evidence, native denial reset propagation, stable fleet profile/revision bindings,
+Claude execution binding, and the other fleet acceptance items above. A live
+canonical-home authentication probe was rejected by automatic approval review
+because it might mutate persistent account state. The implementation and
+successful native preflight use an isolated home instead; no canonical-home
+mutation or credential refresh was performed. PR #26 remains subsequent work.
+
+
+Final regression and ad-hoc QA packaging pass for the bound-turn implementation.
+The built app's bundled helper completed a synthetic bound turn and returned the
+expected account receipt and token counts; its helper bytes match source. The
+app was not installed.
+
+Two controlled live checks now complement the fixtures. The
+[Default turn](audits/codex-bound-live-2026-09-26.json) completed with the expected
+fixed response on its verified account. Codex reported 14,696 input tokens,
+including 12,160 cached input tokens, and 11 output tokens, totaling 14,707. Only
+user and agent message items were observed. The
+[ExpoIO rejection](audits/codex-bound-restriction-2026-09-26.json) was attempted
+only after a fresh explicit restriction, then returned `usageLimitExceeded` on
+a different verified account. It reported no token totals, which remain unknown.
+Both checks used empty isolated homes and in-memory tokens, left canonical
+credential bytes unchanged and created no isolated auth file. These establish
+live success and rejection attribution through the native connection, not full
+fleet or T3 integration, resource parity, refresh behavior, or an independent
+reconciliation against provider billing. Rejection reset propagation still needs
+work; no reset time was invented for the native rejection.

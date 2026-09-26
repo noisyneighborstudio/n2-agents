@@ -4,11 +4,11 @@ import Foundation
     static func main() throws {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         func parse(windows: [[String: Any]], status: String = "ok", restrictions: [[String: Any]] = [],
-                   age: Double = 0, provider: String = "codex", display: [String: Any] = [:]) throws -> SlotMeasurement {
+                   age: Double = 0, provider: String = "codex", display: [String: Any] = [:], identity: [String: Any] = [:]) throws -> SlotMeasurement {
             let data = try JSONSerialization.data(withJSONObject: [
                 "schemaVersion": 1, "provider": provider, "profile": "Default", "status": status,
                 "observedAt": now.addingTimeInterval(-age).timeIntervalSince1970,
-                "windows": windows, "restrictions": restrictions, "display": display
+                "windows": windows, "restrictions": restrictions, "display": display, "identity": identity
             ])
             return SlotMeasurement.parse(String(decoding: data, as: UTF8.self), now: now)!
         }
@@ -49,6 +49,15 @@ import Foundation
         precondition(unexplained.resets == nil, "a restriction cannot borrow an unrelated window reset")
         precondition(SlotMeasurement.date("2027-01-15T08:00:00.123Z") != nil)
         precondition(SlotMeasurement.parse("not JSON", now: now) == nil)
+        let account = String(repeating: "a", count: 64)
+        let verified = try parse(windows: [healthy], identity: ["status": "verified", "accountHash": account])
+        precondition(verified.accountHash == account)
+        for identity: [String: Any] in [["status": "login-only", "accountHash": account], ["status": "verified", "accountHash": "short"], [:]] {
+            let unknown = try parse(windows: [healthy], identity: identity)
+            precondition(unknown.accountHash == nil)
+        }
+        let staleIdentity = try parse(windows: [healthy], age: 901, identity: ["status": "verified", "accountHash": account])
+        precondition(staleIdentity.accountHash == nil)
         print("Structured slot measurement tests passed")
     }
 }

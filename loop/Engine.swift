@@ -113,11 +113,7 @@ final class Controller {
         if !FileManager.default.fileExists(atPath: integration) {
             _ = try gitOrThrow(s.repo, ["worktree", "add", integration, s.branch])
         }
-        for i in s.turns.indices where s.turns[i].endedAt == nil {
-            if let g = s.turns[i].pgid, kill(-g, 0) == 0 { stop(group: g) }
-            s.turns[i].endedAt = Date()
-            s.turns[i].outcome = "interrupted"
-        }
+        recoverTurnProcesses(&s.turns, runId: s.id, store: store)
         for i in s.plan.chunks.indices where s.plan.chunks[i].status == .working {
             s.plan.chunks[i].status = .pending
         }

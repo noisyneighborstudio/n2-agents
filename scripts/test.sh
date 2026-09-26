@@ -746,5 +746,6 @@ wait_for DONE
 run_agents help | grep -Fq 'agents loop "goal"'
 
 sh scripts/test-usage.sh
+python3 scripts/test-bound-planner.py
 
 echo "All tests passed"

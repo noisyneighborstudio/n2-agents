@@ -27,6 +27,18 @@ import Foundation
         precondition(failure.text == "usage limit reached" && failure.usage.totalTokens == nil)
         let plain = AgentResult.parse("plain fixture report", vendor: "codex")
         precondition(plain.text == "plain fixture report" && plain.usage.totalTokens == nil)
+        let account = String(repeating: "a", count: 64)
+        let receipt = """
+        {"type":"n2.account.binding","identity":{"status":"verified","accountHash":"\(account)"},"session":"session-one","turn":"turn-one","usageScope":"provider-thread","model":"actual-model","tokens":{"inputTokens":100,"cachedInputTokens":80,"outputTokens":20,"totalTokens":120}}
+        """
+        let bound = AgentResult.parse(codex + "\n" + receipt, vendor: "codex", boundAccount: account)
+        precondition(bound.usage.accountHash == account && bound.usage.scope == "provider-thread")
+        precondition(bound.usage.model == "actual-model" && bound.usage.totalTokens == 120)
+        precondition(AgentResult.parse(codex + "\n" + receipt, vendor: "codex").usage.accountHash == nil, "legacy provider output cannot claim N2 binding")
+        precondition(AgentResult.parse(codex + "\n" + receipt, vendor: "codex", boundAccount: String(repeating: "b", count: 64)).usage.accountHash == nil)
+        precondition(AgentResult.parse(codex + "\n" + receipt + "\n" + receipt, vendor: "codex", boundAccount: account).usage.accountHash == nil, "duplicate receipt is ambiguous")
+        precondition(AgentResult.parse(receipt, vendor: "codex", boundAccount: account).usage.accountHash == nil, "receipt needs a matching completed invocation")
+        precondition(AgentResult.parse(codex + "\n" + receipt.replacingOccurrences(of: "session-one", with: "other"), vendor: "codex", boundAccount: account).usage.accountHash == nil)
         print("Task usage parsing tests passed")
     }
 }

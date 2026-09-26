@@ -5,6 +5,7 @@ import CoreFoundation
 /// inputTokens includes cached input; cached input is never added twice.
 struct TaskUsage {
     var scope = "unknown"
+    var accountHash: String? = nil
     var models: [String: TaskUsage] = [:]
     var session: String? = nil
     var model: String? = nil
@@ -47,7 +48,7 @@ struct AgentResult {
         return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
     }
 
-    static func parse(_ text: String, vendor: String) -> AgentResult {
+    static func parse(_ text: String, vendor: String, boundAccount: String? = nil) -> AgentResult {
         var result = AgentResult(text: text)
         if vendor == "claude", let value = object(text), value["type"] as? String == "result" {
             result.text = value["result"] as? String ?? (value["errors"] as? [String])?.joined(separator: "\n") ?? ""
@@ -94,6 +95,8 @@ struct AgentResult {
             }
         } else if vendor == "codex" {
             var recognized = false
+            var receipts: [[String: Any]] = []
+            var terminals = 0
             var finalText: String? = nil
             var errors: [String] = []
             for line in text.split(separator: "\n") {
@@ -107,7 +110,10 @@ struct AgentResult {
                     if let item = value["item"] as? [String: Any], item["type"] as? String == "agent_message" {
                         finalText = item["text"] as? String
                     }
+                case "n2.account.binding":
+                    receipts.append(value)
                 case "turn.completed":
+                    terminals += 1
                     recognized = true
                     result.usage.scope = "provider-turn"
                     if let usage = value["usage"] as? [String: Any] {
@@ -117,10 +123,28 @@ struct AgentResult {
                         result.usage.totalTokens = sum(result.usage.inputTokens, result.usage.outputTokens)
                     }
                 case "error", "turn.failed":
+                    if type == "turn.failed" { terminals += 1 }
                     recognized = true
                     if let error = value["error"] as? [String: Any], let message = error["message"] as? String { errors.append(message) }
                     else if let message = value["message"] as? String { errors.append(message) }
                 default: break
+                }
+            }
+            if let expected = boundAccount, expected.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
+               receipts.count == 1, terminals == 1, let receipt = receipts.first,
+               let identity = receipt["identity"] as? [String: Any], identity["status"] as? String == "verified",
+               identity["accountHash"] as? String == expected,
+               let session = result.usage.session, !session.isEmpty, receipt["session"] as? String == session,
+               let turn = receipt["turn"] as? String, !turn.isEmpty,
+               receipt["usageScope"] as? String == "provider-thread" {
+                result.usage.accountHash = expected
+                result.usage.scope = "provider-thread"
+                result.usage.model = receipt["model"] as? String
+                if let tokens = receipt["tokens"] as? [String: Any] {
+                    result.usage.inputTokens = count(tokens["inputTokens"])
+                    result.usage.outputTokens = count(tokens["outputTokens"])
+                    result.usage.cachedInputTokens = count(tokens["cachedInputTokens"])
+                    result.usage.totalTokens = count(tokens["totalTokens"])
                 }
             }
             if recognized { result.text = ([finalText].compactMap { $0 } + errors).joined(separator: "\n") }

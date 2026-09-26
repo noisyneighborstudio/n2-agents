@@ -554,7 +554,7 @@ session_vendor() {  # id, [profile]
 
 cmd_run() {
   usage="usage: agents run [Profile|--next|--best] [--vendor <v>] [--start-from-session=<id>] [args...]"
-  name="" sess="" rotate=0 best=0 vsel=""
+  name="" sess="" rotate=0 best=0 vsel="" bound_account="" bound_effort="medium" bound_group=0 bound_home="" bound_effort_set=0
   while [ $# -gt 0 ]; do
     case $1 in
       --next) rotate=1; shift ;;
@@ -562,10 +562,20 @@ cmd_run() {
       --vendor) vsel=${2:-}; shift 2 ;;
       --vendor=*) vsel=${1#--vendor=}; shift ;;
       --start-from-session=*) sess=${1#--start-from-session=}; shift ;;
+      --bound-home) bound_home=${2:-}; [ -n "$bound_home" ] || die "missing bound home"; shift 2 ;;
+      --bound-process-group) bound_group=1; shift ;;
+      --bound-account) bound_account=${2:-}; [ -n "$bound_account" ] || die "missing bound account"; shift 2 ;;
+      --bound-effort) bound_effort_set=1; bound_effort=${2:-}; [ -n "$bound_effort" ] || die "missing bound effort"; shift 2 ;;
       -*) break ;;  # remaining args belong to the agent CLI
       *) if [ -z "$name" ] && [ "$rotate" = 0 ] && [ "$best" = 0 ]; then name=$1; shift; else break; fi ;;
     esac
   done
+  if [ "$bound_group" = 1 ] || [ -n "$bound_home" ] || [ "$bound_effort_set" = 1 ]; then
+    [ -n "$bound_account" ] || die "bound execution options require --bound-account"
+  fi
+  if [ -n "$bound_home" ]; then
+    [ "$bound_group" = 1 ] || die "an owner-managed bound home requires --bound-process-group"
+  fi
   picks=$(( (rotate + best) + $( [ -n "$name" ] && echo 1 || echo 0 ) ))
   [ "$picks" -le 1 ] || die "$usage (pick at most one of a profile name, --next, --best)"
   if [ -n "$name" ]; then
@@ -609,6 +619,16 @@ cmd_run() {
   cfg=$(config_dir "$name" "$v")
   [ -d "$cfg" ] || die "profile '$name' has no $v slot — create it: agents new $name --vendors $v"
 
+  if [ -n "$bound_account" ]; then
+    [ "$v" = codex ] && [ -z "$sess" ] && [ $# -eq 0 ] || die "bound turns require Codex, a fresh session and no vendor arguments"
+    case "$bound_effort" in low|medium|high) ;; *) die "invalid bound effort" ;; esac
+    remember_slot "$name" "$v"
+    if [ "$bound_group" = 1 ]; then
+      [ -n "$bound_home" ] || die "bound process groups require an owner-managed execution home"
+      exec /usr/bin/python3 "$scripts_dir/codex-run.py" --config "$cfg" --expected-account "$bound_account" --effort "$bound_effort" --shared-process-group --execution-home "$bound_home"
+    fi
+    exec /usr/bin/python3 "$scripts_dir/codex-run.py" --config "$cfg" --expected-account "$bound_account" --effort "$bound_effort"
+  fi
   remember_slot "$name" "$v"
 
   announce_auth "$v" "$name" "$cfg" "${1:-}"

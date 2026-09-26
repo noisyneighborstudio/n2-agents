@@ -18,8 +18,9 @@ MAX_PENDING_MESSAGES = 128
 
 
 class CodexRPC:
-    def __init__(self, cfg, cwd, timeout=15, executable='codex'):
+    def __init__(self, cfg, cwd, timeout=15, executable='codex', ephemeral_auth=False, own_process_group=True):
         self.timeout = timeout
+        self.own_process_group = own_process_group
         self.cwd = os.path.abspath(cwd)
         self.messages = queue.Queue(maxsize=MAX_PENDING_MESSAGES)
         self.stopping = threading.Event()
@@ -31,10 +32,14 @@ class CodexRPC:
         self._binding_failed = False
         child_env = dict(os.environ, CODEX_HOME=cfg)
         self._custom_openai_endpoint = bool(child_env.get('OPENAI_BASE_URL'))
+        argv = [executable]
+        if ephemeral_auth:
+            argv += ['-c', 'cli_auth_credentials_store="ephemeral"']
+        argv += ['app-server']
         self.process = subprocess.Popen(
-            [executable, 'app-server'], cwd=cwd, env=child_env,
+            argv, cwd=cwd, env=child_env,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            start_new_session=True, bufsize=0)
+            start_new_session=own_process_group, bufsize=0)
         os.set_blocking(self.process.stdin.fileno(), False)
         os.set_blocking(self.process.stdout.fileno(), False)
         self.reader = threading.Thread(target=self._read, daemon=True)
@@ -269,8 +274,130 @@ class CodexRPC:
             self._binding_failed = True
             raise
 
+    def run_bound_turn(self, prompt, effort='medium', timeout=3600):
+        """Run one fresh thread on this connection's externally pinned account.
+
+        Approval review and workspace-write match the loop's --approve-for-me
+        mode. Unhandled server requests never grant permission. The caller owns
+        process cancellation and must not issue concurrent RPC calls.
+        """
+        if not isinstance(prompt, str) or not prompt or effort not in ('low', 'medium', 'high'):
+            raise ValueError('invalid bound turn input')
+        if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or not 0 < timeout <= 86400:
+            raise ValueError('invalid bound turn timeout')
+        self.validate_account_binding()
+        deadline = time.monotonic() + timeout
+        started = self.call('thread/start', {
+            'cwd': self.cwd, 'approvalPolicy': 'on-request',
+            'approvalsReviewer': 'auto_review', 'sandbox': 'workspace-write',
+            'ephemeral': True}, deadline=min(deadline, time.monotonic() + self.timeout))
+        thread = started.get('thread')
+        if (not isinstance(thread, dict) or not isinstance(thread.get('id'), str) or not thread['id']
+                or started.get('modelProvider') != 'openai'
+                or started.get('approvalsReviewer') != 'auto_review'
+                or started.get('approvalPolicy') != 'on-request'
+                or not isinstance(started.get('sandbox'), dict)
+                or started['sandbox'].get('type') != 'workspaceWrite'
+                or started.get('cwd') != self.cwd):
+            self._binding_failed = True
+            raise RuntimeError('Codex execution configuration does not match the bound request')
+        # Thread creation may resolve project settings or initiate auth changes.
+        self.validate_account_binding()
+        early = []
+        def buffer(message):
+            if len(early) >= MAX_PENDING_MESSAGES:
+                raise RuntimeError('too many events before Codex turn acknowledgement')
+            early.append(message)
+        reply = self.call('turn/start', {
+            'threadId': thread['id'], 'input': [{'type': 'text', 'text': prompt}],
+            'effort': effort}, deadline=min(deadline, time.monotonic() + self.timeout), on_notification=buffer)
+        turn = reply.get('turn')
+        if not isinstance(turn, dict) or not isinstance(turn.get('id'), str) or not turn['id']:
+            self._binding_failed = True
+            raise ValueError('invalid Codex turn acknowledgement')
+        result = {'threadId': thread['id'], 'turnId': turn['id'], 'model': started.get('model'),
+                  'text': '', 'tokens': None, 'status': None, 'errorCode': None}
+        def consume(message):
+            method = message.get('method')
+            if method is None:
+                return
+            if 'id' in message:
+                raise RuntimeError('action required: unexpected Codex server request')
+            params = message.get('params')
+            if not isinstance(params, dict) or params.get('threadId') != thread['id']:
+                return
+            if method == 'turn/completed':
+                completed = params.get('turn')
+                if not isinstance(completed, dict) or completed.get('id') != turn['id']:
+                    return
+                state = completed.get('status')
+                if state not in ('completed', 'failed', 'interrupted') or result['status'] is not None:
+                    raise ValueError('invalid Codex turn completion')
+                result['status'] = state
+                error = completed.get('error')
+                if isinstance(error, dict):
+                    result['errorCode'] = error.get('codexErrorInfo')
+            elif params.get('turnId') == turn['id']:
+                if method == 'item/completed':
+                    item = params.get('item')
+                    if isinstance(item, dict) and item.get('type') == 'agentMessage':
+                        text = item.get('text')
+                        if not isinstance(text, str) or len(text.encode()) > MAX_MESSAGE_BYTES:
+                            raise ValueError('invalid Codex agent message')
+                        result['text'] = text
+                elif method == 'thread/tokenUsage/updated':
+                    usage = params.get('tokenUsage')
+                    total = usage.get('total') if isinstance(usage, dict) else None
+                    if not isinstance(total, dict):
+                        raise ValueError('invalid Codex token usage')
+                    counts = {}
+                    for key in ('inputTokens', 'cachedInputTokens', 'outputTokens', 'totalTokens'):
+                        value = total.get(key)
+                        if type(value) is not int or value < 0 or value >= 2**63:
+                            raise ValueError('invalid Codex token count')
+                        counts[key] = value
+                    if counts['cachedInputTokens'] > counts['inputTokens']:
+                        raise ValueError('invalid Codex cached input count')
+                    result['tokens'] = counts
+                elif method == 'model/rerouted':
+                    # A rerouted thread may contain multiple models. Do not
+                    # assign all cumulative tokens to the initially chosen one.
+                    result['model'] = None
+        for message in early:
+            consume(message)
+        while result['status'] is None:
+            consume(self.receive(deadline))
+        # Drain prior notifications through a same-process account read. Never
+        # turn a pre-launch observation into a receipt after an auth transition.
+        after = self.call('account/read', {'refreshToken': False},
+                          deadline=min(deadline, time.monotonic() + self.timeout), on_notification=consume)
+        if (self._account_key(after) != self._bound_account
+                or self.account_generation != self._bound_generation
+                or self._subscription_provider(min(deadline, time.monotonic() + self.timeout)) != 'openai'):
+            self._binding_failed = True
+            raise RuntimeError('Codex account or route changed during execution')
+        return result
+
     def close(self):
         self.stopping.set()
+        if not self.own_process_group:
+            # Execution children share the loop's tracked group. The loop owns
+            # descendant cleanup, including when this wrapper is killed.
+            try:
+                self.process.terminate()
+            except ProcessLookupError:
+                pass
+            try:
+                self.process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=2)
+            self.reader.join(timeout=1)
+            self.process.stdin.close()
+            self.process.stdout.close()
+            if self.reader.is_alive():
+                raise RuntimeError('Codex protocol reader did not stop')
+            return
         try:
             # The leader may have exited while a child still owns its pipes.
             os.killpg(self.process.pid, signal.SIGTERM)

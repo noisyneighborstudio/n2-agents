@@ -9,6 +9,8 @@ swiftc "$work/Usage.swift" tests/UsageTests.swift -o "$work/test-usage"
 "$work/test-usage"
 
 python3 scripts/test-codex-rpc.py
+python3 scripts/test-codex-run.py
+sh scripts/test-bound-agent-run.sh
 python3 scripts/test-usage-reader.py
 
 python3 scripts/test-usage-store.py
