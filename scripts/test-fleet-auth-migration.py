@@ -50,7 +50,7 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(self.fixture.command('migration-prepare',*args),prepared)
         self.fixture.command('migration-prepare','--peer',peer,'--expected-revision','0'*64,success=False)
         remote('migration-abandon','--allow-legacy','--expected-revision',revision,success=False)
-        self.fixture.command('migration-abandon','--allow-legacy','--expected-revision',revision,success=False)
+        self.fixture.command('migration-abandon','--expected-revision',revision,success=False)
         for slot in (self.slot, peer_slot): self.assertEqual((slot/'auth.json').read_bytes(),secret)
         run = subprocess.run([str(ROOT/'agents'),'run','Renamed','--vendor','codex'],
             env=dict(os.environ,N2_AGENTS_ROOT=str(peer_root)),capture_output=True,text=True,timeout=5)
@@ -91,7 +91,7 @@ class MigrationTests(unittest.TestCase):
         self.assertTrue((peer_slot/migration.MARKER).exists())
         row=next(row for row in self.fixture.command('migration-status')['peers'] if row['peer']==peer)
         self.assertEqual(row['migrationBarrier'],'unacknowledged')
-        self.fixture.command('migration-abandon','--allow-legacy','--expected-revision',revision,success=False)
+        self.assertTrue(migration.receipt_path(self.root,revision,peer).with_suffix('.attempt.json').exists())
         (wire.bin/'ssh').write_text(ssh)
         self.assertEqual(self.fixture.command('migration-prepare','--peer',peer,'--expected-revision',revision)['status'],'peer-prepared')
 
@@ -113,6 +113,83 @@ class MigrationTests(unittest.TestCase):
         migration.begin(peer_root,'Work',peer_slot)
         with self.assertRaisesRegex(ValueError,'conflicting migration'):
             migration.accept(peer_root,'Work',peer_slot,wire.identities['owner'],payload)
+
+    def test_coordinated_abandon_waits_for_peers_and_rejects_late_prepare(self):
+        wire=self.fixture.fixture;peer_root=wire.base/'client';peer_slot=peer_root/'Work/codex'
+        peer_slot.mkdir(parents=True)
+        (peer_slot.parent/'.n2-profile').write_bytes((self.slot.parent/'.n2-profile').read_bytes())
+        peer=wire.identities['client'];coordinator=wire.identities['owner']
+        migration.permission(peer_root,self.fixture.profile,coordinator,True)
+        secret=b'preserved-through-coordinated-recovery'
+        for slot in (self.slot,peer_slot):(slot/'auth.json').write_bytes(secret)
+        ssh=fixture.fixture.SSH.replace("base/'owner'","base/'client'")
+        (wire.bin/'ssh').write_text(ssh)
+        initial=self.fixture.command('migration-begin');revision=initial['migrationRevision']
+        self.fixture.command('migration-prepare','--peer',peer,'--expected-revision',revision)
+        delayed=migration.request(self.root,'Work',self.slot,peer,revision)
+        payload=wire.base/'delayed-prepare';payload.write_bytes(migration.canonical(delayed))
+        args=('--allow-legacy','--expected-revision',revision)
+        (wire.bin/'ssh').write_text('#!/bin/sh\nexit 7\n')
+        self.fixture.command('migration-abandon',*args,success=False)
+        for slot in (self.slot,peer_slot):self.assertTrue((slot/migration.MARKER).exists())
+        self.fixture.command('migration-prepare','--peer',peer,'--expected-revision',revision,success=False)
+        # Recovery happens remotely, but the coordinator cannot observe the reply.
+        (wire.bin/'ssh').write_text(ssh.replace('sys.stdout.buffer.write(result.stdout);sys.exit(result.returncode)','sys.exit(7)'))
+        self.fixture.command('migration-abandon',*args,success=False)
+        self.assertTrue((self.slot/migration.MARKER).exists())
+        self.assertFalse((peer_slot/migration.MARKER).exists())
+        with self.assertRaises(ValueError):migration.accept(peer_root,'Work',peer_slot,coordinator,payload)
+        newer=migration.begin(peer_root,'Work',peer_slot)
+        (wire.bin/'ssh').write_text(ssh)
+        result=self.fixture.command('migration-abandon',*args)
+        self.assertEqual(result['status'],'legacy-unmanaged');self.assertFalse(result['migrationComplete'])
+        self.assertEqual(self.fixture.command('migration-abandon',*args),result)
+        self.assertFalse((self.slot/migration.MARKER).exists())
+        for slot in (self.slot,peer_slot):self.assertEqual((slot/'auth.json').read_bytes(),secret)
+        with self.assertRaises(ValueError):migration.accept(peer_root,'Work',peer_slot,coordinator,payload)
+        self.assertEqual(migration.inventory(peer_root,'Work',peer_slot)['migrationRevision'],newer['migrationRevision'])
+
+    def test_recovery_receipt_survives_coordinator_restart_and_peer_reuse(self):
+        wire=self.fixture.fixture;peer_root=wire.base/'client';peer_slot=peer_root/'Work/codex'
+        peer_slot.mkdir(parents=True)
+        (peer_slot.parent/'.n2-profile').write_bytes((self.slot.parent/'.n2-profile').read_bytes())
+        peer=wire.identities['client'];coordinator=wire.identities['owner']
+        migration.permission(peer_root,self.fixture.profile,coordinator,True)
+        (wire.bin/'ssh').write_text(fixture.fixture.SSH.replace("base/'owner'","base/'client'"))
+        revision=self.fixture.command('migration-begin')['migrationRevision']
+        self.fixture.command('migration-prepare','--peer',peer,'--expected-revision',revision)
+        request=migration.recovery_plan(self.root,'Work',self.slot,revision,True)[0]
+        payload=wire.base/'recovery-request';payload.write_bytes(migration.canonical(request))
+        original_sync=migration.manage.binding.owner.sync_directory
+        def crash(path):
+            if Path(path)==peer_root/'fleet/auth-migrations':raise OSError('crash after tombstone')
+            return original_sync(path)
+        with patch.object(migration.manage.binding.owner,'sync_directory',side_effect=crash):
+            with self.assertRaises(OSError):migration.recover(peer_root,'Work',peer_slot,coordinator,payload)
+        self.assertTrue((peer_slot/migration.MARKER).exists())
+        def crash_after_unlink(path):
+            if Path(path)==peer_slot:raise OSError('crash after unlink')
+            return original_sync(path)
+        with patch.object(migration.manage.binding.owner,'sync_directory',side_effect=crash_after_unlink) as synced:
+            with self.assertRaises(OSError):migration.recover(peer_root,'Work',peer_slot,coordinator,payload)
+        synced_paths=[call.args[0] for call in synced.call_args_list]
+        self.assertLess(synced_paths.index(peer_root/'fleet/auth-migrations'),synced_paths.index(peer_slot))
+        self.assertFalse((peer_slot/migration.MARKER).exists())
+        with patch.object(migration.manage.binding.owner,'sync_directory',wraps=original_sync) as synced:
+            reply=migration.recover(peer_root,'Work',peer_slot,coordinator,payload)
+        synced.assert_any_call(peer_slot)
+        response=wire.base/'recovery-response'
+        wrong=dict(reply,request=dict(request,requestId='00000000-0000-4000-8000-000000000001'))
+        response.write_bytes(migration.canonical(wrong))
+        with self.assertRaises(ValueError):migration.record_recovery(self.root,'Work',self.slot,peer,revision,response,payload)
+        response.write_bytes(migration.canonical(reply))
+        migration.record_recovery(self.root,'Work',self.slot,peer,revision,response,payload)
+        newer=migration.begin(peer_root,'Work',peer_slot)
+        self.assertEqual(migration.recover(peer_root,'Work',peer_slot,coordinator,payload),reply)
+        self.assertEqual(migration.inventory(peer_root,'Work',peer_slot)['migrationRevision'],newer['migrationRevision'])
+        (wire.bin/'ssh').write_text('#!/bin/sh\nexit 7\n')
+        result=self.fixture.command('migration-abandon','--allow-legacy','--expected-revision',revision)
+        self.assertEqual(result['status'],'legacy-unmanaged')
 
     def test_migration_consent_cannot_be_redirected_through_a_directory_symlink(self):
         wire=self.fixture.fixture;peer_root=wire.base/'client';peer_slot=peer_root/'Work/codex'

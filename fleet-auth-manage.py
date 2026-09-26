@@ -212,7 +212,7 @@ def validate_incoming(root,name,config,payload):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action',choices=('register','status','allow','deny','login','reconcile','retire','grants','allow-login','deny-login','validate-incoming','migration-status','migration-begin','migration-abandon','migration-allow','migration-deny','migration-request','migration-accept','migration-record'))
+    parser.add_argument('action',choices=('register','status','allow','deny','login','reconcile','retire','grants','allow-login','deny-login','validate-incoming','migration-status','migration-begin','migration-abandon','migration-allow','migration-deny','migration-request','migration-accept','migration-record','migration-recovery-plan','migration-recover','migration-recovery-record'))
     parser.add_argument('root');parser.add_argument('profile');parser.add_argument('config')
     parser.add_argument('--request')
     parser.add_argument('--allow-legacy',action='store_true')
@@ -220,8 +220,8 @@ def main():
     parser.add_argument('--login-operation');parser.add_argument('--expected-config');parser.add_argument('--payload');parser.add_argument('--grant');parser.add_argument('--peer');parser.add_argument('--expected-revision')
     args=parser.parse_args()
     try:
-        if args.request is not None and args.action!='migration-record':raise ValueError('unexpected request')
-        if args.allow_legacy and args.action!='migration-abandon':raise ValueError('invalid legacy recovery option')
+        if args.request is not None and args.action not in ('migration-record','migration-recovery-record'):raise ValueError('unexpected request')
+        if args.allow_legacy and args.action not in ('migration-abandon','migration-recovery-plan'):raise ValueError('invalid legacy recovery option')
         if args.login_operation is not None and args.action!='register':raise ValueError('invalid operation option')
         if args.expected_config is not None and (args.action!='register' or str(Path(args.config).resolve(strict=True))!=args.expected_config):
             raise ValueError('profile route changed')
@@ -234,7 +234,12 @@ def main():
         elif args.action=='validate-incoming':
             if not args.payload or args.grant or args.peer or args.expected_revision:raise ValueError('invalid payload options')
             result=validate_incoming(args.root,args.profile,args.config,args.payload)
-        elif args.action in ('migration-allow','migration-deny','migration-request','migration-accept','migration-record'):
+        elif args.action=='migration-recovery-plan':
+            if args.grant or args.peer or args.payload or args.request:raise ValueError('invalid recovery options')
+            migration=load('n2_migration','fleet-auth-migration.py')
+            result=[value for value in migration.recovery_plan(args.root,args.profile,args.config,args.expected_revision,args.allow_legacy)
+                    if not migration.recovery_confirmed(args.root,value)]
+        elif args.action in ('migration-allow','migration-deny','migration-request','migration-accept','migration-record','migration-recover','migration-recovery-record'):
             migration=load('n2_migration','fleet-auth-migration.py')
             if args.grant or not args.peer:raise ValueError('invalid migration peer')
             if args.action in ('migration-allow','migration-deny'):
@@ -243,12 +248,12 @@ def main():
             elif args.action=='migration-request':
                 if args.payload or args.request:raise ValueError('invalid request options')
                 result=migration.request(args.root,args.profile,args.config,args.peer,args.expected_revision)
-            elif args.action=='migration-accept':
+            elif args.action in ('migration-accept','migration-recover'):
                 if not args.payload or args.request or args.expected_revision:raise ValueError('invalid prepare options')
-                result=migration.accept(args.root,args.profile,args.config,args.peer,args.payload)
+                result=(migration.recover if args.action=='migration-recover' else migration.accept)(args.root,args.profile,args.config,args.peer,args.payload)
             else:
                 if not args.payload or not args.request:raise ValueError('missing acknowledgement')
-                result=migration.record(args.root,args.profile,args.config,args.peer,args.expected_revision,args.payload,args.request)
+                result=(migration.record_recovery if args.action=='migration-recovery-record' else migration.record)(args.root,args.profile,args.config,args.peer,args.expected_revision,args.payload,args.request)
         elif args.payload or args.request:raise ValueError('unexpected payload')
         elif args.action=='register':
             if not args.grant or args.peer:raise ValueError('register requires grant')

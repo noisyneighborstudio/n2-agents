@@ -14,6 +14,7 @@ python3 scripts/test-fleet-auth-transport.py \
 
 python3 scripts/test-fleet-auth-migration.py \
   MigrationTests.test_peer_preparation_requires_consent_and_preserves_legacy_bytes \
-  MigrationTests.test_lost_reply_keeps_coordinator_pending_without_fabricating_acknowledgement
+  MigrationTests.test_lost_reply_keeps_coordinator_pending_without_fabricating_acknowledgement \
+  MigrationTests.test_coordinated_abandon_waits_for_peers_and_rejects_late_prepare
 
 exec python3 scripts/test-codex-rpc.py ParentLifetimeTests

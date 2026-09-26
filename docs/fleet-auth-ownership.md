@@ -674,5 +674,22 @@ proof that unmanaged sessions stopped. Migration remains incomplete. Offline
 peers receive no fabricated acknowledgement. The coordinator persists attempt
 intent before dialing, so a lost response cannot permit abandonment that would
 strand a prepared peer. Retry reconciles the existing barrier and records its
-acknowledgement. Independent peer abandonment is refused; coordinated recovery,
-legacy grant retirement, keychain handling, and activation remain required.
+acknowledgement. Independent peer abandonment is refused. Legacy grant retirement,
+keychain handling, and activation remain required.
+
+
+## Recover a prepared migration
+
+On the coordinator, run `agents fleet auth migration-abandon Profile
+--allow-legacy --expected-revision REVISION`. This freezes the attempted-peer
+list and prevents further preparation for that revision. Every attempted peer
+must acknowledge signed recovery before the coordinator removes its own barrier.
+An unreachable peer or lost reply leaves the coordinator pending. Retry the same
+command to reconcile; validated receipts survive coordinator restart.
+
+A recipient durably records abandonment before removing its exact old barrier.
+That record rejects delayed preparation requests, including after restart.
+Retries can acknowledge completed recovery while preserving a newer migration or
+owner binding. A stale recovery without the matching record cannot remove newer
+state. Recovery preserves credential bytes and restores unmanaged legacy access;
+it does not establish credential retirement or completed owner migration.

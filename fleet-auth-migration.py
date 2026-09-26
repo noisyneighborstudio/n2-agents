@@ -170,8 +170,11 @@ def abandon(root,name,config,expected_revision,allow_legacy=False):
         raise ValueError('migration cannot be abandoned here')
     raw=manage.binding.owner.private_file(config/MARKER,4096)
     if hashlib.sha256(raw).hexdigest()!=expected_revision:raise ValueError('migration changed')
-    if any(path.name.startswith(expected_revision+'.') for path in entries(root/'fleet/auth-migrations')):
-        raise ValueError('prepared peers require coordinated recovery')
+    attempts=[path for path in entries(root/'fleet/auth-migrations') if path.name.startswith(expected_revision+'.') and path.name.endswith('.attempt.json')]
+    if attempts:
+        plan=recovery_plan(root,name,config,expected_revision,True)
+        for request_value in plan:
+            if not recovery_confirmed(root,request_value):raise ValueError('peer recovery is unconfirmed')
     record={'schemaVersion':1,'outcome':'abandoned','migration':current,'revision':expected_revision}
     if previous is not None and previous!=record:raise ValueError('migration history changed')
     if previous is None:
@@ -234,6 +237,7 @@ def request(root,name,config,peer,revision):
             or not manage.binding.owner.hash_value(revision)
             or hashlib.sha256(manage.binding.owner.private_file(Path(config)/MARKER,4096)).hexdigest()!=revision):
         raise ValueError('migration request changed')
+    if os.path.lexists(Path(root)/'fleet/auth-migrations'/(revision+'.abort.json')):raise ValueError('migration recovery has begun')
     value={'schemaVersion':1,'coordinator':me,'recipient':peer,'requestId':str(uuid.uuid4()),
            'revision':revision,'migration':current}
     # A lost reply can hide a successfully installed peer barrier. Retain intent
@@ -261,6 +265,7 @@ def accept(root,name,config,peer,payload):
     marker=validate_request(value,peer,manage.identity(root));profile_id=manage.profile(root,name)
     if marker['profileId']!=profile_id or not permission(root,profile_id,peer):raise ValueError('migration consent required')
     manage.binding.controlled_directory(config)
+    if os.path.lexists(recovery_tombstone(root,value['revision'])):raise ValueError('migration was abandoned')
     current=pending(root,name,config)
     if current:
         if current!=marker or hashlib.sha256(manage.binding.owner.private_file(config/MARKER,4096)).hexdigest()!=value['revision']:
@@ -296,6 +301,88 @@ def acknowledged(root,revision,peer,marker):
             or reply!={'request':expected,'result':{'status':'peer-prepared','peer':peer,'migrationComplete':False}}):
         raise ValueError('invalid migration acknowledgement')
     return True
+
+
+def public_private_json(path):
+    manage.binding.owner.private_directory(path.parent)
+    return manage.server.codec.decode_json(manage.binding.owner.private_file(path,65536))
+
+
+def recovery_plan(root,name,config,revision,allow_legacy=False):
+    root=Path(root);config=Path(config);current=pending(root,name,config)
+    if not allow_legacy or not manage.binding.owner.hash_value(revision):raise ValueError('explicit recovery required')
+    if current is None:
+        abandon(root,name,config,revision,True)
+        return []
+    me=manage.identity(root)
+    if (current.get('state')!='pending' or current['machine']!=me
+            or hashlib.sha256(manage.binding.owner.private_file(config/MARKER,4096)).hexdigest()!=revision
+            or os.path.lexists(config/manage.binding.MARKER) or manage.binding.conflicted(root,name)):
+        raise ValueError('migration changed')
+    directory=root/'fleet/auth-migrations';plan_path=directory/(revision+'.abort.json')
+    plan=[]
+    for path in entries(directory):
+        if not path.name.startswith(revision+'.') or not path.name.endswith('.attempt.json'):continue
+        value=public_private_json(path);peer=value['recipient']
+        validate_request(value,me,peer)
+        if (value['migration']!=current or value['revision']!=revision
+                or path!=receipt_path(root,revision,peer).with_suffix('.attempt.json')):raise ValueError('invalid participant')
+        plan.append(value)
+    if os.path.lexists(plan_path):
+        if public_private_json(plan_path)!=plan:raise ValueError('recovery participants changed')
+        manage.binding.owner.sync_directory(directory)
+    else:atomic(plan_path,plan)
+    return plan
+
+
+def recovery_tombstone(root,revision):
+    return Path(root)/'fleet/auth-migrations'/(revision+'.peer-abandoned.json')
+
+
+def recovery_reply(value):
+    return {'request':value,'result':{'status':'peer-abandoned','peer':value['recipient'],'migrationComplete':False}}
+
+
+def recover(root,name,config,peer,payload):
+    root=Path(root);config=Path(config);value=public_json(payload)
+    marker=validate_request(value,peer,manage.identity(root));profile_id=manage.profile(root,name)
+    if marker['profileId']!=profile_id:raise ValueError('profile changed')
+    manage.binding.controlled_directory(config)
+    current=pending(root,name,config);path=recovery_tombstone(root,value['revision'])
+    tombstone={'migration':marker,'revision':value['revision'],'outcome':'abandoned'}
+    previous=public_private_json(path) if os.path.lexists(path) else None
+    if previous is not None and previous!=tombstone:raise ValueError('invalid recovery history')
+    if previous is not None:manage.binding.owner.sync_directory(path.parent)
+    if previous is not None and current!=marker:
+        manage.binding.owner.sync_directory(config)
+        return recovery_reply(value)
+    if os.path.lexists(config/manage.binding.MARKER) or manage.binding.conflicted(root,name):raise ValueError('owner intent prevents recovery')
+    if current is not None:
+        if current!=marker or hashlib.sha256(manage.binding.owner.private_file(config/MARKER,4096)).hexdigest()!=value['revision']:
+            raise ValueError('conflicting migration')
+    elif previous is None and not permission(root,profile_id,peer):raise ValueError('migration consent required')
+    if previous is None:atomic(path,tombstone)
+    if current is not None:
+        os.unlink(config/MARKER);manage.binding.owner.sync_directory(config)
+    return recovery_reply(value)
+
+
+def recovery_confirmed(root,value):
+    receipt=receipt_path(root,value['revision'],value['recipient']).with_suffix('.recovered.json')
+    try:reply=public_private_json(receipt)
+    except FileNotFoundError:return False
+    if reply!=recovery_reply(value):raise ValueError('invalid recovery receipt')
+    manage.binding.owner.sync_directory(receipt.parent)
+    return True
+
+
+def record_recovery(root,name,config,peer,revision,payload,original):
+    expected=public_json(original);reply=public_json(payload)
+    plan=recovery_plan(root,name,config,revision,True)
+    if expected not in plan or expected['recipient']!=peer or reply!=recovery_reply(expected):
+        raise ValueError('wrong recovery acknowledgement')
+    atomic(receipt_path(root,revision,peer).with_suffix('.recovered.json'),reply)
+    return reply['result']
 
 
 if __name__=='__main__':
