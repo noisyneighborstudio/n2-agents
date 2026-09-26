@@ -24,6 +24,8 @@ if mode in ('inherited-pipe', 'stubborn-pipe'):
         time.sleep(10)
         os._exit(0)
     os._exit(0)
+account_reads = 0
+config_reads = 0
 for line in sys.stdin:
     request = json.loads(line)
     if 'id' not in request: continue
@@ -48,10 +50,23 @@ for line in sys.stdin:
         result = {'type': 'chatgptAuthTokens'}
         if mode == 'unsupported-pin': result = {'type': 'chatgpt'}
         print(json.dumps({'method': 'account/updated', 'params': {'authMode': 'chatgptAuthTokens'}}), flush=True)
+    if method == 'config/read':
+        config_reads += 1
+        result = {'config': {}}
+        if mode == 'custom-provider' or (mode == 'provider-switch' and config_reads > 1): result['config']['model_provider'] = 'synthetic'
+        if mode == 'invalid-provider': result['config']['model_provider'] = False
+        if mode == 'openai-endpoint': result['config']['openai_base_url'] = 'https://example.invalid/v1'
+        if mode == 'chatgpt-endpoint' or (mode == 'endpoint-switch' and config_reads > 1): result['config']['chatgpt_base_url'] = 'https://example.invalid/backend-api'
+        if mode == 'reserved-provider': result['config']['model_providers'] = {'openai': {'base_url': 'https://example.invalid/v1'}}
+        if mode == 'invalid-providers': result['config']['model_providers'] = []
+        if mode == 'invalid-config': result['config'] = []
     if method == 'account/read':
+        account_reads += 1
         result = {'account': {'type': 'chatgpt', 'email': 'fixture@example.invalid'},
                   'workspaceRouting': {'chatgptAccountId': 'workspace', 'backendOrigin': 'https://chatgpt.com'}}
-        if (mode == 'switch' and request['id'] == 4) or (mode == 'pin-switch' and request['id'] >= 6):
+        if mode == 'no-provider-auth': result['requiresOpenaiAuth'] = False
+        if mode == 'invalid-provider-auth': result['requiresOpenaiAuth'] = 'false'
+        if (mode == 'switch' and account_reads == 2) or (mode == 'pin-switch' and account_reads >= 3):
             result['workspaceRouting']['chatgptAccountId'] = 'other'
     if method == 'account/rateLimits/read':
         if mode == 'refresh-pin':
@@ -95,6 +110,37 @@ class ProtocolTests(unittest.TestCase):
             self.assertEqual(value['rateLimits']['primary']['usedPercent'], 12)
         self.run_client('', read)
 
+    def test_custom_provider_does_not_inherit_chatgpt_headroom(self):
+        for mode in ('custom-provider', 'no-provider-auth', 'openai-endpoint', 'chatgpt-endpoint', 'reserved-provider'):
+            def read(client):
+                client.initialize()
+                value = client.read_usage()
+                self.assertEqual(value, {'_native': True, '_status': 'no-usage-api'})
+            self.run_client(mode, read)
+
+    def test_inherited_endpoint_does_not_inherit_subscription_headroom(self):
+        def read(client):
+            client.initialize()
+            self.assertEqual(client.read_usage(), {'_native': True, '_status': 'no-usage-api'})
+        with patch.dict(os.environ, {'OPENAI_BASE_URL': 'https://example.invalid/v1'}):
+            self.run_client('', read)
+
+    def test_provider_change_invalidates_observation(self):
+        def read(client):
+            client.initialize()
+            with self.assertRaisesRegex(RuntimeError, 'provider changed'):
+                client.read_usage()
+        for mode in ('provider-switch', 'endpoint-switch'):
+            self.run_client(mode, read)
+
+    def test_malformed_provider_configuration_cannot_appear_healthy(self):
+        for mode in ('invalid-provider', 'invalid-config', 'invalid-provider-auth', 'invalid-providers'):
+            def read(client):
+                client.initialize()
+                with self.assertRaises(ValueError):
+                    client.read_usage()
+            self.run_client(mode, read)
+
     def test_account_change_invalidates_observation(self):
         for mode in ('switch', 'changed'):
             def read(client):
@@ -135,7 +181,8 @@ class ProtocolTests(unittest.TestCase):
                 with self.assertRaises(exception):
                     client.initialize()
             start = time.monotonic()
-            self.run_client(mode, read, timeout=0.2)
+            # EOF must test a closed stream, not race Python startup under load.
+            self.run_client(mode, read, timeout=2 if mode == 'eof' else 0.2)
             self.assertLess(time.monotonic() - start, 3)
 
     def test_oversized_protocol_line_fails_closed(self):

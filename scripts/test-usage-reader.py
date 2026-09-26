@@ -312,6 +312,7 @@ class ReaderTests(unittest.TestCase):
             capture = Path(directory) / 'requests'
             binary.write_text("""#!/usr/bin/python3
 import json, os, sys
+account_reads = 0
 for line in sys.stdin:
     request = json.loads(line)
     with open(os.environ['N2_TEST_CAPTURE'], 'a') as f:
@@ -319,9 +320,12 @@ for line in sys.stdin:
     if 'id' not in request:
         continue
     result = {}
+    if request['method'] == 'config/read':
+        result = {'config': {}}
     if request['method'] == 'account/read':
+        account_reads += 1
         result = {'account': {'type': 'chatgpt', 'email': 'fixture@example.com'}, 'workspaceRouting': {'chatgptAccountId': 'fixture-workspace', 'backendOrigin': 'https://chatgpt.com'}}
-        if request.get('id') == 4 and os.environ.get('N2_TEST_SWITCH'):
+        if account_reads == 2 and os.environ.get('N2_TEST_SWITCH'):
             result['workspaceRouting']['chatgptAccountId'] = 'changed-workspace'
     elif request['method'] == 'account/rateLimits/read':
         result = {'rateLimitsByLimitId': {'fixture': {'primary': {'usedPercent': 12, 'windowDurationMins': 15}}}}
@@ -333,7 +337,7 @@ for line in sys.stdin:
             self.assertEqual(u.details('codex', response)['windows'][0]['durationSeconds'], 900)
             self.assertEqual(u.details('codex', response)['identity']['status'], 'verified')
             calls = [json.loads(line) for line in capture.read_text().splitlines()]
-            self.assertEqual([c['method'] for c in calls], ['initialize', 'initialized', 'account/read', 'account/rateLimits/read', 'account/read'])
+            self.assertEqual([c['method'] for c in calls], ['initialize', 'initialized', 'config/read', 'account/read', 'account/rateLimits/read', 'account/read', 'config/read'])
             self.assertTrue(all(c['home'] == directory + '/account-home' for c in calls))
             with patch.dict(os.environ, {'PATH': directory + ':/usr/bin:/bin', 'N2_TEST_CAPTURE': str(capture), 'N2_TEST_SWITCH': '1'}):
                 with self.assertRaisesRegex(RuntimeError, 'account changed'):

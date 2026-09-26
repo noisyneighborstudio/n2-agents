@@ -231,3 +231,31 @@ handle renewal for the same account, and bind session/token outcomes to the
 result. A notification not yet consumed cannot prevent an already-sent request.
 The loop still uses its separate CLI launch; execution integration and receipts
 remain unfinished. No merge, installation or deployment was performed.
+
+
+Codex measurements now check effective provider configuration before and after
+reading allowance. A saved ChatGPT login does not supply headroom for a custom
+provider. Custom OpenAI/ChatGPT endpoints, inherited `OPENAI_BASE_URL`, reserved
+provider overrides and providers that do not require OpenAI authentication
+return `no-usage-api`. Malformed configuration and a route change during the
+read fail closed. Unsupported endpoint routing is not evidence of exhaustion.
+
+The [native routing audit](audits/codex-provider-routing-2026-09-26.json) exercised
+Codex 0.157.1 with disposable homes and synthetic configuration, without
+credentials or model turns. User-level provider and endpoint overrides were
+visible through `config/read` and excluded by the production reader. Project
+provider overrides were ignored, matching the current
+[official configuration documentation](https://learn.chatgpt.com/docs/config-file/config-advanced).
+This corrects an earlier assumption that current Codex permits project-local
+provider redirection. Claude's documented precedence is separate. The selected
+execution process and its command-line overrides still require launch binding.
+The guard checks the measurement process; it does not establish an execution
+receipt or support quota accounting for custom gateways.
+
+Focused verification passes all 21 protocol and 27 reader tests, with scoped
+correctness and security reviews clear. The EOF fixture now allows interpreter
+startup under build load while retaining the closed-stream error requirement,
+process/reader cleanup checks and bounded completion assertion. A fresh normal
+Default external-auth allowance read still verified its account and left the
+canonical credential file unchanged. These checks did not execute a model turn.
+The final full regression suite also passes.

@@ -20,6 +20,7 @@ MAX_PENDING_MESSAGES = 128
 class CodexRPC:
     def __init__(self, cfg, cwd, timeout=15, executable='codex'):
         self.timeout = timeout
+        self.cwd = os.path.abspath(cwd)
         self.messages = queue.Queue(maxsize=MAX_PENDING_MESSAGES)
         self.stopping = threading.Event()
         self.failure = None
@@ -28,8 +29,10 @@ class CodexRPC:
         self._bound_account = None
         self._bound_generation = None
         self._binding_failed = False
+        child_env = dict(os.environ, CODEX_HOME=cfg)
+        self._custom_openai_endpoint = bool(child_env.get('OPENAI_BASE_URL'))
         self.process = subprocess.Popen(
-            [executable, 'app-server'], cwd=cwd, env=dict(os.environ, CODEX_HOME=cfg),
+            [executable, 'app-server'], cwd=cwd, env=child_env,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             start_new_session=True, bufsize=0)
         os.set_blocking(self.process.stdin.fileno(), False)
@@ -159,17 +162,51 @@ class CodexRPC:
             'capabilities': {'experimentalApi': True}})
         self.send({'method': 'initialized'})
 
+    def _subscription_provider(self, deadline):
+        # The saved ChatGPT login can coexist with a custom model provider.
+        # Its allowance must not make that unrelated route look runnable.
+        response = self.call('config/read', {'cwd': self.cwd, 'includeLayers': False}, deadline)
+        config = response.get('config')
+        if not isinstance(config, dict):
+            raise ValueError('invalid Codex effective configuration')
+        provider = config.get('model_provider')
+        if provider is not None and (not isinstance(provider, str) or not provider):
+            raise ValueError('invalid Codex model provider')
+        if self._custom_openai_endpoint or config.get('openai_base_url') is not None:
+            return None
+        backend = config.get('chatgpt_base_url')
+        if backend is not None and (not isinstance(backend, str) or backend.rstrip('/') != 'https://chatgpt.com/backend-api'):
+            return None
+        providers = config.get('model_providers')
+        if providers is not None:
+            if not isinstance(providers, dict):
+                raise ValueError('invalid Codex model providers')
+            if 'openai' in providers:
+                return None
+        return provider or 'openai'
+
     def read_usage(self):
         deadline = time.monotonic() + self.timeout
+        provider = self._subscription_provider(deadline)
+        if provider != 'openai':
+            return {'_native': True, '_status': 'no-usage-api'}
         account_response = self.call('account/read', {'refreshToken': False}, deadline)
         account = account_response.get('account')
         if account is not None and not isinstance(account, dict):
             raise ValueError('invalid Codex account response')
         if not account or account.get('type') != 'chatgpt':
             return {'_native': True, '_status': 'no-token' if not account else 'no-usage-api', 'account': account}
+        requires_auth = account_response.get('requiresOpenaiAuth')
+        if requires_auth is not None and type(requires_auth) is not bool:
+            raise ValueError('invalid Codex provider authentication requirement')
+        if requires_auth is False:
+            return {'_native': True, '_status': 'no-usage-api'}
         generation = self.account_generation
         result = self.call('account/rateLimits/read', deadline=deadline)
         after = self.call('account/read', {'refreshToken': False}, deadline)
+        after_provider = self._subscription_provider(deadline)
+        if provider != after_provider:
+            raise RuntimeError('provider changed during usage read')
         if after != account_response or self.account_generation != generation:
             raise RuntimeError('account changed during usage read')
         routing = account_response.get('workspaceRouting')
