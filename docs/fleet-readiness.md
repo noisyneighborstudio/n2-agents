@@ -73,3 +73,10 @@ journal assertion of 60 total tokens and 30 cached input tokens. Nine journal
 tests and focused provider-result parsing checks pass. `agents usage summary`
 deduplicates task observations and splits mixed-model buckets without adding
 the aggregate again. These tests establish behavior, not live token totals.
+
+Loop selection now consumes structured measurements, retaining all limit buckets
+and refusing stale, future-dated or incomplete readings. Focused tests cover
+custom windows, explicit restrictions, missing resets and malformed percentages.
+The full regression and release loop build pass. Independent correctness and
+security reviews are clear after fixing invalid fallback percentages. This does
+not yet connect journal rejections to shared scheduling.

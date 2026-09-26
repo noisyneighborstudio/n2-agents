@@ -43,6 +43,14 @@ the structured output. Disabled overage alone does not block included allowance.
 A model-specific window reaching N2's reserve is marked restricted for generic
 selection until a model-aware selector can choose an unaffected model.
 
+The loop consumes structured measurements directly. It ranks a profile by its
+most-used reported bucket, including custom-duration and model-specific buckets.
+A restriction blocks selection even without a percentage. Readings older than
+15 minutes, more than five minutes in the future, or with an invalid bucket are
+unavailable. A full bucket without a reset leaves the overall recovery time
+unknown. Providers without structured buckets retain their display-column path;
+Claude and Codex require structured buckets.
+
 The tray stops advertising measurements after 15 minutes or a failed refresh.
 The last observation's timestamp remains attached when a refresh fails. Missing
 percentages remain unknown. Profile and menu-bar summaries warn about the most
@@ -59,7 +67,7 @@ validation. A live read on September 25 matched Default's 72% weekly use and
 ExpoIO's exhausted weekly limit. This validates those Codex observations only.
 
 Account/workspace verification, verified account attribution of execution failures, application
-of rejections to scheduling, and task token attribution remain tracked in
+of shared rejections to scheduling, and verified account attribution of task tokens remain tracked in
 [fleet readiness](fleet-readiness.md). Grok, Muse and Cursor still use their
 existing collectors; their limitations have not been resolved by this change.
 

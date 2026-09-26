@@ -15,3 +15,6 @@ sh scripts/test-usage-fleet.sh
 
 swiftc loop/UsageAttribution.swift tests/TaskUsageTests.swift -o "$work/test-task-usage"
 "$work/test-task-usage"
+
+swiftc loop/SlotMeasurement.swift tests/SlotMeasurementTests.swift -o "$work/test-slot-measurement"
+"$work/test-slot-measurement"

@@ -72,22 +72,22 @@ final class SlotSource {
             }
         }
         for lab in Set(slots.map(\.vendor)) where usageLabs.contains(lab) {
-            let rows = run(cli, ["best", "--porcelain", "--vendor", lab])
+            let rows = run(cli, ["best", "--json", "--vendor", lab])
             for i in slots.indices where slots[i].vendor == lab { slots[i].quota = "fetch-error" }
             guard rows.ok else { continue }
+            var seen = Set<String>()
             for row in rows.out.split(separator: "\n") {
-                let f = row.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
-                guard f.count >= 5, let i = slots.firstIndex(where: { $0.vendor == lab && $0.profile == f[0] }) else { continue }
-                slots[i].quota = f[4]
-                let five = Double(f[1]), seven = Double(f[2])
-                slots[i].used = [five, seven].compactMap { $0 }.max()
-                // Resets are UTC minutes: 2026-09-26T08:24.
-                let utc = DateFormatter()
-                utc.locale = Locale(identifier: "en_US_POSIX")
-                utc.timeZone = TimeZone(identifier: "UTC")
-                utc.dateFormat = "yyyy-MM-dd'T'HH:mm"
-                let full = [(five, f[3]), (seven, f.count > 5 ? f[5] : "")].filter { ($0.0 ?? 0) >= 95 }
-                slots[i].resets = full.compactMap { utc.date(from: $0.1) }.max()
+                guard let measurement = SlotMeasurement.parse(String(row)), measurement.provider == lab,
+                      let i = slots.firstIndex(where: { $0.vendor == lab && $0.profile == measurement.profile }) else { continue }
+                guard seen.insert(measurement.profile).inserted else {
+                    slots[i].quota = "fetch-error"
+                    slots[i].used = nil
+                    slots[i].resets = nil
+                    continue
+                }
+                slots[i].quota = measurement.status
+                slots[i].used = measurement.used
+                slots[i].resets = measurement.resets
             }
         }
         cached = (Date(), slots)
