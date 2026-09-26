@@ -388,3 +388,8 @@ updating adopted-storage fixtures to retain identity and direct responder
 fixtures to provide metadata. The CLI regression suite, ad-hoc QA build and
 packaged signed-peer/recovery probes pass. Scoped correctness/security reviews
 are clear. No live profile metadata was migrated and no app was installed.
+
+The [managed-auth concurrency audit](audits/codex-auth-concurrency-2026-09-26.md)
+adds a canonical provider constraint to the remaining authentication work:
+file-conflict handling does not prove safe concurrent renewal of one copied
+Codex login across machines. Renewal ownership remains unimplemented.
