@@ -417,6 +417,27 @@ fleet_handle_migration_recover() (
   fleet_ok "$3/signed-ack"
 )
 
+fleet_handle_session_import() {
+  /usr/bin/python3 "$scripts_dir/fleet-session.py" "$root" receive "$2" > "$3/out" || { echo "ERR session-import-refused"; return 1; }
+  fleet_ok "$3/out"
+}
+
+fleet_session_send() (
+  [ "${1:-}" = send ] && [ "$#" -ge 2 ] || { echo "usage: agents fleet session send THREAD --peer PEER --cwd PATH" >&2; return 1; }
+  session_thread=$2; shift 2; session_peer=; session_cwd=
+  while [ "$#" -gt 0 ]; do
+    [ "$#" -ge 2 ] || return 1
+    case $1 in --peer) session_peer=$2 ;; --cwd) session_cwd=$2 ;; *) return 1 ;; esac
+    shift 2
+  done
+  [ -n "$session_peer" ] && [ -n "$session_cwd" ] || return 1
+  umask 077
+  session_temp=$(mktemp -d "${TMPDIR:-/tmp}/n2session.XXXXXX") || return 1
+  trap 'rm -rf "$session_temp"' EXIT HUP INT TERM
+  /usr/bin/python3 "$scripts_dir/fleet-session.py" "$root" snapshot "$session_thread" --cwd "$session_cwd" > "$session_temp/payload" || return 1
+  fleet_call "$session_peer" session-import "$session_temp/payload"
+)
+
 fleet_handle_ping() { printf 'pong %s %s\n' "$(fleet_self_machine)" "$(fleet_self_id)" > "$3/out"; fleet_ok "$3/out"; }
 
 fleet_handle_status() {
@@ -1681,6 +1702,7 @@ agents fleet <verb>
   sync <verb>                              shared profile replication (sync help)
   tools <verb>                             fleet-managed utilities (tools help)
   task <verb>                              dispatch, handoff and task lifecycle (task help)
+  session send THREAD --peer PEER --cwd PATH  transfer saved account-bound history
   send <peerid> --verb <v> [--payload-file <f>]   raw signed request
   auth <register|status|allow|deny|login|reconcile|retire|grants|allow-login|deny-login|migration-status|migration-begin|migration-archive|migration-abandon|migration-allow|migration-deny|migration-prepare> Profile  owner binding and explicit peer consent
   serve                                    stdio responder (the remote end)
@@ -1701,6 +1723,7 @@ cmd_fleet() {
   verb=${1:-status}; [ $# -ge 1 ] && shift
   case $verb in
     auth) fleet_auth_manage "$@" ;;
+    session) fleet_session_send "$@" ;;
     init)
       machine=$(hostname -s 2>/dev/null || echo unknown)
       while [ $# -gt 0 ]; do case $1 in --machine) machine=$2; shift 2 ;; *) fleet_die "unknown option: $1" ;; esac; done

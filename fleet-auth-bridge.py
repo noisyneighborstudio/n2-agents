@@ -324,6 +324,11 @@ class Bridge:
             for notification in deferred:self.backend(notification)
             if self.active or self.approvals:
                 self.error(message,'Finish the current turn and approvals before starting another');return
+        if method in ('thread/resume','thread/fork') and saved_thread:
+            params=dict(params,cwd=self.provider.cwd)
+            if params.get('model') is None:
+                selected=self.sessions.model(params['threadId'])
+                if selected is not None:params['model']=selected
         key=self.key();self.pending[key]=(message['id'],method)
         if method in ('thread/start','thread/resume','thread/fork'):self.thread_requests[key]=params
         if method in ('turn/start','review/start'):

@@ -21,6 +21,8 @@ python3 scripts/test-fleet-auth-migration.py \
 
 python3 scripts/test-usage-reader.py ReaderTests.test_current_claude_limits_exclude_product_share_and_retain_model_limit
 
+python3 scripts/test-fleet-session.py
+
 sh scripts/test-account-ownership.sh
 sh scripts/test-fleet-settings.sh
 

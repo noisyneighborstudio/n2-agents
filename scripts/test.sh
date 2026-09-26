@@ -802,5 +802,6 @@ python3 scripts/test-fleet-auth-login.py
 python3 scripts/test-fleet-auth-migration.py
 python3 scripts/test-fleet-auth-bridge.py
 python3 scripts/test-fleet-auth-websocket.py
+python3 scripts/test-fleet-session.py
 
 echo "All tests passed"

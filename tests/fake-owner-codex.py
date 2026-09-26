@@ -75,7 +75,14 @@ for line in sys.stdin:
     elif method in ('thread/start','thread/resume','thread/read'):
         history=home/'fixture-history.json'
         if method in ('thread/resume','thread/read'):
-            assert json.loads(history.read_text())['thread']==request['params']['threadId']
+            if settings.get('nativeRollout'):
+                thread_id=request['params']['threadId']
+                logs=list((home/'sessions').rglob('*-'+thread_id+'.jsonl'))
+                assert len(logs)==1 and 'transferred marker' in logs[0].read_text()
+                assert json.loads(logs[0].read_text().splitlines()[0])['payload']['id']==thread_id
+                assert request['params']['model']=='chosen-model'
+                assert request['params']['cwd']==os.getcwd()
+            else:assert json.loads(history.read_text())['thread']==request['params']['threadId']
         else:history.write_text(json.dumps({'thread':thread_id}))
         thread={'id':thread_id,'sessionId':thread_id,'cliVersion':'0.157.1',
                 'createdAt':int(time.time()),'updatedAt':int(time.time()),'cwd':os.getcwd(),

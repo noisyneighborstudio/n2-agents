@@ -27,8 +27,9 @@ def exact(size):
     return data
 
 def exchange(message):
-    raw=json.dumps(message).encode();assert len(raw)<126;mask=b'abcd'
-    connection.sendall(bytes([129,128|len(raw)])+mask+bytes(v^mask[i%4] for i,v in enumerate(raw)))
+    raw=json.dumps(message).encode();mask=b'abcd'
+    header=bytes([129,128|len(raw)]) if len(raw)<126 else bytes([129,254])+struct.pack('!H',len(raw))
+    connection.sendall(header+mask+bytes(v^mask[i%4] for i,v in enumerate(raw)))
     first,length=exact(2);assert first==129 and not length&128
     if length==126:length=struct.unpack('!H',exact(2))[0]
     elif length==127:length=struct.unpack('!Q',exact(8))[0]
@@ -36,5 +37,9 @@ def exchange(message):
 assert exchange({'id':1,'method':'initialize'})['id']==1
 account=exchange({'id':2,'method':'account/read'})
 assert account['id']==2 and account['result']['account']['email']=='fixture@example.invalid'
+if json.loads(Path(__file__).with_name('settings.json').read_text()).get('nativeRollout'):
+    thread=sys.argv[sys.argv.index('resume')+1]
+    resumed=exchange({'id':3,'method':'thread/resume','params':{'threadId':thread}})
+    assert resumed['result']['thread']['id']==thread
 connection.sendall(b'\x88\x80abcd');connection.close()
 print('terminal-connected',flush=True)
