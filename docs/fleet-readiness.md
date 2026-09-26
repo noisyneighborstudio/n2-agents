@@ -191,3 +191,17 @@ executes a separate CLI process after measurement. Claude's
 also permits project/settings and environment credentials to change the route.
 Execution identity must therefore remain explicitly unverified until the launch
 path itself establishes and preserves the account binding.
+
+The Codex allowance reader now uses a shared provider-native stdio client, which
+can retain one connection through a future launch operation. It rejects account
+changes during the read and an allowance response naming a different account.
+Read and write deadlines, message bounds and process-group cleanup have 11 real
+subprocess fixtures, including an exited server with a TERM-ignoring descendant
+holding its pipes. The 27 reader tests, full regression, native UI contract suite
+and QA packaging pass. A synthetic read from the built app confirms the bundled
+reader loads its bundled RPC helper. Independent follow-up reviews are clear.
+The QA build was not installed. A live read through the refactored client kept
+both local Codex identities verified, with Default at 2% weekly and ExpoIO at
+100% with a provider restriction. This change establishes the shared connection
+code; replacing the loop's separate CLI launch and issuing execution account
+receipts are still required.

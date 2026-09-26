@@ -131,71 +131,14 @@ def claude_row(r):
             (five.get('resets_at') or '-')[:16], (seven.get('resets_at') or '-')[:16])
 
 def codex_native(cfg):
-    """Read the CLI's selected account and all limit buckets, including keyring auth."""
-    import queue
-    messages = queue.Queue()
-    env = dict(os.environ, CODEX_HOME=cfg)
+    """Read selected account and all buckets in one provider-native connection."""
+    spec = importlib.util.spec_from_file_location('n2_codex_rpc', os.path.join(os.path.dirname(__file__), 'codex-rpc.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
     with tempfile.TemporaryDirectory(prefix='n2-codex-usage-') as cwd:
-        p = subprocess.Popen(['codex', 'app-server'], cwd=cwd, env=env,
-                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                             stderr=subprocess.DEVNULL, text=True, start_new_session=True)
-        def reader():
-            for line in p.stdout:
-                try:
-                    message = json.loads(line)
-                    if isinstance(message, dict):
-                        messages.put(message)
-                except ValueError:
-                    pass
-            messages.put(None)
-        worker = threading.Thread(target=reader, daemon=True)
-        worker.start()
-        deadline = time.monotonic() + 15
-        def send(message):
-            p.stdin.write(json.dumps(message) + '\n')
-            p.stdin.flush()
-        def receive(wanted):
-            while True:
-                if time.monotonic() >= deadline:
-                    raise TimeoutError('app-server read timed out')
-                message = messages.get(timeout=max(0.01, deadline - time.monotonic()))
-                if message is None:
-                    raise RuntimeError('app-server closed')
-                if message.get('id') == wanted:
-                    if 'error' in message:
-                        raise RuntimeError('app-server read failed')
-                    return message.get('result') or {}
-        try:
-            send({'id': 1, 'method': 'initialize', 'params': {
-                'clientInfo': {'name': 'n2_usage', 'version': '1.0.0'},
-                'capabilities': {'experimentalApi': True}}})
-            receive(1)
-            send({'method': 'initialized'})
-            send({'id': 2, 'method': 'account/read', 'params': {'refreshToken': False}})
-            account_response = receive(2)
-            account = account_response.get('account')
-            if not account or account.get('type') != 'chatgpt':
-                return {'_native': True, '_status': 'no-token' if not account else 'no-usage-api', 'account': account}
-            send({'id': 3, 'method': 'account/rateLimits/read'})
-            result = receive(3)
-            send({'id': 4, 'method': 'account/read', 'params': {'refreshToken': False}})
-            if receive(4) != account_response:
-                raise RuntimeError('account changed during usage read')
-            result['_native'] = True
-            result['account'] = account
-            result['workspaceRouting'] = account_response.get('workspaceRouting')
-            return result
-        finally:
-            try:
-                os.killpg(p.pid, signal.SIGTERM)
-                p.wait(timeout=2)
-            except (ProcessLookupError, subprocess.TimeoutExpired):
-                if p.poll() is None:
-                    os.killpg(p.pid, signal.SIGKILL)
-                    p.wait(timeout=2)
-            p.stdin.close()
-            p.stdout.close()
-            worker.join(timeout=1)
+        with module.CodexRPC(cfg, cwd) as client:
+            client.initialize()
+            return client.read_usage()
 
 
 def number(value):
