@@ -681,14 +681,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 
     func setupAuthed(profile: String) -> [String: Bool]? {
         let r = runCLI(["authed", profile])
-        guard r.status == 0 else { return nil }
-        var out: [String: Bool] = [:]
-        for line in r.output.split(separator: "\n") {
-            let f = line.split(separator: "\t").map(String.init)
-            guard f.count == 2, f[1] != "unknown" else { continue }
-            out[f[0]] = f[1] == "yes"
-        }
-        return out
+        return Snapshot.setupAuthentication(status: r.status, output: r.output)
     }
 
     func setupStartLogin(profile: String, vendor: String) {

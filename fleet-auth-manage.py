@@ -76,7 +76,7 @@ def consent(root,name,config,peer,allowed,login_management=False):
     return {'status':'allowed' if allowed else 'denied','peer':peer,'grantId':record['grantId']}
 
 
-def status(root,name,config):
+def status(root,name,config,credential_presence=False):
     root=Path(root).resolve(strict=True)
     migration=load('n2_migration','fleet-auth-migration.py').pending(root,name,config)
     if migration:
@@ -93,6 +93,9 @@ def status(root,name,config):
             matches=all(public[k]==record[k] for k in ('profileId','accountHash','ownershipGeneration'))
             retired=(public['state']=='retired' and all(public[k]==record[k] for k in ('profileId','accountHash')))
             result['status']=public['state'] if matches or retired else 'binding-mismatch'
+            if credential_presence and result['status']=='active':
+                if grant.credential_snapshot()['credentialRevision']!=grant.state['credentialRevision']:
+                    result['status']='unverified'
     return result
 
 
@@ -212,7 +215,7 @@ def validate_incoming(root,name,config,payload):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action',choices=('register','status','allow','deny','login','reconcile','retire','grants','allow-login','deny-login','validate-incoming','migration-status','migration-begin','migration-archive','migration-abandon','migration-allow','migration-deny','migration-request','migration-accept','migration-record','migration-recovery-plan','migration-recover','migration-recovery-record'))
+    parser.add_argument('action',choices=('register','status','authed','allow','deny','login','reconcile','retire','grants','allow-login','deny-login','validate-incoming','migration-status','migration-begin','migration-archive','migration-abandon','migration-allow','migration-deny','migration-request','migration-accept','migration-record','migration-recovery-plan','migration-recover','migration-recovery-record'))
     parser.add_argument('root');parser.add_argument('profile');parser.add_argument('config')
     parser.add_argument('--request')
     parser.add_argument('--allow-legacy',action='store_true')
@@ -274,9 +277,10 @@ def main():
         elif args.action=='retire':
             if not args.grant or args.peer or args.expected_revision:raise ValueError('retire requires grant ID')
             result=retire(args.root,args.profile,args.grant)
-        elif args.action=='status':
+        elif args.action in ('status','authed'):
             if args.grant or args.peer or args.expected_revision:raise ValueError('invalid status options')
-            result=status(args.root,args.profile,args.config)
+            result=status(args.root,args.profile,args.config,credential_presence=args.action=='authed')
+            if args.action=='authed':return {'active':0,'retired':1,'reauth-required':1}.get(result['status'],2)
         else:
             if not args.peer or args.grant or args.expected_revision:raise ValueError('consent requires peer')
             result=consent(args.root,args.profile,args.config,args.peer,args.action in ('allow','allow-login'),args.action in ('allow-login','deny-login'))
@@ -287,6 +291,6 @@ def main():
         return 130
     except Exception:
         print('agents: owner registration unavailable; check profile identity, grant state, migration and conflicts',file=sys.stderr)
-        return 1
+        return 2 if args.action=='authed' else 1
 
 if __name__=='__main__':sys.exit(main())

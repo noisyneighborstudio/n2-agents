@@ -1525,7 +1525,7 @@ authed_word() {  # vendor, slot dir, profile
 }
 
 # Which of a profile's slots hold a login. Profile setup polls this while its
-# window is open, so it touches nothing but the adapter's cheap check.
+# window is open. Owner checks stay local: no provider calls or token refresh.
 cmd_authed() {
   [ -n "${1:-}" ] || die "usage: agents authed <Profile>"
   want=$1; name=$(resolve_profile "$want") || die "no profile named '$want'"
