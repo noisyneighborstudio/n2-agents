@@ -1002,3 +1002,19 @@ fails the EOF check. All seven transport tests, the expanded smoke and the full
 local repository test gate pass. Independent correctness review is clear.
 Production transport behavior is unchanged. The recorded spike is in
 `docs/audits/transport-child-receipt-spike.json`.
+
+## Provider caller lifetime
+
+Owner-bound ephemeral Codex providers with their own process group now run under
+a lifetime-pipe supervisor. Caller SIGKILL closes the pipe and kills that group,
+including descendants that ignore TERM. Normal close retains the existing
+graceful shutdown window before releasing the lifetime writer. Lock-supervised
+credential operations and loop-owned groups retain their existing lifecycle.
+
+`python3 scripts/test-codex-rpc.py ParentLifetimeTests` checks real SIGKILL using
+startup receipts and lifetime EOF, plus normal shutdown with a provider flush
+receipt. Both checks have failing negative controls, and the smoke script runs
+them. All 33 RPC tests and the full repository suite pass; formatting, lint,
+and smoke also pass locally. Independent correctness review verified the graceful
+shutdown fix. Native frontend hard-kill cleanup remains the next slice. These
+checks use synthetic providers and disposable state, not live-provider evidence.

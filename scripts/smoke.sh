@@ -8,5 +8,7 @@ python3 scripts/test-fleet-auth-bridge.py \
   BridgeIntegrationTests.test_existing_session_with_duplicate_or_missing_profile_never_falls_back \
   BridgeIntegrationTests.test_session_discovery_does_not_hide_corrupt_or_foreign_bindings
 
-exec python3 scripts/test-fleet-auth-transport.py \
+python3 scripts/test-fleet-auth-transport.py \
   TransportTests.test_descendant_inheriting_stdout_is_reaped
+
+exec python3 scripts/test-codex-rpc.py ParentLifetimeTests

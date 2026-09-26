@@ -104,10 +104,25 @@ class CodexRPC:
                 raise ValueError('invalid process lifetime deadline')
             pass_fds = (lifetime_lock_fd,)
             argv = [sys.executable, os.path.abspath(__file__), '--lock-supervisor', str(lifetime_lock_fd), str(lifetime_deadline)] + argv
-        self.process = subprocess.Popen(
-            argv, cwd=cwd, env=child_env,
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            start_new_session=own_process_group, pass_fds=pass_fds, bufsize=0)
+        self._lifetime_writer = None
+        lifetime_reader = None
+        if ephemeral_auth and own_process_group and lifetime_lock_fd is None:
+            lifetime_reader, self._lifetime_writer = os.pipe()
+            pass_fds = (lifetime_reader,)
+            argv = [sys.executable, os.path.abspath(__file__), '--parent-supervisor', str(lifetime_reader)] + argv
+        try:
+            self.process = subprocess.Popen(
+                argv, cwd=cwd, env=child_env,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                start_new_session=own_process_group, pass_fds=pass_fds, bufsize=0)
+        except BaseException:
+            if self._lifetime_writer is not None:
+                os.close(self._lifetime_writer)
+                self._lifetime_writer = None
+            raise
+        finally:
+            if lifetime_reader is not None:
+                os.close(lifetime_reader)
         os.set_blocking(self.process.stdin.fileno(), False)
         os.set_blocking(self.process.stdout.fileno(), False)
         self.reader = threading.Thread(target=self._read, daemon=True)
@@ -558,6 +573,14 @@ class CodexRPC:
         return result
 
     def close(self):
+        try:
+            self._close_process()
+        finally:
+            if self._lifetime_writer is not None:
+                os.close(self._lifetime_writer)
+                self._lifetime_writer = None
+
+    def _close_process(self):
         self.stopping.set()
         if not self.own_process_group:
             # Execution children share the loop's tracked group. The loop owns
@@ -643,5 +666,30 @@ def _lock_supervisor():
         os.killpg(os.getpid(), signal.SIGKILL)
 
 
+def _parent_supervisor():
+    """Kill the provider group when the RPC caller's lifetime pipe closes.
+
+    The writer exists only in the caller. SIGKILL closes it without relying on
+    Python cleanup, process-ID polling or a provider's response to stdin EOF.
+    """
+    if len(sys.argv) < 5 or os.getpgrp() != os.getpid():
+        raise SystemExit(2)
+    descriptor = int(sys.argv[2])
+    os.fstat(descriptor)
+    signal.signal(signal.SIGTERM, lambda *_: None)
+    try:
+        child = subprocess.Popen(sys.argv[3:], stdin=sys.stdin.buffer, stdout=sys.stdout.buffer,
+                                 stderr=subprocess.DEVNULL, close_fds=True)
+        while child.poll() is None:
+            readable, _, _ = select.select([descriptor], [], [], 0.1)
+            if readable:
+                break
+    finally:
+        os.killpg(os.getpid(), signal.SIGKILL)
+
+
 if __name__ == '__main__':
-    _lock_supervisor()
+    if len(sys.argv) > 1 and sys.argv[1] == '--parent-supervisor':
+        _parent_supervisor()
+    else:
+        _lock_supervisor()

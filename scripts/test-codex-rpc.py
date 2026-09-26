@@ -2,8 +2,12 @@
 """Exercise the real subprocess protocol without accounts or model calls."""
 import importlib.util
 import os
+import select
+import signal
+import sys
 from pathlib import Path
 import tempfile
+import threading
 import subprocess
 import time
 import unittest
@@ -18,11 +22,17 @@ import json, os, sys, time, signal
 mode = os.environ.get('N2_RPC_FIXTURE', '')
 if mode == 'no-read': time.sleep(10)
 if mode in ('inherited-pipe', 'stubborn-pipe'):
+    ready, receipt = os.pipe()
     if os.fork() == 0:
+        os.close(ready)
         if mode == 'stubborn-pipe': signal.signal(signal.SIGTERM, signal.SIG_IGN)
         with open('child.pid', 'w') as f: f.write(str(os.getpid()))
-        time.sleep(10)
-        os._exit(0)
+        os.write(receipt, b'ready')
+        os.close(receipt)
+        while True: signal.pause()
+    os.close(receipt)
+    os.read(ready, 5)
+    os.close(ready)
     os._exit(0)
 account_reads = 0
 config_reads = 0
@@ -233,7 +243,7 @@ class ProtocolTests(unittest.TestCase):
     def test_exited_leader_with_inherited_pipe_cannot_hang_cleanup(self):
         def read(client):
             client.process.wait(timeout=2)
-            with self.assertRaises(TimeoutError):
+            with self.assertRaisesRegex(RuntimeError, 'closed'):
                 client.receive(time.monotonic() + 0.2)
         start = time.monotonic()
         for mode in ('inherited-pipe', 'stubborn-pipe'):
@@ -485,6 +495,120 @@ class ProtocolTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'invalid Codex response'):
                 client.initialize()
         self.run_client('invalid-result', read)
+
+
+
+class ParentLifetimeTests(unittest.TestCase):
+    def test_normal_close_allows_provider_shutdown_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            events = base / 'events'
+            release = base / 'release'
+            os.mkfifo(events, 0o600)
+            os.mkfifo(release, 0o600)
+            reader = os.open(events, os.O_RDONLY | os.O_NONBLOCK)
+            # RDWR lets the test release the handler without a blocking open.
+            writer = os.open(release, os.O_RDWR | os.O_NONBLOCK)
+            provider = base / 'provider'
+            provider.write_text(r"""#!/usr/bin/env python3
+import os, signal
+fd = os.open('events', os.O_WRONLY)
+def finish(*_):
+    os.write(fd, b'term')
+    ack = os.open('release', os.O_RDONLY)
+    os.read(ack, 1)
+    with open('flushed', 'w') as receipt:
+        receipt.write('shutdown complete')
+    os._exit(0)
+signal.signal(signal.SIGTERM, finish)
+os.write(fd, b'ready')
+while True: signal.pause()
+""")
+            provider.chmod(0o700)
+            client = rpc.CodexRPC(directory, directory, executable=str(provider), ephemeral_auth=True)
+            errors = []
+            def close():
+                try:
+                    client.close()
+                except Exception as error:
+                    errors.append(error)
+            closer = threading.Thread(target=close)
+            try:
+                self.assertTrue(select.select([reader], [], [], 5)[0], 'startup receipt missing')
+                self.assertEqual(os.read(reader, 5), b'ready')
+                closer.start()
+                self.assertTrue(select.select([reader], [], [], 1)[0], 'TERM receipt missing')
+                self.assertEqual(os.read(reader, 4), b'term')
+                os.write(writer, b'x')
+                closer.join(timeout=5)
+                self.assertFalse(closer.is_alive(), 'normal close did not complete')
+                self.assertEqual(errors, [])
+                self.assertEqual((base / 'flushed').read_text(), 'shutdown complete')
+            finally:
+                os.write(writer, b'x')
+                if closer.ident is not None:
+                    closer.join(timeout=5)
+                else:
+                    client.close()
+                os.close(reader)
+                os.close(writer)
+
+    def test_sigkill_of_rpc_caller_stops_provider_and_stubborn_descendant(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            readers = []
+            for name in ('provider', 'descendant'):
+                path = base / (name + '.events')
+                os.mkfifo(path, 0o600)
+                readers.append(os.open(path, os.O_RDONLY | os.O_NONBLOCK))
+            provider = base / 'fake-provider'
+            provider.write_text(r"""#!/usr/bin/env python3
+import os, signal
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+name = 'descendant' if os.fork() == 0 else 'provider'
+fd = os.open(name + '.events', os.O_WRONLY)
+os.write(fd, (str(os.getpid()) + '\n').encode())
+while True:
+    signal.pause()
+""")
+            provider.chmod(0o700)
+            caller_code = """
+import importlib.util, signal, sys
+spec = importlib.util.spec_from_file_location('rpc', sys.argv[1])
+rpc = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(rpc)
+client = rpc.CodexRPC(sys.argv[2], sys.argv[2], executable=sys.argv[3], ephemeral_auth=True)
+print(client.process.pid, flush=True)
+while True:
+    signal.pause()
+"""
+            caller = subprocess.Popen(
+                [sys.executable, '-c', caller_code, str(Path(rpc.__file__)), directory, str(provider)],
+                stdout=subprocess.PIPE)
+            group = None
+            try:
+                self.assertTrue(select.select([caller.stdout], [], [], 5)[0], 'caller startup receipt missing')
+                group = int(caller.stdout.readline())
+                for reader in readers:
+                    self.assertTrue(select.select([reader], [], [], 5)[0], 'provider startup receipt missing')
+                    self.assertTrue(os.read(reader, 128).strip().isdigit(), 'invalid provider receipt')
+                caller.kill()
+                caller.wait(timeout=5)
+                for reader in readers:
+                    self.assertTrue(select.select([reader], [], [], 5)[0], 'provider survived caller SIGKILL')
+                    self.assertEqual(os.read(reader, 128), b'', 'provider lifetime pipe must close')
+            finally:
+                if caller.poll() is None:
+                    caller.kill()
+                caller.wait(timeout=5)
+                caller.stdout.close()
+                if group is not None:
+                    try:
+                        os.killpg(group, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                for reader in readers:
+                    os.close(reader)
 
 
 if __name__ == '__main__':
