@@ -550,3 +550,26 @@ endpoint tests pass with packaged helper byte parity. That packaged fixture
 omits only the QA root-redirection marker to retain disposable peer roots.
 The complete fleet regression is running separately and is not claimed complete
 for this checkpoint.
+
+### Public ownership record contract
+
+`fleet-auth-binding.py` now defines a credential-free profile-to-grant record
+with exact profile, owner, grant, ownership-generation and account bindings.
+Only an active locked grant can produce it. Replacement requires the expected
+prior revision while the caller holds the shared sync resource lock. Unknown
+schemas and conflicting bytes remain untouched. The record expresses routing
+intent, not provider verification or scheduling eligibility.
+
+Five tests pass from source and packaged helpers, including an actual CLI-created
+mode-0755 profile, private record permissions, stale replacement revisions,
+unknown schemas, duplicate fields, profile mismatches and retired grants. The
+ad-hoc QA build passes and helper/CLI byte parity is verified. Registration,
+replication/conflict handling, migration and runner consumption remain unwired.
+
+The previously running broad fleet regression has completed successfully with
+live SSH required: 339 transport checks with no failures or skips, 639 sync
+checks across all 75 sections, 97 execution checks and native UI checks. Final
+endpoint framing guards additionally passed the focused source/package endpoint
+suite after they were added during that broad run. This is checkpoint evidence,
+not a claim that the final PR candidate has completed acceptance. Scoped reviews
+of the public binding module are clear after the profile-directory fix.

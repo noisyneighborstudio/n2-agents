@@ -345,3 +345,32 @@ Both that path and envelope construction require canonical lowercase/hyphen
 verbs, preventing newline and shell-escape spellings from bypassing the private
 carrier guard. Envelope recipients reject framing characters. The exec carrier
 clears inherited SSH session variables before starting its local receiver.
+
+## Public profile-to-grant record
+
+`fleet-auth-binding.py` defines `.n2-owner.json` for a Codex profile slot. Its
+schema contains only version, provider, profile UUID, grant UUID, owner fleet
+fingerprint, ownership generation, verified account hash and credential-store
+mode. It contains no access/refresh/ID tokens, token generations, credential
+revisions, token digests or consent lists. The supported store mode is
+`owner-file`; keychain migration remains a separate requirement.
+
+An active locked grant can produce the record after provider verification. A
+reader requires an exact profile UUID match and a known schema. Publication
+requires the caller to hold the same resource lock used by profile sync. Initial
+publication requires absence; replacement requires the exact prior byte revision.
+Unknown schemas, malformed records, symlinks and nonprivate records are preserved
+and refused. Publishing uses a synced private temporary file, atomic replacement
+and directory sync.
+
+This record expresses routing intent. It neither authenticates a provider account
+nor makes a profile schedulable by itself. The token endpoint and bound runner
+must still enforce the pinned account and grant. Registration commands, sync
+classification and conflict handling, migration admission and runner consumption
+are not wired to this record yet.
+
+Public records support ordinary mode-0755 profile directories owned by the local
+user, provided group/other write bits are clear. The record itself remains
+mode-0600. Symlink slot directories are refused by this layer; adoption must
+resolve and validate the local route before registration. An actual `agents new`
+fixture verifies compatibility without changing profile permissions.
