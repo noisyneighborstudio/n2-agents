@@ -77,9 +77,7 @@ swiftc tray/UpdateChannel.swift tests/UpdateChannelTests.swift -o "$channel_test
 path_test=$(mktemp -d "$TMPDIR/shellpath.XXXXXX")/shell-path-tests
 swiftc tray/ShellPath.swift tests/ShellPathTests.swift -o "$path_test"
 "$path_test"
-fleet_settings_test=$(mktemp -d "$TMPDIR/fleetsettings.XXXXXX")/fleet-settings-loader-tests
-swiftc tray/FleetSettingsLoader.swift tray/ShellPath.swift tests/FleetSettingsLoaderTests.swift -o "$fleet_settings_test"
-"$fleet_settings_test"
+sh scripts/test-fleet-settings.sh
 icon_test=$(mktemp -d "$TMPDIR/statusicon.XXXXXX")/status-icon-tests
 swiftc tray/StatusIcon.swift tests/StatusIconTests.swift -o "$icon_test"
 "$icon_test"

@@ -15,13 +15,18 @@ enum FleetSettingsLoader {
     ]
 
     /// Each CLI invocation blocks while its process runs. Give every command
-    /// its own detached task so an unreachable peer does not serialize the
+    /// its own dispatch work item so an unreachable peer does not serialize the
     /// otherwise local settings reads behind it.
     static func load(run: @escaping @Sendable ([String]) -> String) async -> [String] {
         await withTaskGroup(of: (Int, String).self, returning: [String].self) { group in
             for (index, command) in commands.enumerated() {
                 group.addTask {
-                    (index, await Task.detached { run(command) }.value)
+                    let value = await withCheckedContinuation { continuation in
+                        DispatchQueue.global(qos: .userInitiated).async {
+                            continuation.resume(returning: run(command))
+                        }
+                    }
+                    return (index, value)
                 }
             }
 
