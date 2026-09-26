@@ -50,6 +50,9 @@ FAKE
 cat > "$fake_bin/security" <<'FAKE'
 #!/bin/sh
 case "$*" in *cursor-access-token*) [ -n "${FAKE_CURSOR_TOKEN:-}" ] && { echo "$FAKE_CURSOR_TOKEN"; exit 0; } ;; esac
+if [ "$*" = 'find-generic-password -s ai.meta.dev.credentials -a meta' ]; then
+  [ "${FAKE_MUSE_KEYCHAIN:-}" = 1 ] && exit 0
+fi
 exit 44
 FAKE
 chmod +x "$fake_bin/security"
@@ -224,6 +227,21 @@ mkdir -p "$muse_slot"
 out=$(run_agents run Work --vendor muse)
 [[ $out == *"XDG_CONFIG_HOME=$home/.n2-agents/Work/muse TBH_CREDENTIAL_BACKEND=file"* ]]
 test -z "$(sh -c '. ./vendors.sh; vendor_env_extra muse Default')"
+# Default's keychain login needs no auth.json; other profiles cannot use it.
+default_muse_slot="$home/.n2-agents/Default/muse/muse"
+mkdir -p "$default_muse_slot"
+run_agents authed Default | grep -qx 'muse	no'
+FAKE_MUSE_KEYCHAIN=1 run_agents authed Default | grep -qx 'muse	yes'
+FAKE_MUSE_KEYCHAIN=1 run_agents authed Work | grep -qx 'muse	no'
+# A leftover keychain pointer is not a login once the keychain item is gone.
+echo '{"providers": {"meta": {"storage": "keychain"}}}' > "$default_muse_slot/auth.json"
+run_agents authed Default | grep -qx 'muse	no'
+FAKE_MUSE_KEYCHAIN=1 run_agents authed Default | grep -qx 'muse	yes'
+echo '{"providers": {"meta": {"access_token": ""}}}' > "$default_muse_slot/auth.json"
+run_agents authed Default | grep -qx 'muse	no'
+echo '{"providers": {"meta": {"storage": "file", "access_token": "dca:t"}}}' > "$default_muse_slot/auth.json"
+run_agents authed Default | grep -qx 'muse	yes'
+rm -r "$home/.n2-agents/Default/muse"
 # An auth.json that points at the keychain is Default's login, not the profile's.
 echo '{"providers": {"meta": {"storage": "keychain"}}}' > "$muse_slot/auth.json"
 run_agents authed Work | grep -qx 'muse	no'
