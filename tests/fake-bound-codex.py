@@ -8,6 +8,7 @@ import time
 
 mode = os.environ.get('N2_BOUND_FIXTURE', '')
 trace = Path(os.environ['N2_BOUND_TRACE'])
+renewed = False
 
 def send(value):
     print(json.dumps(value), flush=True)
@@ -32,6 +33,7 @@ for line in sys.stdin:
     elif method == 'account/read':
         result = {'account': {'type': 'chatgpt', 'email': 'fixture@example.invalid'},
                   'workspaceRouting': {'chatgptAccountId': 'workspace', 'backendOrigin': 'https://chatgpt.com'}}
+        if renewed and mode == 'renew-mid-change': result['account']['email'] = 'changed@example.invalid'
     elif method == 'account/rateLimits/read':
         result = {'accountId': 'workspace', 'rateLimits': {'primary': {'usedPercent': 12}}}
     elif method == 'thread/start':
@@ -60,6 +62,13 @@ for line in sys.stdin:
         if mode == 'slow':
             Path(os.environ['N2_BOUND_STARTED']).write_text(str(os.getpid()))
             time.sleep(60)
+        if mode.startswith('renew-mid'):
+            send({'id': request['id'], 'result': {'turn': {'id': 'turn-fixture', 'status': 'inProgress', 'items': []}}})
+            send({'id': 90, 'method': 'account/chatgptAuthTokens/refresh',
+                  'params': {'reason': 'unauthorized', 'previousAccountId': 'workspace'}})
+            response = json.loads(sys.stdin.readline())
+            assert response == {'id': 90, 'result': {'accessToken': 'renewed-token', 'chatgptAccountId': 'workspace'}}
+            renewed = True
         # Deliberately send events before the turn/start response.
         notice('item/completed', dict(params, item={'type': 'agentMessage', 'text': 'Try again in 1 minute' if mode.startswith('quota') else 'Bound answer'}))
         counts = {'inputTokens': 50, 'cachedInputTokens': 30, 'outputTokens': 10, 'totalTokens': 60}
@@ -75,4 +84,5 @@ for line in sys.stdin:
             completed['error'] = {'codexErrorInfo': 'usageLimitExceeded', 'message': message}
         notice('turn/completed', {'threadId': 'thread-fixture', 'turn': completed})
         result = {'turn': {'id': 'turn-fixture', 'status': 'inProgress', 'items': []}}
-    send({'id': request['id'], 'result': result})
+    if not (method == 'turn/start' and mode.startswith('renew-mid')):
+        send({'id': request['id'], 'result': result})

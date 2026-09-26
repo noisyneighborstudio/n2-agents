@@ -423,3 +423,23 @@ same-account execution renewal, migration and provider acceptance evidence.
 These remain implementation requirements. No live grant has been migrated or
 renewed by this work. A disposable enrolled CLI check confirms the new
 provider-concurrency diagnostic; shell syntax and diff checks pass.
+
+### Bound renewal protocol
+
+The shared Codex connection now has a trusted owner-source integration point.
+It authenticates each replacement access token in a separate ephemeral native
+connection before replying to the execution server. Wrong-account, malformed,
+replayed, unchanged-token and late responses invalidate the binding. Incoming
+request age survives buffering and queue backpressure. Production runners do
+not supply this source yet, so the broker and ownership lifecycle remain required.
+
+Thirty-one subprocess protocol tests pass, including a saturated queue with more
+than 128 notifications and repeated stalls shorter than 100 milliseconds.
+Twelve bound-runner tests pass, including same-account
+mid-turn renewal with session/token continuity and rejection of a changed account
+after renewal. The QA build and packaged mid-turn fixture pass; packaged helper
+bytes match the source. These are synthetic protocol tests, not live grant
+renewal or complete fleet authentication evidence. The full regression suite
+passes, and independent correctness/security review is clear after both
+backpressure deadline fixes. The short-stall regression also fails against the
+previous implementation, confirming that it detects the reported defect.

@@ -60,6 +60,28 @@ class BoundTurnTests(unittest.TestCase):
             self.assertFalse(Path(row['home']).exists())
             self.assertIn('cli_auth_credentials_store="ephemeral"', row['args'])
 
+    def test_mid_turn_renewal_preserves_session_and_tokens(self):
+        rpc = bound.load('renewal_turn_rpc', 'codex-rpc.py')
+        for mode in ('renew-mid', 'renew-mid-change'):
+            with patch.dict(os.environ, {'N2_BOUND_FIXTURE': mode, 'N2_BOUND_TRACE': str(self.trace)}):
+                with tempfile.TemporaryDirectory() as home:
+                    with rpc.CodexRPC(home, str(self.root.resolve()), executable=str(self.binary), ephemeral_auth=True) as client:
+                        client.initialize()
+                        client.pin_external_account('original-token', 'workspace', renewal_source=lambda account, deadline:
+                            {'accessToken': 'renewed-token', 'chatgptAccountId': account})
+                        if mode == 'renew-mid-change':
+                            with self.assertRaisesRegex(RuntimeError, 'changed during execution'):
+                                client.run_bound_turn('fixture prompt', timeout=4)
+                        else:
+                            result = client.run_bound_turn('fixture prompt', timeout=4)
+                            self.assertEqual(result['status'], 'completed')
+                            self.assertEqual(result['threadId'], 'thread-fixture')
+                            self.assertEqual(result['turnId'], 'turn-fixture')
+                            self.assertEqual(result['tokens']['totalTokens'], 60)
+                            self.assertEqual(result['text'], 'Bound answer')
+        self.assertEqual((self.home / 'auth.json').read_bytes(), self.original)
+        self.assertNotIn('renewed-token', self.trace.read_text())
+
     def test_quota_failure_keeps_account_receipt(self):
         code, rows = self.run_turn('quota')
         self.assertEqual(code, 1)

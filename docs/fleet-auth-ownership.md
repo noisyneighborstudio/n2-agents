@@ -158,3 +158,28 @@ use the broker-bound route or report an unverified binding.
 No live renewal or credential migration is authorized by running a read-only
 usage audit. Prepare and review the implementation and disposable experiment
 before any operation that changes the user's current login state.
+
+## Protocol implementation status
+
+The shared `CodexRPC` connection accepts an optional trusted `renewal_source`
+when pinning an external account in ephemeral mode. The source receives the
+pinned account ID and a monotonic deadline, and returns only `accessToken` and
+`chatgptAccountId`. Its owner record, consent and token-generation state belong
+to the broker implementation. This callable is an internal integration point,
+not a user-configured command or an assertion that an owner exists.
+
+Before sending the response, the connection uses another ephemeral app-server
+to authenticate the supplied token and compare provider/account evidence with
+its original binding. Malformed requests or responses, reused rejected tokens,
+account mismatch, verification failure and late results disable the connection.
+Observed `account/updated` notifications still invalidate the binding. Production
+runners do not supply a renewal source yet and retain the existing explicit
+renewal failure. No live credential has been renewed by these protocol tests.
+
+The deadline includes inbound queue and buffered-byte age. Backpressure carries
+that conservative age to unread pipe data until the reader observes the pipe
+empty. This can refuse renewal during a severely delayed stream; it cannot grant
+a fresh timeout to a request that was already waiting. The source runs in a
+bounded wait. It may complete after the caller times out, but its result is not
+sent to the execution server. The broker must own cancellation and reconciliation
+of any provider operation it has already started.

@@ -5,6 +5,8 @@ The owner keeps this connection for the operation being attributed. Never treat
 an account observation from a different CLI process as an execution receipt.
 """
 import datetime
+import hashlib
+import tempfile
 import json
 import math
 import re
@@ -18,6 +20,7 @@ import time
 
 MAX_MESSAGE_BYTES = 2 * 1024 * 1024
 MAX_PENDING_MESSAGES = 128
+RENEWAL_REPLY_SECONDS = 9
 
 
 def reported_quota_reset(error, now):
@@ -58,11 +61,18 @@ def reported_quota_reset(error, now):
 class CodexRPC:
     def __init__(self, cfg, cwd, timeout=15, executable='codex', ephemeral_auth=False, own_process_group=True):
         self.timeout = timeout
+        self.executable = executable
+        self.ephemeral_auth = ephemeral_auth
+        self._renewal_source = None
+        self._bound_account_id = None
+        self._token_digest = None
+        self._renewal_ids = set()
         self.own_process_group = own_process_group
         self.cwd = os.path.abspath(cwd)
         self.messages = queue.Queue(maxsize=MAX_PENDING_MESSAGES)
         self.stopping = threading.Event()
         self.failure = None
+        self._ingress_delayed_since = None
         self.next_id = 1
         self.account_generation = 0
         self._bound_account = None
@@ -83,19 +93,31 @@ class CodexRPC:
         self.reader = threading.Thread(target=self._read, daemon=True)
         self.reader.start()
 
-    def _put(self, message):
+    def _put(self, message, received_at=None):
+        received_at = time.monotonic() if received_at is None else received_at
         while not self.stopping.is_set():
             try:
-                self.messages.put(message, timeout=0.1)
+                self.messages.put_nowait((received_at, message))
                 return
             except queue.Full:
-                pass
+                if self._ingress_delayed_since is None:
+                    self._ingress_delayed_since = received_at
+                try:
+                    self.messages.put((received_at, message), timeout=0.1)
+                    return
+                except queue.Full:
+                    pass
 
     def _read(self):
         pending = bytearray()
+        pending_since = None
         descriptor = self.process.stdout.fileno()
         try:
             while not self.stopping.is_set():
+                # After backpressure, unread pipe bytes may already be old.
+                # Keep their conservative age until the pipe is observed empty.
+                if not select.select([descriptor], [], [], 0)[0]:
+                    self._ingress_delayed_since = None
                 if not select.select([descriptor], [], [], 0.1)[0]:
                     continue
                 try:
@@ -105,6 +127,11 @@ class CodexRPC:
                 if not chunk:
                     self._put(None)
                     return
+                arrived_at = self._ingress_delayed_since or time.monotonic()
+                if pending_since is None:
+                    pending_since = arrived_at
+                else:
+                    pending_since = min(pending_since, arrived_at)
                 pending.extend(chunk)
                 while b'\n' in pending:
                     end = pending.index(b'\n') + 1
@@ -118,9 +145,11 @@ class CodexRPC:
                         # A startup log is not a protocol response.
                         continue
                     if isinstance(message, dict):
-                        self._put(message)
+                        self._put(message, pending_since)
                     if self.stopping.is_set():
                         return
+                if not pending:
+                    pending_since = None
                 if len(pending) > MAX_MESSAGE_BYTES:
                     raise ValueError('Codex protocol message exceeds size limit')
         except (OSError, ValueError, RecursionError):
@@ -154,25 +183,86 @@ class CodexRPC:
                 raise RuntimeError('Codex protocol write closed')
             remaining_body = remaining_body[written:]
 
-    def receive(self, deadline):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError('Codex protocol read timed out')
+    def _renew_external_account(self, message, deadline):
+        """Fetch from a trusted owner and authenticate before exposing a token.
+
+        The owner callback must preserve its grant generation and consent checks.
+        It receives only the pinned account ID and monotonic deadline. A timed-out
+        fetch may finish at the owner, but its result can never reach this server.
+        """
         try:
-            message = self.messages.get(timeout=remaining)
-        except queue.Empty:
-            raise TimeoutError('Codex protocol read timed out') from None
-        if message is None:
-            raise RuntimeError(self.failure or 'Codex protocol stream closed')
-        if message.get('method') == 'account/updated':
-            self.account_generation += 1
-            if self._bound_account is not None:
-                self._binding_failed = True
-                raise RuntimeError('bound Codex account changed')
-        if message.get('method') == 'account/chatgptAuthTokens/refresh' and self._bound_account is not None:
+            params = message.get('params')
+            request_id = message.get('id')
+            valid_id = type(request_id) is int or (isinstance(request_id, str) and 0 < len(request_id) <= 256)
+            if (not valid_id or request_id in self._renewal_ids or len(self._renewal_ids) >= 1024
+                    or not isinstance(params, dict) or params.get('reason') != 'unauthorized'
+                    or params.get('previousAccountId') not in (None, self._bound_account_id)
+                    or self._renewal_source is None or not self.ephemeral_auth):
+                raise RuntimeError('invalid renewal request')
+            self._renewal_ids.add(request_id)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError('renewal deadline expired')
+            result_queue = queue.Queue(maxsize=1)
+            source, account_id = self._renewal_source, self._bound_account_id
+            def fetch():
+                try:
+                    result = source(account_id, deadline)
+                except Exception:
+                    result = None
+                # No callback exception or secret-bearing diagnostic crosses out.
+                result_queue.put(result)
+            threading.Thread(target=fetch, daemon=True).start()
+            supplied = result_queue.get(timeout=remaining)
+            if not isinstance(supplied, dict) or set(supplied) != {'accessToken', 'chatgptAccountId'}:
+                raise ValueError('invalid renewal response')
+            token = supplied['accessToken']
+            if (supplied['chatgptAccountId'] != account_id or not isinstance(token, str)
+                    or not token or len(token.encode()) > 65536):
+                raise ValueError('invalid renewal credential')
+            digest = hashlib.sha256(token.encode()).digest()
+            if digest == self._token_digest or time.monotonic() >= deadline:
+                raise ValueError('renewal did not replace rejected token')
+            # No execution or canonical-home access in this verifier. It must
+            # authenticate the exact token, not trust the owner's account label.
+            with tempfile.TemporaryDirectory(prefix='n2-codex-renewal-') as home:
+                with CodexRPC(home, self.cwd, timeout=max(.001, deadline - time.monotonic()),
+                              executable=self.executable, ephemeral_auth=True,
+                              own_process_group=self.own_process_group) as verifier:
+                    verifier.initialize(deadline=deadline)
+                    observed = verifier.pin_external_account(token, account_id, deadline=deadline)
+                    if self._account_key(observed) != self._bound_account:
+                        raise RuntimeError('renewal account mismatch')
+            if time.monotonic() >= deadline:
+                raise TimeoutError('renewal verification expired')
+            self.send({'id': request_id, 'result': {'accessToken': token, 'chatgptAccountId': account_id}}, deadline)
+            self._token_digest = digest
+        except Exception:
             self._binding_failed = True
-            raise RuntimeError('bound Codex account requires renewal')
-        return message
+            raise RuntimeError('bound Codex account requires renewal') from None
+
+    def receive(self, deadline):
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError('Codex protocol read timed out')
+            try:
+                received_at, message = self.messages.get(timeout=remaining)
+            except queue.Empty:
+                raise TimeoutError('Codex protocol read timed out') from None
+            if message is None:
+                raise RuntimeError(self.failure or 'Codex protocol stream closed')
+            if message.get('method') == 'account/updated':
+                self.account_generation += 1
+                if self._bound_account is not None:
+                    self._binding_failed = True
+                    raise RuntimeError('bound Codex account changed')
+            if message.get('method') == 'account/chatgptAuthTokens/refresh' and self._bound_account is not None:
+                # Reserve one second of the provider's approximate 10-second
+                # deadline, including time already spent in our inbound queue.
+                self._renew_external_account(message, min(deadline, received_at + RENEWAL_REPLY_SECONDS))
+                continue
+            return message
 
     def call(self, method, params=None, deadline=None, on_notification=None):
         request_id = self.next_id
@@ -199,11 +289,11 @@ class CodexRPC:
             if on_notification is not None:
                 on_notification(message)
 
-    def initialize(self):
+    def initialize(self, deadline=None):
         self.call('initialize', {
             'clientInfo': {'name': 'n2_usage', 'version': '1.0.0'},
-            'capabilities': {'experimentalApi': True}})
-        self.send({'method': 'initialized'})
+            'capabilities': {'experimentalApi': True}}, deadline=deadline)
+        self.send({'method': 'initialized'}, deadline=deadline)
 
     def _subscription_provider(self, deadline):
         # The saved ChatGPT login can coexist with a custom model provider.
@@ -228,8 +318,8 @@ class CodexRPC:
                 return None
         return provider or 'openai'
 
-    def read_usage(self):
-        deadline = time.monotonic() + self.timeout
+    def read_usage(self, deadline=None):
+        deadline = deadline if deadline is not None else time.monotonic() + self.timeout
         provider = self._subscription_provider(deadline)
         if provider != 'openai':
             return {'_native': True, '_status': 'no-usage-api'}
@@ -268,12 +358,12 @@ class CodexRPC:
                            'workspaceRouting': observation.get('workspaceRouting')},
                           sort_keys=True, separators=(',', ':'))
 
-    def pin_external_account(self, access_token, account_id):
+    def pin_external_account(self, access_token, account_id, renewal_source=None, deadline=None):
         """Pin this process's auth in memory and authenticate its allowance read.
 
         The caller owns token lifecycle and must supply an isolated Codex home.
         No refresh token is accepted or retained. A refresh server request fails
-        closed until the owner implements renewal for this exact account. This
+        closed unless a trusted renewal source is supplied for this account. This
         pins authentication only; execution must also validate provider routing.
         """
         if self._bound_account is not None or self._binding_failed:
@@ -281,11 +371,13 @@ class CodexRPC:
         try:
             if not isinstance(access_token, str) or not access_token or not isinstance(account_id, str) or not account_id:
                 raise ValueError('missing Codex account credential')
+            if renewal_source is not None and (not callable(renewal_source) or not self.ephemeral_auth):
+                raise ValueError('renewal requires an ephemeral owner-bound client')
             result = self.call('account/login/start', {
-                'type': 'chatgptAuthTokens', 'accessToken': access_token, 'chatgptAccountId': account_id})
+                'type': 'chatgptAuthTokens', 'accessToken': access_token, 'chatgptAccountId': account_id}, deadline=deadline)
             if result.get('type') != 'chatgptAuthTokens':
                 raise RuntimeError('Codex external authentication unavailable')
-            observation = self.read_usage()
+            observation = self.read_usage(deadline=deadline)
             routing = observation.get('workspaceRouting')
             account = observation.get('account')
             if not isinstance(routing, dict) or routing.get('chatgptAccountId') != account_id:
@@ -294,6 +386,9 @@ class CodexRPC:
                 raise RuntimeError('Codex subscription authentication unavailable')
             self._bound_account = self._account_key(observation)
             self._bound_generation = self.account_generation
+            self._bound_account_id = account_id
+            self._token_digest = hashlib.sha256(access_token.encode()).digest()
+            self._renewal_source = renewal_source
             return observation
         except Exception:
             # A failed pin cannot be followed by a turn on a fallback account.
