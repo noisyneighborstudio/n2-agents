@@ -882,16 +882,15 @@ invocation remains visible while the prior quota restriction remains active.
 Peer-import tests cover unfinished records, replay and final-receipt precedence.
 All 25 bridge and 28 journal tests pass from source and byte-matched QA
 packaging in disposable homes. Independent correctness review found no actionable
-gaps in the delta. The full repository suite is still running for this candidate. Persistent session resume and provider process
+gaps in the delta. The full repository suite subsequently passed with the concurrent descriptor fix below. Persistent session resume and provider process
 cleanup after a killed frontend remain separate unfinished requirements. Fleet
 peers must run a journal version that understands the new event kind; an older
 peer rejects the unsupported batch rather than silently discarding these events.
 
 
-A native Codex 0.157.1 TUI probe reached the private owner bridge and attempted
-account bootstrap. It stopped because the synthetic provider account response
-lacks the required `planType` field. This is a fixture-contract gap; the probe
-does not establish native TUI acceptance or a production bridge defect.
+The initial native bootstrap probe exposed incomplete synthetic-provider responses.
+Those fixtures now follow the installed client schema; completed acceptance is
+recorded below.
 
 
 ### Concurrent loop process descriptors
@@ -910,3 +909,25 @@ The temporary checkout and logs disappeared during a runtime interruption. The
 pushed work was restored at `/Users/sethwebster/Development/n2-agents-fleet-ready`.
 The interrupted diagnostic run has no claimed result. Subsequent verification
 logs and native compatibility artifacts use durable storage.
+
+
+### Installed native Codex frontend acceptance
+
+Codex 0.157.1 sends a relative working directory, a `web_search` thread option,
+and a read-only `hooks/list` request during normal startup. The bridge now accepts
+these requests. It resolves the working directory against the bound directory and
+rejects other directories. Thread overrides remain limited to the documented
+web-search modes; provider routing and credential overrides remain forbidden.
+
+`scripts/test-fleet-native-tui.py --codex PATH --artifacts DIRECTORY` runs an
+installed native TUI through the actual CLI and a disposable signed-owner fixture.
+It requires a rendered completion, exactly one journal task with 60 tokens on the
+expected account, and exit status zero. It makes no live provider requests and
+uses no live credentials. Source and byte-matched QA package runs passed, as did
+all 27 bridge tests. Independent correctness review passed the native acceptance
+and 10 focused BridgeTests with no remaining findings.
+
+The full repository regression suite passed after the descriptor fix, followed
+by a successful QA build. This acceptance covers a fresh native session against
+a synthetic provider. Persistent history/resume, hard-kill process cleanup,
+live-provider acceptance and final security review remain unfinished.

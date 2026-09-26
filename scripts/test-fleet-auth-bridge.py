@@ -61,6 +61,25 @@ class BridgeTests(unittest.TestCase):
             self.bridge.frontend({'id':2,'method':method,'params':params})
             self.assertIn('error',self.out[-1])
         self.assertEqual(self.provider.sent,[])
+    def test_relative_current_directory_is_normalized_without_allowing_another_directory(self):
+        self.bridge.frontend({'id':2,'method':'config/read','params':{'cwd':'.'}})
+        self.assertEqual(self.provider.sent[-1]['params']['cwd'],self.provider.cwd)
+        self.bridge.backend({'id':self.provider.sent[-1]['id'],'result':{}})
+        for cwd in ('../other','/another',7,''):
+            before=len(self.provider.sent)
+            self.bridge.frontend({'id':3,'method':'config/read','params':{'cwd':cwd}})
+            self.assertIn('error',self.out[-1]);self.assertEqual(len(self.provider.sent),before)
+
+    def test_native_web_search_preference_does_not_open_route_overrides(self):
+        self.bridge.frontend({'id':2,'method':'thread/start','params':{'config':{'web_search':'cached'}}})
+        self.assertEqual(self.provider.sent[-1]['params']['config'],{'web_search':'cached'})
+        key=self.provider.sent[-1]['id'];self.bridge.backend({'id':key,'error':{'code':-1}})
+        for overrides in ({'web_search':'cached','openai_base_url':'https://other.invalid'},
+                          {'web_search':{'provider':'other'}},{'cli_auth_credentials_store':'file'},False):
+            before=len(self.provider.sent)
+            self.bridge.frontend({'id':3,'method':'thread/start','params':{'config':overrides}})
+            self.assertIn('error',self.out[-1]);self.assertEqual(len(self.provider.sent),before)
+
     def test_mismatched_thread_route_is_never_exposed(self):
         self.bridge.frontend({'id':2,'method':'thread/start'})
         key=self.provider.sent[-1]['id']

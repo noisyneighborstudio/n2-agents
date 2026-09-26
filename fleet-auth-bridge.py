@@ -33,7 +33,7 @@ METHODS={'account/read','account/rateLimits/read','config/read','configRequireme
          'thread/start','thread/resume','thread/fork','thread/read','thread/list','thread/loaded/list',
          'thread/archive','thread/unarchive','thread/unsubscribe','thread/name/set',
          'turn/start','turn/steer','turn/interrupt','review/start','model/list','skills/list',
-         'plugin/list','app/list','mcpServerStatus/list','experimentalFeature/list','collaborationMode/list'}
+         'plugin/list','app/list','hooks/list','mcpServerStatus/list','experimentalFeature/list','collaborationMode/list'}
 
 
 def valid_id(value):
@@ -172,12 +172,20 @@ class Bridge:
         if method not in METHODS:
             self.error(message,'Method is not supported by the account-bound bridge');return
         if method=='account/read':params=dict(params,refreshToken=False)
-        if params.get('cwd') not in (None,self.provider.cwd):
-            self.error(message,'Start a separate account-bound session for another working directory');return
+        requested_cwd=params.get('cwd')
+        if requested_cwd is not None:
+            if (not isinstance(requested_cwd,str) or not requested_cwd
+                    or os.path.realpath(os.path.join(self.provider.cwd,requested_cwd))!=os.path.realpath(self.provider.cwd)):
+                self.error(message,'Start a separate account-bound session for another working directory');return
+            params=dict(params,cwd=self.provider.cwd)
         if 'threadId' in params and params['threadId'] not in self.threads:
             self.error(message,'Thread has no account binding in this session');return
         if method.startswith(('thread/','turn/','review/')):
-            if params.get('modelProvider') not in (None,'openai') or params.get('config'):
+            overrides=params.get('config')
+            safe_overrides=(overrides is None or (isinstance(overrides,dict) and all(
+                key=='web_search' and isinstance(value,str) and value in ('disabled','cached','live')
+                for key,value in overrides.items())))
+            if params.get('modelProvider') not in (None,'openai') or not safe_overrides:
                 self.error(message,'This session must keep its selected account route');return
         if method in ('thread/resume','thread/fork','turn/start','turn/steer','review/start'):
             if params.get('threadId') not in self.threads:
