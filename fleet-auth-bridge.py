@@ -19,6 +19,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import termios
 import threading
 import time
 import uuid
@@ -530,11 +531,12 @@ def terminal_supervisor():
     # owns and reaps only its child; it must not signal the caller's whole group.
     if len(sys.argv)<4:raise SystemExit(2)
     descriptor=int(sys.argv[2]);os.fstat(descriptor)
-    child=None;stopping=threading.Event()
+    child=None;terminal_modes=None;stopping=threading.Event()
     signal.signal(signal.SIGTERM,lambda *_:stopping.set())
     # A caught handler resets on exec; SIG_IGN would disable frontend Ctrl-C.
     signal.signal(signal.SIGINT,lambda *_:None)
     try:
+        if os.isatty(0):terminal_modes=termios.tcgetattr(0)
         child=subprocess.Popen(sys.argv[3:],close_fds=True)
         while child.poll() is None:
             if stopping.is_set():
@@ -546,7 +548,15 @@ def terminal_supervisor():
         return child.wait()
     finally:
         if child is not None and child.poll() is None:child.kill();child.wait()
-        os.close(descriptor)
+        previous_ttou=signal.signal(signal.SIGTTOU,signal.SIG_IGN)
+        try:
+            if terminal_modes is not None:termios.tcsetattr(0,termios.TCSANOW,terminal_modes)
+        except termios.error:
+            # The terminal may have disappeared along with its owning process.
+            pass
+        finally:
+            signal.signal(signal.SIGTTOU,previous_ttou)
+            os.close(descriptor)
 
 
 if __name__=='__main__':

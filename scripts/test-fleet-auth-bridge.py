@@ -12,6 +12,7 @@ import time
 import tempfile
 import select
 import pty
+import termios
 import signal
 import sys
 
@@ -504,11 +505,72 @@ class BridgeIntegrationTests(unittest.TestCase):
 
 
 class TerminalLifetimeTests(unittest.TestCase):
+    def test_modes_restore_after_shell_reclaims_foreground(self):
+        pid, master = pty.fork()
+        if pid == 0:
+            supervisor = None
+            try:
+                with tempfile.TemporaryDirectory() as directory:
+                    fifo = str(Path(directory) / 'ready'); os.mkfifo(fifo)
+                    ready = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+                    front = Path(directory) / 'front.py'
+                    front.write_text("import os,sys,termios,signal\n"
+                        "a=termios.tcgetattr(0);a[3]&=~termios.ECHO\n"
+                        "termios.tcsetattr(0,termios.TCSANOW,a)\n"
+                        "f=os.open(sys.argv[1],os.O_WRONLY);os.write(f,b'ready')\n"
+                        "signal.pause()\n")
+                    reader, writer = os.pipe(); gate, release = os.pipe()
+                    code = """
+import os, signal, sys, importlib.util
+signal.signal(signal.SIGTTOU, signal.SIG_DFL)
+os.read(int(sys.argv[1]), 1)
+spec=importlib.util.spec_from_file_location('bridge', sys.argv[2])
+m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+sys.argv=['bridge','--terminal-supervisor',sys.argv[3],sys.executable,sys.argv[4],sys.argv[5]]
+sys.exit(m.terminal_supervisor())
+"""
+                    signal.signal(signal.SIGTTOU, signal.SIG_IGN)
+                    supervisor = subprocess.Popen([sys.executable, '-c', code, str(gate),
+                        str(ROOT/'fleet-auth-bridge.py'), str(reader), str(front), fifo],
+                        pass_fds=(reader, gate), preexec_fn=os.setpgrp)
+                    os.close(reader); os.close(gate)
+                    os.tcsetpgrp(0, supervisor.pid); os.write(release, b'x'); os.close(release)
+                    assert select.select([ready], [], [], 5)[0], 'startup receipt missing'
+                    assert os.read(ready, 100) == b'ready'
+                    assert not termios.tcgetattr(0)[3] & termios.ECHO
+                    os.tcsetpgrp(0, os.getpgrp()); os.close(writer)
+                    supervisor.wait(timeout=5)
+                    assert termios.tcgetattr(0)[3] & termios.ECHO, 'echo not restored'
+                    os.close(ready)
+                    print('restored after foreground reclaim', flush=True)
+            except BaseException as error:
+                print(repr(error), flush=True)
+            finally:
+                if supervisor is not None and supervisor.poll() is None:
+                    os.killpg(supervisor.pid, signal.SIGKILL); supervisor.wait(timeout=5)
+            os._exit(0)
+        output = b''; deadline = time.monotonic() + 12
+        try:
+            while True:
+                self.assertTrue(select.select([master], [], [], max(0, deadline-time.monotonic()))[0])
+                try: chunk = os.read(master, 4096)
+                except OSError: break
+                if not chunk: break
+                output += chunk
+            self.assertIn(b'restored after foreground reclaim', output)
+        finally:
+            try: os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError: pass
+            os.waitpid(pid, 0); os.close(master)
+
     def test_supervisor_preserves_terminal_sigint_and_frontend_exit_code(self):
         with tempfile.TemporaryDirectory() as directory:
             frontend = Path(directory) / 'frontend'
             frontend.write_text("""#!/usr/bin/env python3
-import signal, sys
+import signal, sys, termios
+attrs = termios.tcgetattr(0)
+attrs[3] &= ~termios.ECHO
+termios.tcsetattr(0, termios.TCSANOW, attrs)
 signal.signal(signal.SIGINT, lambda *_: sys.exit(17))
 print('ready', flush=True)
 while True: signal.pause()
@@ -516,6 +578,7 @@ while True: signal.pause()
             frontend.chmod(0o700)
             lifetime_reader, lifetime_writer = os.pipe()
             master, slave = pty.openpty()
+            original_modes = termios.tcgetattr(slave)
             # Deliver SIGINT after fork but before Popen returns to the
             # supervisor. The guardian must survive this startup boundary.
             code = """
@@ -537,13 +600,14 @@ sys.exit(m.terminal_supervisor())
                  str(lifetime_reader), str(frontend)],
                 stdin=slave, stdout=slave, stderr=slave, start_new_session=True,
                 pass_fds=(lifetime_reader,))
-            os.close(slave)
             os.close(lifetime_reader)
             try:
                 self.assertTrue(select.select([master], [], [], 5)[0], 'frontend startup receipt missing')
                 self.assertIn(b'ready', os.read(master, 4096))
+                self.assertNotEqual(termios.tcgetattr(slave), original_modes)
                 os.killpg(supervisor.pid, signal.SIGINT)
                 self.assertEqual(supervisor.wait(timeout=5), 17)
+                self.assertEqual(termios.tcgetattr(slave), original_modes)
             finally:
                 try:
                     os.killpg(supervisor.pid, signal.SIGKILL)
@@ -553,6 +617,7 @@ sys.exit(m.terminal_supervisor())
                     if supervisor.poll() is None:raise
                 supervisor.wait(timeout=5)
                 os.close(lifetime_writer)
+                os.close(slave)
                 os.close(master)
 
     def test_bridge_sigkill_stops_frontend_attached_to_pty(self):
@@ -563,10 +628,13 @@ sys.exit(m.terminal_supervisor())
             reader = os.open(events, os.O_RDONLY | os.O_NONBLOCK)
             frontend = base / 'frontend'
             frontend.write_text(r"""#!/usr/bin/env python3
-import json, os, signal, sys
+import json, os, signal, sys, termios
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
+attrs = termios.tcgetattr(0)
+attrs[3] &= ~(termios.ECHO | termios.ICANON)
+termios.tcsetattr(0, termios.TCSANOW, attrs)
 fd = os.open(sys.argv[-1], os.O_WRONLY)
-os.write(fd, json.dumps({'pid': os.getpid(), 'group': os.getpgrp(),
+os.write(fd, json.dumps({'pid': os.getpid(), 'parent': os.getppid(), 'group': os.getpgrp(),
                         'tty': all(os.isatty(n) for n in (0, 1, 2))}).encode())
 while True: signal.pause()
 """)
@@ -579,27 +647,40 @@ spec.loader.exec_module(m)
 m.terminal(None, sys.argv[2], sys.argv[3], [sys.argv[4]])
 """
             master, slave = pty.openpty()
+            original_modes = termios.tcgetattr(slave)
+            exits = select.kqueue()
             bridge = subprocess.Popen(
                 [sys.executable, '-c', code, str(ROOT / 'fleet-auth-bridge.py'),
                  directory, str(frontend), str(events)],
                 stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
-            os.close(slave)
             try:
                 self.assertTrue(select.select([reader], [], [], 5)[0], 'frontend startup receipt missing')
                 receipt = json.loads(os.read(reader, 4096))
                 self.assertTrue(receipt['tty'], 'frontend lost its terminal streams')
                 self.assertEqual(receipt['group'], bridge.pid, 'frontend left the terminal process group')
+                self.assertNotEqual(termios.tcgetattr(slave), original_modes, 'fixture did not change terminal modes')
+                exits.control([select.kevent(receipt['parent'], filter=select.KQ_FILTER_PROC,
+                    flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT, fflags=select.KQ_NOTE_EXIT)], 0, 0)
                 bridge.kill()
                 bridge.wait(timeout=5)
                 self.assertTrue(select.select([reader], [], [], 5)[0], 'frontend survived bridge SIGKILL')
                 self.assertEqual(os.read(reader, 4096), b'', 'frontend lifetime pipe must close')
+                self.assertTrue(exits.control(None, 1, 5), 'supervisor did not exit')
+                restored = termios.tcgetattr(slave)
+                # Darwin sets PENDIN when returning to canonical input. The
+                # SDK marks this as pending-input state, not a terminal mode.
+                restored[3] &= ~termios.PENDIN
+                original_modes[3] &= ~termios.PENDIN
+                self.assertEqual(restored, original_modes, 'terminal modes were not restored')
             finally:
                 try:
                     os.killpg(bridge.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
                 bridge.wait(timeout=5)
+                exits.close()
                 os.close(reader)
+                os.close(slave)
                 os.close(master)
 
 if __name__=='__main__':unittest.main()

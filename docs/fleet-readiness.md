@@ -1036,3 +1036,22 @@ All 39 bridge tests and the full repository suite pass, along with formatting,
 lint, and smoke. Independent correctness review verified the startup-signal fix.
 This does not establish live-provider acceptance. Terminal-mode restoration
 after an abrupt frontend kill is the next bounded check.
+
+## Terminal modes after exit
+
+The terminal supervisor captures stdin attributes before spawning the frontend
+and restores them after reaping it, including bridge SIGKILL and ordinary exit.
+A disappeared terminal cannot prevent descriptor cleanup. The PTY proof changes
+echo and canonical-input settings, waits for the supervisor's kernel exit event,
+and compares all attributes except Darwin's transient `PENDIN` input state. The
+SDK identifies `PENDIN` as pending-input state; the ordinary-exit test compares
+all attributes exactly. The hard-kill test failed on missing restoration before
+the fix; both tests now pass through `TerminalLifetimeTests` and smoke.
+
+A controlling-PTY check also reclaims foreground ownership before closing the
+bridge lifetime. Restoration temporarily ignores SIGTTOU so the supervisor cannot
+stop in the background; its previous signal handler is restored afterward.
+The negative control without that protection times out on the stopped process.
+
+All 40 bridge tests and the full repository suite pass. Formatting, lint, smoke,
+and installed Codex start/resume also pass; independent review is clear.
