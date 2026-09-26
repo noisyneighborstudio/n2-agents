@@ -403,6 +403,13 @@ fleet_handle_auth_login() {
   python3 "$scripts_dir/fleet-auth-login.py" serve "$root" "$1" "$2"
 }
 
+fleet_handle_migration_prepare() (
+  migration_name=$(/usr/bin/python3 "$scripts_dir/fleet-auth-migration.py" "$root" "$1" "$2") || return 1
+  fleet_auth_manage migration-accept "$migration_name" --peer "$1" --payload "$2" > "$3/ack" || return 1
+  fleet_envelope "$1" migration-ack "$3/ack" > "$3/signed-ack" || return 1
+  fleet_ok "$3/signed-ack"
+)
+
 fleet_handle_ping() { printf 'pong %s %s\n' "$(fleet_self_machine)" "$(fleet_self_id)" > "$3/out"; fleet_ok "$3/out"; }
 
 fleet_handle_status() {
@@ -1587,7 +1594,7 @@ fleet_route() {  # fleet_route <peerid> <transport> <address> <port> <user> <hom
 fleet_auth_manage() (
   set +e
   action=${1:-}; name=${2:-}
-  case $action in register|status|allow|deny|login|reconcile|retire|grants|allow-login|deny-login|migration-status|migration-begin|migration-abandon) ;; *) fleet_die "usage: agents fleet auth <register|status|allow|deny|login|reconcile|retire|grants|allow-login|deny-login|migration-status|migration-begin|migration-abandon> Profile [--grant ID|--peer ID]" ;; esac
+  case $action in register|status|allow|deny|login|reconcile|retire|grants|allow-login|deny-login|migration-status|migration-begin|migration-abandon|migration-allow|migration-deny|migration-prepare|migration-accept) ;; *) fleet_die "usage: agents fleet auth <register|status|allow|deny|login|reconcile|retire|grants|allow-login|deny-login|migration-status|migration-begin|migration-abandon|migration-allow|migration-deny|migration-prepare> Profile [--grant ID|--peer ID]" ;; esac
   [ -n "$name" ] || fleet_die "an auth profile is required"
   shift 2
   name=$(resolve_profile "$name") || fleet_die "unknown profile"
@@ -1607,6 +1614,17 @@ fleet_auth_manage() (
   owner_gate=$(sync_addr settings "$name" codex .n2-owner-gate)
   sync_res_lock "$owner_gate" || return 1
   trap 'sync_res_unlock "$owner_gate"; sync_res_unlock "$binding_address"; sync_res_unlock "$metadata_address"' EXIT
+  if [ "$action" = migration-prepare ]; then
+    mt=$(mktemp -d "${TMPDIR:-/tmp}/n2migration.XXXXXX") || return 1
+    /usr/bin/python3 "$scripts_dir/fleet-auth-manage.py" migration-request "$root" "$name" "$cfg" "$@" > "$mt/request" || { rm -rf "$mt"; return 1; }
+    mp=$(/usr/bin/python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["recipient"])' "$mt/request") || { rm -rf "$mt"; return 1; }
+    fleet_call "$mp" migration-prepare "$mt/request" > "$mt/reply" || { rm -rf "$mt"; return 1; }
+    ms=$(fleet_verify "$mt/reply" "$mt/verified") || { rm -rf "$mt"; return 1; }
+    [ "$ms" = "$mp" ] && [ "$(fleet_header "$mt/verified/signed" verb)" = migration-ack ] &&
+      [ "$(fleet_header "$mt/verified/signed" to)" = "$(fleet_self_id)" ] || { rm -rf "$mt"; return 1; }
+    /usr/bin/python3 "$scripts_dir/fleet-auth-manage.py" migration-record "$root" "$name" "$cfg" "$@" --payload "$mt/verified/payload" --request "$mt/request"
+    mr=$?; rm -rf "$mt"; return "$mr"
+  fi
   /usr/bin/python3 "$scripts_dir/fleet-auth-manage.py" "$action" "$root" "$name" "$cfg" "$@"
 )
 
@@ -1639,7 +1657,7 @@ agents fleet <verb>
   tools <verb>                             fleet-managed utilities (tools help)
   task <verb>                              dispatch, handoff and task lifecycle (task help)
   send <peerid> --verb <v> [--payload-file <f>]   raw signed request
-  auth <register|status|allow|deny|login|reconcile|retire|grants|allow-login|deny-login|migration-status|migration-begin|migration-abandon> Profile  owner binding and explicit peer consent
+  auth <register|status|allow|deny|login|reconcile|retire|grants|allow-login|deny-login|migration-status|migration-begin|migration-abandon|migration-allow|migration-deny|migration-prepare> Profile  owner binding and explicit peer consent
   serve                                    stdio responder (the remote end)
   help                                     this list
 EOF

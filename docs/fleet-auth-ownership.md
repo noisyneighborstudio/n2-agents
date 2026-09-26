@@ -652,3 +652,27 @@ record for summaries. Unconfirmed records remain subject to the journal's
 30-day diagnostic retention; quota restrictions have their separate durable
 retention. This accounting record does not itself terminate an orphan provider
 process or restore session history.
+
+## Prepare a migration peer
+
+On the receiving machine, `agents fleet auth migration-allow Profile --peer ID`
+explicitly permits that coordinator to install a pending migration barrier for
+this stable profile identity. `migration-deny` revokes further preparation;
+it does not remove an existing barrier. This consent is separate from login
+consent and requires no owner grant.
+
+After local `migration-begin`, run `agents fleet auth migration-prepare Profile
+--peer ID --expected-revision REVISION`. The approved fleet channel verifies the
+request and a signed, recipient-bound acknowledgement of the exact request.
+Profile display names may differ. The peer persists the original coordinator's
+marker under the same locks as profile/credential writes. Managed launch and
+queued credential writes are blocked; existing credential bytes remain intact.
+
+`migration-status` reports each peer's `migrationBarrier` as `prepared` or
+`unacknowledged`. This is durable barrier evidence, not credential retirement or
+proof that unmanaged sessions stopped. Migration remains incomplete. Offline
+peers receive no fabricated acknowledgement. The coordinator persists attempt
+intent before dialing, so a lost response cannot permit abandonment that would
+strand a prepared peer. Retry reconciles the existing barrier and records its
+acknowledgement. Independent peer abandonment is refused; coordinated recovery,
+legacy grant retirement, keychain handling, and activation remain required.
