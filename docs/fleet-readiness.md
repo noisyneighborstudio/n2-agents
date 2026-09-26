@@ -967,3 +967,23 @@ temporary HOME. The staging copy excludes the live QA-root selector.
 This establishes local explicit-ID resume, not cross-machine history transfer or
 live-provider acceptance. Legacy session discovery and `--start-from-session`
 integration, hard-kill process cleanup and final security review remain required.
+
+
+### Session discovery slice
+
+Saved owner-bound sessions now join the eight-column session browser feed with
+newest-first ordering and the existing limit. `--start-from-session` resolves
+the stable profile identity before account-capacity selection, including after
+profile rename and with capitalized vendor names. Existing records with missing,
+duplicate, conflicting or malformed profile identity stop the launch. They never
+fall through to legacy discovery or another account. Account rotation is refused
+for a bound resume.
+
+The slice proof is `scripts/smoke.sh`: four real CLI tests with disposable state
+and a signed synthetic owner. All 37 bridge tests pass with committed process
+code, independently of the parked cleanup work. Correctness review verified the
+capitalization and ambiguous-identity fixes. Formatting, syntax/warning lint and
+smoke gates were each deliberately broken, observed failing, restored and rerun
+successfully. Branch CI runs the same gates and the repository test suite.
+The full local repository test gate passes. The active queue and exact commands
+are in `docs/slices.md`. The pushed commit still requires its CI result.

@@ -582,6 +582,22 @@ cmd_run() {
   if [ -n "$name" ]; then
     want=$name; name=$(resolve_profile "$want") || die "no profile named '$want' (see: agents list)"
   fi
+  # Owner-bound sessions choose their original profile before capacity-based
+  # selection. Never transfer them implicitly to a different account.
+  if [ -n "$sess" ] && { [ -z "$vsel" ] || [ "$(lower "$vsel")" = codex ]; }; then
+    if saved_profile=$(/usr/bin/python3 "$scripts_dir/fleet-auth-bridge.py" --root "$root" --find-session "$sess"); then
+      [ "$rotate" = 0 ] && [ "$best" = 0 ] && [ -z "$bound_account" ] || die "owner-bound resume cannot rotate accounts"
+      [ -z "$name" ] || [ "$name" = "$saved_profile" ] || die "session belongs to profile '$saved_profile'"
+      name=$saved_profile
+      cfg=$(config_dir "$name" codex)
+      migration_launch_guard codex "$cfg"
+      remember_slot "$name" codex
+      exec /usr/bin/python3 "$scripts_dir/fleet-auth-bridge.py" --root "$root" --profile "$name" --config "$cfg" --executable "$(vendor_cli codex)" --tui -- resume "$sess" "$@"
+    else
+      saved_status=$?
+      [ "$saved_status" = 1 ] || die "saved session bindings are unavailable"
+    fi
+  fi
   # A resumed session already says which lab it belongs to.
   if [ -z "$vsel" ] && [ -n "$sess" ]; then
     vsel=$(session_vendor "$sess") || die "session $sess not found in any profile"
@@ -1157,7 +1173,7 @@ sessions_cache="$root/.sessions.v1.tsv"
 # transcripts we can read unless narrowed. A contract for the tray, like
 # `porcelain`:
 #   <profile> <vendor> <session-id> <mtime epoch> <cwd> <first prompt> <branch> <title>
-sessions_porcelain() {  # profiles, vendors, limit ("" = all)
+sessions_porcelain_legacy() {  # profiles, vendors, limit ("" = all)
   mkdir -p "$root"
   touch "$sessions_cache"
   sp_list=$(mktemp) sp_new=$(mktemp) tab=$(printf '\t')
@@ -1202,6 +1218,23 @@ sessions_porcelain() {  # profiles, vendors, limit ("" = all)
     cat "$sp_new"; } > "$sessions_cache.$$"
   mv "$sessions_cache.$$" "$sessions_cache"
   rm -f "$sp_list" "$sp_new"
+}
+
+sessions_porcelain() {
+  sp_combined=$(mktemp)
+  sessions_porcelain_legacy "$1" "$2" "$3" > "$sp_combined"
+  for sp_vendor in $2; do
+    [ "$sp_vendor" = codex ] || continue
+      for sp_profile in $1; do
+        if ! /usr/bin/python3 "$scripts_dir/fleet-auth-bridge.py" --root "$root" --profile "$sp_profile" --list-sessions >> "$sp_combined"; then
+          rm -f "$sp_combined"
+          die "saved session bindings are unavailable"
+        fi
+      done
+  done
+  sort -t "$(printf '\t')" -k4,4nr "$sp_combined" | awk -F '\t' -v limit="$3" '
+    !seen[$1 FS $2 FS $3]++ { if (limit == "" || count < limit) { print; count++ } }'
+  rm -f "$sp_combined"
 }
 
 cmd_sessions() {

@@ -344,6 +344,59 @@ class BridgeIntegrationTests(unittest.TestCase):
             self.assertNotEqual(result.returncode,0)
             self.assertEqual(trace.read_bytes(),before)
 
+    def test_n2_session_browser_and_resume_discover_original_profile(self):
+        record=json.loads((self.root/'Work/codex/.n2-owner.json').read_text())
+        store=m.Sessions(self.root);store.remember('saved',record,os.getcwd())
+        store.remember('newer',record,os.getcwd());store.model('newer','model-a')
+        env=dict(os.environ,N2_AGENTS_ROOT=str(self.root))
+        result=subprocess.run([str(ROOT/'agents'),'sessions','Work','--vendor','codex','--porcelain','--limit','1'],env=env,text=True,capture_output=True,timeout=10)
+        self.assertEqual(result.returncode,0,result.stderr)
+        rows=result.stdout.splitlines();self.assertEqual(len(rows),1)
+        fields=rows[0].split('\t');self.assertEqual(len(fields),8)
+        self.assertEqual(fields[:2],['Work','codex']);self.assertIn(fields[2],('saved','newer'))
+        self.assertEqual(fields[4],os.getcwd())
+        executable=self.wire.bin/'codex';executable.rename(self.wire.bin/'provider')
+        executable.write_bytes((ROOT/'tests/fake-owner-terminal.py').read_bytes());executable.chmod(0o700)
+        # Profile rename must not break a stable profile-ID binding.
+        (self.root/'Work').rename(self.root/'Renamed')
+        result=subprocess.run([str(ROOT/'agents'),'run','--start-from-session=saved'],env=env,text=True,capture_output=True,timeout=20)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(result.stdout.strip(),'terminal-connected')
+        result=subprocess.run([str(ROOT/'agents'),'run','--next','--start-from-session=saved'],env=env,text=True,capture_output=True,timeout=10)
+        self.assertNotEqual(result.returncode,0);self.assertIn('cannot rotate',result.stderr)
+
+    def test_capitalized_vendor_resumes_saved_session(self):
+        record=json.loads((self.root/'Work/codex/.n2-owner.json').read_text())
+        m.Sessions(self.root).remember('saved',record,os.getcwd())
+        executable=self.wire.bin/'codex';executable.rename(self.wire.bin/'provider')
+        executable.write_bytes((ROOT/'tests/fake-owner-terminal.py').read_bytes());executable.chmod(0o700)
+        result=subprocess.run([str(ROOT/'agents'),'run','Work','--vendor','Codex','--start-from-session=saved'],env=dict(os.environ,N2_AGENTS_ROOT=str(self.root)),text=True,capture_output=True,timeout=20)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(result.stdout.strip(),'terminal-connected')
+
+    def test_existing_session_with_duplicate_or_missing_profile_never_falls_back(self):
+        record=json.loads((self.root/'Work/codex/.n2-owner.json').read_text())
+        m.Sessions(self.root).remember('saved',record,os.getcwd())
+        duplicate=self.root/'Duplicate';duplicate.mkdir()
+        (duplicate/'.n2-profile').write_bytes((self.root/'Work/.n2-profile').read_bytes())
+        for missing in (False,True):
+            if missing:
+                (duplicate/'.n2-profile').unlink();(self.root/'Work/.n2-profile').unlink()
+            result=subprocess.run([str(ROOT/'agents'),'run','--start-from-session=saved'],env=dict(os.environ,N2_AGENTS_ROOT=str(self.root)),text=True,capture_output=True,timeout=10)
+            self.assertNotEqual(result.returncode,0)
+            self.assertIn('bindings are unavailable',result.stderr)
+            self.assertNotIn('next best',result.stderr)
+
+    def test_session_discovery_does_not_hide_corrupt_or_foreign_bindings(self):
+        record=json.loads((self.root/'Work/codex/.n2-owner.json').read_text())
+        store=m.Sessions(self.root);store.remember('saved',record,os.getcwd())
+        self.assertEqual(m.session_rows(self.root,'Missing'),[])
+        self.assertEqual(m.session_rows(self.root,identifier='absent'),[])
+        path=store.thread_path('saved');path.write_text('{}');path.chmod(0o600)
+        result=subprocess.run([str(ROOT/'agents'),'run','--start-from-session=saved'],env=dict(os.environ,N2_AGENTS_ROOT=str(self.root)),text=True,capture_output=True,timeout=10)
+        self.assertNotEqual(result.returncode,0);self.assertIn('bindings are unavailable',result.stderr)
+        self.assertNotIn('next best',result.stderr)
+
     def test_resume_model_override_replaces_saved_selection_only_after_success(self):
         sessions=m.Sessions(self.root);record=json.loads((self.root/'Work/codex/.n2-owner.json').read_text())
         sessions.remember('saved',record,'/project');sessions.model('saved','model-b')

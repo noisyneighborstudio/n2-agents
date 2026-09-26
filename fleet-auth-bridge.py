@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
 import signal
 import socket
 import subprocess
@@ -47,7 +48,7 @@ class Sessions:
             self.owner.private_directory(path,create=True)
 
     def thread_path(self,thread):
-        if not isinstance(thread,str) or not 0<len(thread)<=256:
+        if not isinstance(thread,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,256}',thread):
             raise ValueError('invalid session identifier')
         return self.base/'threads'/hashlib.sha256(thread.encode()).hexdigest()
 
@@ -118,6 +119,35 @@ class Sessions:
                 if os.path.lexists(source):os.replace(source,destination)
                 elif os.path.lexists(destination):destination.unlink()
         return str(home)
+
+
+def session_rows(root,profile=None,identifier=None):
+    base=Path(root)/'codex-sessions'
+    if not os.path.lexists(base):return []
+    sessions=Sessions(root);base=sessions.base
+    metadata=client.load('n2_session_metadata','profile-metadata.py').report(root,None)['profiles']
+    paths=[sessions.thread_path(identifier)] if identifier is not None else sorted((base/'threads').iterdir())
+    rows=[]
+    for path in paths:
+        if identifier is None and not re.fullmatch('[0-9a-f]{64}',path.name):continue
+        try:raw=sessions.owner.private_file(path,16384)
+        except FileNotFoundError:continue
+        saved=json.loads(raw,object_pairs_hook=sessions.owner.unique)
+        thread=saved.get('thread') if isinstance(saved,dict) else None
+        if sessions.thread_path(thread)!=path:raise ValueError('session index path mismatch')
+        saved=sessions.read(thread)
+        matches=[row for row in metadata if row['profileId']==saved['record']['profileId']]
+        if len(matches)!=1 or matches[0]['metadataStatus']!='ready':
+            raise ValueError('session profile identity is unavailable or ambiguous')
+        name=matches[0]['name']
+        if profile is not None and name!=profile:continue
+        updated=path.stat().st_mtime
+        model_path=path.with_suffix('.model')
+        if os.path.lexists(model_path):
+            sessions.model(thread);updated=max(updated,model_path.stat().st_mtime)
+        clean=lambda value:re.sub(r'[\t\r\n]', ' ',value)
+        rows.append([name,'codex',thread,str(int(updated)),clean(saved['cwd']),'','','Codex session'])
+    return sorted(rows,key=lambda row:(-int(row[3]),row[2]))
 
 
 def valid_id(value):
@@ -434,13 +464,24 @@ def terminal(provider,home,executable,arguments,receipts=None,sessions=None,reco
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--root',required=True);parser.add_argument('--profile',required=True)
-    parser.add_argument('--config',required=True);parser.add_argument('--executable',default='codex')
+    parser.add_argument('--root',required=True);parser.add_argument('--profile')
+    discovery=parser.add_mutually_exclusive_group()
+    discovery.add_argument('--list-sessions',action='store_true');discovery.add_argument('--find-session')
+    parser.add_argument('--config');parser.add_argument('--executable',default='codex')
     parser.add_argument('--tui',action='store_true');parser.add_argument('frontend_args',nargs=argparse.REMAINDER)
     args=parser.parse_args()
     def interrupted(*_):raise KeyboardInterrupt()
     signal.signal(signal.SIGTERM,interrupted)
     try:
+        if args.list_sessions or args.find_session is not None:
+            rows=session_rows(args.root,args.profile,args.find_session)
+            if args.find_session is not None:
+                if not rows:return 1
+                print(rows[0][0])
+            else:
+                for row in rows:print('\t'.join(row))
+            return 0
+        if not args.config or not args.profile:raise ValueError('profile and config are required')
         broker=client.for_profile(args.root,args.config,args.profile)
         sessions=Sessions(args.root)
         arguments=args.frontend_args[1:] if args.frontend_args[:1]==['--'] else args.frontend_args
@@ -470,6 +511,6 @@ def main():
         finally:journal.db.close()
         return 0
     except (Exception,KeyboardInterrupt):
-        print('agents: account-bound app-server unavailable',file=sys.stderr);return 1
+        print('agents: account-bound app-server unavailable',file=sys.stderr);return 2 if args.list_sessions or args.find_session is not None else 1
 
 if __name__=='__main__':sys.exit(main())
