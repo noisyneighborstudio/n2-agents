@@ -93,6 +93,85 @@ class ReaderTests(unittest.TestCase):
         self.assertEqual(status, 'fetch-error')
         self.assertIsNone(request)
 
+    def test_authenticated_claude_identity_uses_stable_account_and_organization(self):
+        profile = {'account': {'uuid': '11111111-1111-4111-8111-111111111111', 'email': 'one@example.invalid'},
+                   'organization': {'uuid': '22222222-2222-4222-8222-222222222222'}}
+        identity = u.claude_account_identity(profile)
+        self.assertEqual(identity['status'], 'verified')
+        profile['account']['email'] = 'renamed@example.invalid'
+        self.assertEqual(identity, u.claude_account_identity(profile))
+        profile['account']['uuid'] = '33333333-3333-4333-8333-333333333333'
+        self.assertNotEqual(identity['accountHash'], u.claude_account_identity(profile)['accountHash'])
+        profile['account']['uuid'] = '11111111-1111-4111-8111-111111111111'
+        profile['organization']['uuid'] = '44444444-4444-4444-8444-444444444444'
+        self.assertNotEqual(identity['accountHash'], u.claude_account_identity(profile)['accountHash'])
+        self.assertNotIn('example.invalid', json.dumps(identity))
+        for malformed in ({}, {'account': None}, {'account': {'uuid': 'cached-name'}, 'organization': {}},
+                          {'account': {'uuid': True}, 'organization': {'uuid': []}}):
+            self.assertEqual(u.claude_account_identity(malformed), {'status': 'unavailable'})
+
+    def test_claude_profile_and_allowance_share_captured_bearer(self):
+        profile = {'account': {'uuid': '11111111-1111-4111-8111-111111111111'},
+                   'organization': {'uuid': '22222222-2222-4222-8222-222222222222'}}
+        credential = {'accessToken': 'synthetic-bearer'}
+        with patch.object(u, 'claude_creds', return_value=(credential, 'ok')), \
+             patch.object(u, 'claude_identity', return_value={'status': 'login-only', 'loginHash': 'a' * 64}), \
+             patch.object(u, 'claude_oauth_read', side_effect=[profile, {'five_hour': {'utilization': 25}}]) as read:
+            status, fetch = u.claude('Default', '/fixture')
+            result = fetch()
+        self.assertEqual(status, 'ok')
+        self.assertEqual(read.call_args_list[0].args, ('profile', 'synthetic-bearer'))
+        self.assertEqual(read.call_args_list[1].args, ('usage', 'synthetic-bearer'))
+        self.assertEqual(result['_identity'], u.claude_account_identity(profile))
+        self.assertNotIn('synthetic-bearer', json.dumps(result))
+        self.assertNotIn('11111111-1111', json.dumps(result))
+
+    def test_claude_profile_failure_preserves_usage_without_claiming_identity(self):
+        for failure in (OSError('network'), ValueError('malformed'),
+                        u.urllib.error.HTTPError('https://api.anthropic.com', 403, 'denied', {}, None)):
+            with self.subTest(failure=type(failure).__name__), \
+                 patch.object(u, 'claude_creds', return_value=({'accessToken': 'synthetic'}, 'ok')), \
+                 patch.object(u, 'claude_identity', return_value={'status': 'login-only', 'loginHash': 'a' * 64}), \
+                 patch.object(u, 'claude_oauth_read', side_effect=[failure, {'five_hour': {'utilization': 25}}]):
+                _, fetch = u.claude('Default', '/fixture')
+                result = fetch()
+                self.assertEqual(result['five_hour']['utilization'], 25)
+                self.assertEqual(result['_identity'], {'status': 'unavailable'})
+
+    def test_claude_switch_during_network_read_invalidates_measurement(self):
+        with patch.object(u, 'claude_creds', side_effect=[({'accessToken': 'first'}, 'ok'),
+                    ({'accessToken': 'first'}, 'ok'), ({'accessToken': 'second'}, 'ok')]), \
+             patch.object(u, 'claude_identity', return_value={'status': 'unknown'}), \
+             patch.object(u, 'claude_oauth_read', side_effect=[{}, {'five_hour': {'utilization': 25}}]):
+            _, fetch = u.claude('Default', '/fixture')
+            with self.assertRaisesRegex(ValueError, 'credentials changed'):
+                fetch()
+
+    def test_claude_unreadable_cli_route_prevents_headroom(self):
+        with patch.object(u, 'claude_creds', return_value=({'accessToken': 'synthetic'}, 'ok')), \
+             patch.object(u, 'claude_identity', return_value={'status': 'unavailable'}):
+            self.assertEqual(u.claude('Default', '/fixture'), ('fetch-error', None))
+
+    def test_claude_custom_base_does_not_measure_first_party_allowance(self):
+        with patch.dict(os.environ, {'ANTHROPIC_BASE_URL': 'https://gateway.example.invalid'}, clear=True):
+            self.assertEqual(u.claude_creds('/fixture', True), (None, 'credential-override'))
+
+    def test_claude_oauth_transport_bounds_and_redirects(self):
+        with patch.object(u.urllib.request, 'build_opener') as build:
+            build.return_value.open.return_value = io.BytesIO(b'{"ok":true}')
+            self.assertEqual(u.claude_oauth_read('profile', 'synthetic'), {'ok': True})
+            request = build.return_value.open.call_args.args[0]
+            self.assertEqual(request.full_url, 'https://api.anthropic.com/api/oauth/profile')
+            self.assertEqual(request.get_header('Authorization'), 'Bearer synthetic')
+            handler = build.call_args.args[0]
+            for target in ('https://api.anthropic.com/other', 'https://other.example.invalid', 'http://api.anthropic.com'):
+                self.assertIsNone(handler.redirect_request(request, None, 302, 'moved', {}, target))
+            build.return_value.open.return_value = io.BytesIO(b' ' * 1048577)
+            with self.assertRaisesRegex(ValueError, 'too large'):
+                u.claude_oauth_read('usage', 'synthetic')
+            with self.assertRaisesRegex(ValueError, 'unsupported'):
+                u.claude_oauth_read('../other', 'synthetic')
+
     def test_weekly_only(self):
         row = u.codex_row({"rate_limit": {"primary_window": {
             "used_percent": 72, "limit_window_seconds": 604800, "reset_at": 1790411072}}})

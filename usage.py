@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Provider usage readers. Stdout contains sanitized measurements only."""
-import hashlib, importlib.util, json, math, os, signal, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request
+import hashlib, importlib.util, json, math, os, signal, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request, uuid
 from datetime import datetime, timezone
 
 def claude_creds(cfg, is_default):
     # agents run always sets CLAUDE_CONFIG_DIR to this literal path. Other
     # paths and the unscoped Keychain entry can belong to different accounts.
     if any(os.environ.get(k) for k in ('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN')):
+        return None, 'credential-override'
+    if os.environ.get('ANTHROPIC_BASE_URL', 'https://api.anthropic.com').rstrip('/') != 'https://api.anthropic.com':
         return None, 'credential-override'
     secure_dir = os.environ.get('CLAUDE_SECURESTORAGE_CONFIG_DIR', cfg)
     if secure_dir != cfg:
@@ -58,23 +60,67 @@ def claude_identity(cfg):
             return {'status': 'unavailable'}
 
 
+class NoCredentialRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Even a same-origin redirect is an undocumented route. Never forward
+        # a subscription bearer to a redirected endpoint.
+        return None
+
+
+def claude_oauth_read(endpoint, token):
+    if endpoint not in ('profile', 'usage'):
+        raise ValueError('unsupported OAuth resource')
+    request = urllib.request.Request('https://api.anthropic.com/api/oauth/' + endpoint,
+        headers={'Authorization': 'Bearer ' + token, 'Cache-Control': 'no-cache',
+                 'anthropic-beta': 'oauth-2025-04-20', 'User-Agent': 'n2-agents'})
+    opener = urllib.request.build_opener(NoCredentialRedirect())
+    with opener.open(request, timeout=10) as response:
+        body = response.read(1048577)
+    if len(body) > 1048576:
+        raise ValueError('OAuth response too large')
+    result = json.loads(body)
+    if not isinstance(result, dict):
+        raise ValueError('invalid OAuth response')
+    return result
+
+
+def claude_account_identity(profile):
+    """Only call with the authenticated OAuth profile response, never CLI cache."""
+    try:
+        account = str(uuid.UUID(profile['account']['uuid']))
+        organization = str(uuid.UUID(profile['organization']['uuid']))
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return {'status': 'unavailable'}
+    # Stable provider IDs distinguish organization members and survive email
+    # changes. The versioned domain cannot collide with the old cached hash.
+    key = json.dumps(['claude-oauth-profile-v1', organization, account], separators=(',', ':'))
+    return {'status': 'verified', 'accountHash': hashlib.sha256(key.encode()).hexdigest(),
+            'organizationHash': hashlib.sha256(organization.encode()).hexdigest()}
+
+
 def claude(name, cfg):
     c, status = claude_creds(cfg, name == 'Default')
     if status != 'ok':
         return status, None
-    identity = claude_identity(cfg)
-    if identity['status'] == 'conflicting':
+    hint = claude_identity(cfg)
+    if hint['status'] == 'conflicting':
         return 'credential-override', None
+    if hint['status'] == 'unavailable':
+        return 'fetch-error', None
     current, current_status = claude_creds(cfg, name == 'Default')
     if current_status != 'ok' or current != c:
         return 'fetch-error', None
-    request = urllib.request.Request('https://api.anthropic.com/api/oauth/usage',
-        headers={'Authorization': 'Bearer ' + c['accessToken'],
-                 'anthropic-beta': 'oauth-2025-04-20', 'User-Agent': 'n2-agents'})
     def read():
-        result = json.load(urllib.request.urlopen(request, timeout=10))
-        if not isinstance(result, dict):
-            raise ValueError('invalid usage response')
+        # Both requests use exactly the captured bearer. A profile endpoint
+        # failure leaves valid allowance readable, but never a verified account.
+        try:
+            identity = claude_account_identity(claude_oauth_read('profile', c['accessToken']))
+        except (OSError, ValueError):
+            identity = {'status': 'unavailable'}
+        result = claude_oauth_read('usage', c['accessToken'])
+        current, current_status = claude_creds(cfg, name == 'Default')
+        if current_status != 'ok' or current != c:
+            raise ValueError('credentials changed during allowance read')
         result['_identity'] = identity
         return result
     return 'ok', read

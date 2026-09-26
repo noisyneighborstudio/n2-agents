@@ -117,3 +117,19 @@ login hint, never a verified account used for cross-machine restriction matching
 The [canonical CLI documentation](https://code.claude.com/docs/en/cli-reference)
 describes authentication status, but does not promise a server-validated identity
 response. Authenticated account evidence remains required before launch binding.
+
+Authenticated Claude measurement identity now comes from the provider client's
+OAuth profile endpoint, using the same captured bearer as the allowance read.
+Stable account and organization IDs are hashed; no raw profile data is retained.
+A failed profile lookup cannot create verified identity, redirects are refused,
+and credential changes during the read invalidate the sample. Twenty-three reader
+tests and 26 journal tests pass. Live September 26 probes found HTTP 401 for both
+local Claude profiles' expired tokens; the M5's five configured Claude profiles
+returned credential-store-unavailable over SSH. Those probes establish current
+unavailability, not a successful live identity attribution. Launch binding remains
+required, and no login, refresh, Keychain unlock or app installation was performed.
+
+The full regression suite passes with the authenticated measurement reader.
+Independent correctness and security reviews report no actionable findings in
+this change. Successful live authenticated identity and launch attribution are
+not claimed by those synthetic checks.

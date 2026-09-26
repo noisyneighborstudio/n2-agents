@@ -168,8 +168,26 @@ An isolated Claude Code 2.1.283 probe with fabricated credentials returned
 `loggedIn: true` and the synthetic account metadata. N2 therefore retains only a
 `login-only` hint and never creates a verified account hash from this response.
 API-key or alternate-provider status prevents measuring a different subscription
-account. Unavailable or incomplete CLI identity remains explicit. Authenticated
-account evidence and credential refresh safety remain unresolved.
+account. Unavailable CLI route status prevents advertising capacity.
+
+For first-party subscription allowance, N2 also requests `/api/oauth/profile`
+using exactly the captured bearer used for `/api/oauth/usage`. A valid profile
+response supplies the stable account UUID and organization UUID. N2 hashes that
+pair with the `claude-oauth-profile-v1` domain; email changes do not create a new
+account, and members of the same organization remain distinct. Raw identifiers,
+profile details and bearer tokens are not stored in the usage journal. Missing
+or failed profile evidence leaves identity `unavailable`, even if the allowance
+request succeeds. The two authenticated endpoints reject redirects, and a local
+credential change during the requests invalidates the observation.
+
+The profile endpoint and response shape were confirmed in the provider-distributed
+Claude Code 2.1.283 client. They are internal interfaces, not a documented public
+API compatibility promise. Canonical authentication documentation describes
+credential routing and precedence. N2 refuses an inherited custom
+`ANTHROPIC_BASE_URL` for these first-party reads. This verifies the account behind
+the measurement bearer; it does not prove that a later execution, with its
+project settings and credential lifecycle, uses that bearer. Launch binding and
+credential refresh safety remain separate requirements.
 
 References: [Codex selected workspace routing](https://github.com/openai/codex/blob/de9e78e3e7caed0fdd75d20ae617faa646dfef3c/codex-rs/app-server/README.md#selected-workspace-routing)
 and [Claude authentication status](https://code.claude.com/docs/en/cli-reference).
