@@ -609,11 +609,12 @@ n2_root=$PWD
 loop_root="$test_root/loop"
 mkdir -p "$loop_root/home" "$loop_root/bin"
 cp tests/fake-loop-agent.sh "$loop_root/bin/codex"
+cp tests/fake-loop-protocol.py "$loop_root/bin/fake-loop-protocol.py"
 cp "$fake_bin/security" "$loop_root/bin/security"
 chmod +x "$loop_root/bin/codex"
 printf '{"rate_limit": {"limit_reached": false, "primary_window": {"used_percent": 10, "limit_window_seconds": 604800, "reset_at": 1790411072}, "secondary_window": null}}' \
   > "$loop_root/usage.json"
-loop_env=(HOME="$loop_root/home" PATH="$loop_root/bin:/usr/bin:/bin" N2_LOOP_HOME="$loop_root/runs"
+loop_env=(LOOP_FAKE_STRUCTURED=1 HOME="$loop_root/home" PATH="$loop_root/bin:/usr/bin:/bin" N2_LOOP_HOME="$loop_root/runs"
           N2_CODEX_USAGE_URL="file://$loop_root/usage.json")
 for p in Work Home; do
   env $loop_env ./agents new $p --vendors codex >/dev/null 2>&1
@@ -667,6 +668,10 @@ matched=[e for e in events if e['kind']=='quota-rejected' and e['data'].get('att
 assert matched and matched[0]['profile']=='Home'
 assert matched[0]['data']['identity']['status']=='unknown'
 assert matched[0]['data']['attribution']['totalTokens'] is None
+successes=[e for e in events if e['kind']=='execution-succeeded' and e['data'].get('attribution',{}).get('task','').startswith(sys.argv[2]+'/')]
+assert successes and successes[0]['data']['attribution']['totalTokens']==60
+assert successes[0]['data']['attribution']['cachedInputTokens']==30
+assert successes[0]['data']['session'].startswith('fixture-')
 PYTEST
 [ "$(field 's["cooldowns"]["codex|Home"]["until"][:4]')" = 2099 ]   # the reset time the lab stated
 [ "$(field '{c["lastSlot"] for c in s["plan"]["chunks"]}')" = "{'codex|Work'}" ]

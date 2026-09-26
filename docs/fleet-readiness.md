@@ -63,3 +63,13 @@ tests, a two-peer exchange test and the full loop regression pass. Independent
 security and correctness follow-ups are clear for this journal scope. This does
 not yet establish verified account identity or apply shared rejections to
 scheduling; token and provider-session fields remain explicitly unknown.
+
+Task telemetry now reads structured provider output. Claude whole-tree model
+buckets and narrower main-agent fallback have distinct scopes. Codex cache input
+is not double-counted. Session IDs and reported counts reach the journal on
+successful and failed turns; account attribution remains the next dependency.
+The full loop suite passes with a synthetic Codex JSONL process, including a
+journal assertion of 60 total tokens and 30 cached input tokens. Nine journal
+tests and focused provider-result parsing checks pass. `agents usage summary`
+deduplicates task observations and splits mixed-model buckets without adding
+the aggregate again. These tests establish behavior, not live token totals.

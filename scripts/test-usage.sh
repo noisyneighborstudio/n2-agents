@@ -12,3 +12,6 @@ python3 scripts/test-usage-reader.py
 
 python3 scripts/test-usage-store.py
 sh scripts/test-usage-fleet.sh
+
+swiftc loop/UsageAttribution.swift tests/TaskUsageTests.swift -o "$work/test-task-usage"
+"$work/test-task-usage"

@@ -9,6 +9,9 @@
 #   fail-b-once       the first verification rejects criterion has-b
 #   liar              the sign-off says done whatever the evidence says
 set -eu
+if [ "${LOOP_FAKE_STRUCTURED:-}" = 1 ]; then
+  exec /usr/bin/python3 "$(dirname "$0")/fake-loop-protocol.py" "$0" "$@"
+fi
 prompt=$(cat)
 role=$(printf '%s\n' "$prompt" | sed -n 's/^ROLE: //p' | head -1)
 chunk=$(printf '%s\n' "$prompt" | sed -n 's/^CHUNK: //p' | head -1)

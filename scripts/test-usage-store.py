@@ -70,6 +70,27 @@ class JournalTests(unittest.TestCase):
         self.b.import_events(exported, 'peer-a')
         self.assertEqual(len(self.b.events()), len(exported))
 
+    def test_token_summary_deduplicates_tasks_and_keeps_unknown_accounts_separate(self):
+        one = {'status': 'ok', 'identity': {'status': 'unknown'}, 'attribution': {'task': 'one', 'totalTokens': 60}}
+        self.a.append('codex', 'Default', 'execution-succeeded', one, time.time() - 10)
+        self.a.append('codex', 'Default', 'execution-succeeded', one)
+        self.b.append('codex', 'Default', 'execution-failed', {'status': 'execution-failed', 'attribution': {'task': 'two', 'totalTokens': None}})
+        self.b.import_events(self.a.events(own=True), 'peer-a')
+        groups = self.b.token_summary()['groups']
+        self.assertEqual(len(groups), 2, 'matching profile names do not establish one account')
+        self.assertEqual(sum(g['reportedTotalTokens'] for g in groups), 60)
+        self.assertEqual(sum(g['unknownTokenTasks'] for g in groups), 1)
+        self.assertEqual(sum(g['tasks'] for g in groups), 2)
+
+    def test_mixed_model_summary_splits_buckets_without_adding_aggregate_again(self):
+        self.a.append('claude', 'Default', 'execution-succeeded', {
+            'status': 'ok', 'usageScope': 'invocation-tree',
+            'attribution': {'task': 'one', 'totalTokens': 30},
+            'modelUsage': {'parent': {'totalTokens': 10}, 'child': {'totalTokens': 20}}})
+        summary = self.a.token_summary()
+        self.assertEqual(summary['uniqueTasks'], 1)
+        self.assertEqual({g['model']: g['reportedTotalTokens'] for g in summary['groups']}, {'parent': 10, 'child': 20})
+
     def test_symlink_database_refused(self):
         root = Path(self.temp.name) / 'linked'
         root.mkdir()

@@ -22,6 +22,7 @@ struct TurnOutput {
     var stdout: String
     var stderr: String
     var seconds: Double
+    var usage = TaskUsage()
     var tail: String { String((stdout + "\n" + stderr).suffix(3000)) }
 }
 
@@ -44,11 +45,12 @@ func runTurn(_ r: TurnRequest, abort: Flag, onSpawn: (pid_t) -> Void = { _ in })
     let (exit, timedOut, aborted) = try spawnAndWait(argv, cwd: r.cwd, stdin: adapter.promptOnStdin ? promptFile : "/dev/null",
                                                      stdout: outFile, stderr: errFile, timeout: r.timeout, detach: r.detach,
                                                      abort: abort, onSpawn: onSpawn)
+    let parsed = AgentResult.parse((try? String(contentsOfFile: outFile, encoding: .utf8)) ?? "", vendor: r.slot.vendor)
     return TurnOutput(
         exit: exit, timedOut: timedOut, aborted: aborted,
-        stdout: (try? String(contentsOfFile: outFile, encoding: .utf8)) ?? "",
+        stdout: parsed.text,
         stderr: (try? String(contentsOfFile: errFile, encoding: .utf8)) ?? "",
-        seconds: Date().timeIntervalSince(started))
+        seconds: Date().timeIntervalSince(started), usage: parsed.usage)
 }
 
 /// Spawn `argv` (absolute path first) and wait, stopping it at the timeout or

@@ -34,12 +34,12 @@ struct Adapter {
             let (m, e) = model[effort]!
             // auto: Claude's own classifier approves each tool call. Headless
             // prompts must go nowhere, or it waits on a host that isn't there.
-            return ["-p", "--output-format", "text", "--permission-mode", "auto", "--permission-prompts", "none",
+            return ["-p", "--output-format", "json", "--permission-mode", "auto", "--permission-prompts", "none",
                     "--model", m, "--effort", e]
         },
         Adapter(vendor: "codex", strength: [.deep: 3, .standard: 3, .light: 2], promptOnStdin: true) { effort, _ in
             let e: [Effort: String] = [.deep: "high", .standard: "medium", .light: "low"]
-            return ["exec", "--color", "never", "--approve-for-me", "-c", "model_reasoning_effort=\"\(e[effort]!)\"", "-"]
+            return ["exec", "--json", "--color", "never", "--approve-for-me", "-c", "model_reasoning_effort=\"\(e[effort]!)\"", "-"]
         },
         Adapter(vendor: "muse", strength: [.deep: 2, .standard: 2, .light: 2], promptOnStdin: false) { effort, file in
             let e: [Effort: String] = [.deep: "high", .standard: "medium", .light: "low"]
@@ -198,22 +198,26 @@ enum Failure {
 
 /// Retain only structured execution evidence. Provider output and prompts never
 /// enter the shared journal; unavailable token/account/session fields stay null.
-func recordUsageOutcome(cli: String, slot: String, outcome: String, task: String, effort: Effort) {
-    guard outcome == "quota" || outcome == "ok" else { return }
+func recordUsageOutcome(cli: String, slot: String, outcome: String, task: String, effort: Effort, usage: TaskUsage = TaskUsage()) {
     let parts = slot.split(separator: "|", maxSplits: 1).map(String.init)
     guard parts.count == 2 else { return }
-    let model: Any = parts[0] == "claude" ? ([Effort.deep: "opus", .standard: "sonnet", .light: "haiku"][effort] ?? "unknown") as Any : NSNull()
+    let requestedModel: Any = parts[0] == "claude" ? ([Effort.deep: "opus", .standard: "sonnet", .light: "haiku"][effort] ?? "unknown") as Any : NSNull()
     let value: [String: Any] = [
-        "status": outcome == "quota" ? "restricted" : "ok", "source": "n2-loop",
-        "identity": ["status": "unknown"], "session": NSNull(), "model": model,
+        "status": outcome == "quota" ? "restricted" : (outcome == "ok" ? "ok" : "execution-failed"), "source": "n2-loop",
+        "identity": ["status": "unknown"], "session": usage.session as Any? ?? NSNull(), "model": usage.model as Any? ?? NSNull(),
+        "requestedModel": requestedModel, "usageScope": usage.scope,
+        "modelUsage": usage.models.mapValues { $0.counts },
         "resetKnown": false,
         "restrictions": outcome == "quota" ? [["scope": "unknown", "reason": "quota-rejected"]] : [],
-        "attribution": ["task": task, "inputTokens": NSNull(), "outputTokens": NSNull(),
-                        "cachedInputTokens": NSNull(), "totalTokens": NSNull()]
+        "attribution": ["task": task, "inputTokens": usage.inputTokens as Any? ?? NSNull(), "outputTokens": usage.outputTokens as Any? ?? NSNull(),
+                        "cachedInputTokens": usage.cachedInputTokens as Any? ?? NSNull(),
+                        "cacheCreationInputTokens": usage.cacheCreationInputTokens as Any? ?? NSNull(),
+                        "uncachedInputTokens": usage.uncachedInputTokens as Any? ?? NSNull(),
+                        "totalTokens": usage.totalTokens as Any? ?? NSNull()]
     ]
     guard let data = try? JSONSerialization.data(withJSONObject: value),
           let json = String(data: data, encoding: .utf8) else { return }
     let result = run(cli, ["usage", "record", "--provider", parts[0], "--profile", parts[1],
-                           "--kind", outcome == "quota" ? "quota-rejected" : "execution-succeeded", "--data", json])
+                           "--kind", outcome == "quota" ? "quota-rejected" : (outcome == "ok" ? "execution-succeeded" : "execution-failed"), "--data", json])
     if !result.ok { fputs("agents: could not retain execution usage observation\n", stderr) }
 }

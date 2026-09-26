@@ -15,7 +15,7 @@ import uuid
 MAX_BATCH = 1000
 MAX_BYTES = 2 * 1024 * 1024
 STATUSES = {'ok', 'restricted', 'no-token', 'stale-token', 'fetch-error', 'rate-limited',
-            'no-usage-api', 'shared-login', 'credential-override', 'credential-store-unavailable'}
+            'no-usage-api', 'shared-login', 'credential-override', 'credential-store-unavailable', 'execution-failed'}
 
 
 def canonical(value):
@@ -34,7 +34,7 @@ def finite(value, maximum=None):
 
 def validate_data(data):
     fields(data, {'status', 'identity', 'windows', 'restrictions', 'credits', 'source', 'display',
-                  'session', 'model', 'recheckAt', 'resetKnown', 'attribution'})
+                  'session', 'model', 'requestedModel', 'usageScope', 'modelUsage', 'recheckAt', 'resetKnown', 'attribution'})
     identity = data.get('identity', {})
     fields(identity, {'status', 'loginHash', 'accountHash', 'organizationHash'})
     if identity.get('status', 'unknown') not in ('unknown', 'login-only', 'verified', 'conflicting', 'unavailable'):
@@ -63,11 +63,11 @@ def validate_data(data):
         fields(credit, {'hasCredits', 'unlimited', 'balance', 'is_enabled', 'monthly_limit',
                         'used_credits', 'utilization', 'disabled_reason', 'spend_limit_reached'})
     fields(data.get('display', {}), {'shortUsed', 'longUsed', 'shortResets', 'longResets'})
-    fields(data.get('attribution', {}), {'inputTokens', 'outputTokens', 'cachedInputTokens', 'totalTokens', 'task'})
+    fields(data.get('attribution', {}), {'inputTokens', 'outputTokens', 'cachedInputTokens', 'cacheCreationInputTokens', 'uncachedInputTokens', 'totalTokens', 'task'})
     def scalar(value):
         if isinstance(value, (dict, list)):
             raise ValueError('containers are not metadata leaves')
-    for key in ('session', 'model', 'source'):
+    for key in ('session', 'model', 'requestedModel', 'usageScope', 'source'):
         if data.get(key) is not None and not isinstance(data[key], str):
             raise ValueError('invalid text metadata')
     if data.get('recheckAt') is not None and not finite(data['recheckAt']):
@@ -93,6 +93,14 @@ def validate_data(data):
                 raise ValueError('invalid task identity')
         elif value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 0):
             raise ValueError('invalid token count')
+    model_usage = data.get('modelUsage', {})
+    if not isinstance(model_usage, dict) or len(model_usage) > 64:
+        raise ValueError('invalid model usage')
+    for counts in model_usage.values():
+        fields(counts, {'inputTokens', 'outputTokens', 'cachedInputTokens', 'cacheCreationInputTokens', 'uncachedInputTokens', 'totalTokens'})
+        for value in counts.values():
+            if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 0):
+                raise ValueError('invalid model token count')
     def bounded(value, depth=0):
         if depth > 5:
             raise ValueError('nested data too deep')
@@ -124,14 +132,14 @@ def validate(event):
         raise ValueError('unknown provider')
     if not isinstance(event['profile'], str) or not re.fullmatch(r'[A-Za-z0-9]+', event['profile']):
         raise ValueError('invalid profile')
-    if event['kind'] not in ('measurement', 'quota-rejected', 'execution-succeeded'):
+    if event['kind'] not in ('measurement', 'quota-rejected', 'execution-succeeded', 'execution-failed'):
         raise ValueError('unknown event kind')
     if not isinstance(event['data'], dict) or len(canonical(event['data'])) > 16384:
         raise ValueError('invalid event data')
     # Events contain a fixed measurement schema, never raw provider output,
     # transcripts, command arguments or credentials.
     allowed = {'status', 'identity', 'windows', 'restrictions', 'credits', 'source', 'display',
-               'session', 'model', 'recheckAt', 'resetKnown', 'attribution'}
+               'session', 'model', 'requestedModel', 'usageScope', 'modelUsage', 'recheckAt', 'resetKnown', 'attribution'}
     if set(event['data']) - allowed:
         raise ValueError('unknown event data fields')
     validate_data(event['data'])
@@ -201,6 +209,47 @@ class Journal:
             size += added
         return result
 
+    def token_summary(self):
+        # A task can be observed again during recovery. Use its latest record,
+        # rather than counting that invocation twice. Imported replays already
+        # deduplicate by event ID. Allowance percentages never enter this sum.
+        tasks, groups = set(), {}
+        for row in self.db.execute('SELECT body FROM events WHERE at >= ? ORDER BY at DESC, id DESC', (time.time() - 30 * 86400,)):
+            event = json.loads(row[0])
+            if event['kind'] == 'measurement':
+                continue
+            data = event['data']
+            attribution = data.get('attribution', {})
+            task = attribution.get('task') or event['id']
+            task_key = (event['origin'], event['provider'], task)
+            if task_key in tasks:
+                continue
+            tasks.add(task_key)
+            identity = data.get('identity', {})
+            account = identity.get('accountHash') if identity.get('status') == 'verified' else None
+            binding = account or (event['origin'], event['profile'])
+            model_counts = data.get('modelUsage') or {data.get('model'): attribution}
+            for model, counts in model_counts.items():
+                key = (event['provider'], binding, model, data.get('usageScope', 'unknown'))
+                if key not in groups:
+                    groups[key] = {'provider': event['provider'], 'accountHash': account,
+                                   'identityStatus': 'verified' if account else 'unverified',
+                                   'model': model, 'usageScope': data.get('usageScope', 'unknown'), 'bindings': [], 'tasks': 0,
+                                   'knownTokenTasks': 0, 'unknownTokenTasks': 0,
+                                   'reportedTotalTokens': 0}
+                group = groups[key]
+                route = {'origin': event['origin'], 'profile': event['profile']}
+                if route not in group['bindings']:
+                    group['bindings'].append(route)
+                group['tasks'] += 1
+                total = counts.get('totalTokens')
+                if total is None:
+                    group['unknownTokenTasks'] += 1
+                else:
+                    group['knownTokenTasks'] += 1
+                    group['reportedTotalTokens'] += total
+        return {'retentionDays': 30, 'uniqueTasks': len(tasks), 'groups': list(groups.values())}
+
     def latest(self, provider, profile):
         row = self.db.execute('SELECT body FROM events WHERE origin=? AND provider=? AND profile=? ORDER BY at DESC, id DESC LIMIT 1',
                               (self.origin, provider, profile)).fetchone()
@@ -211,7 +260,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--root', required=True)
     parser.add_argument('--origin')
-    parser.add_argument('verb', choices=['history', 'export', 'import', 'record'])
+    parser.add_argument('verb', choices=['history', 'summary', 'export', 'import', 'record'])
     parser.add_argument('--source')
     parser.add_argument('--provider')
     parser.add_argument('--profile')
@@ -219,6 +268,9 @@ def main():
     parser.add_argument('--data', help='sanitized metadata JSON; otherwise read stdin')
     args = parser.parse_args()
     journal = Journal(args.root, args.origin)
+    if args.verb == 'summary':
+        print(canonical(journal.token_summary()))
+        return
     if args.verb in ('history', 'export'):
         print(canonical(journal.events(own=args.verb == 'export')))
         return

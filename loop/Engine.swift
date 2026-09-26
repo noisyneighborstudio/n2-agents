@@ -267,7 +267,7 @@ final class Controller {
             s.cooldowns[slot] = Cooldown(until: Date().addingTimeInterval(600), reason: "returned no usable report")
         }
         s.turns[i].outcome = outcome
-        recordUsageOutcome(cli: cli, slot: slot, outcome: outcome, task: "\(s.id)/\(id)", effort: s.turns[i].effort)
+        recordUsageOutcome(cli: cli, slot: slot, outcome: outcome, task: "\(s.id)/\(id)", effort: s.turns[i].effort, usage: out.usage)
         if outcome != "ok" { s.turns[i].note = oneLine(out.tail, 300) }
 
         // Only failures the loop can't account for trip the breaker. Quota and

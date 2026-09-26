@@ -86,8 +86,7 @@ Matching profile names on different machines remain separate bindings.
 The bounded `agents usage record --provider <provider> --profile <profile>
 --kind quota-rejected` interface accepts structured JSON on stdin. It rejects
 unknown fields, including nested credential fields. The loop records quota rejections and successful turns automatically, with its
-local task reference and requested Claude model where known. Token totals,
-provider-session identity and verified account identity remain unknown. Recorded
+local task reference and requested Claude model where known. Verified account attribution of loop outcomes remains open; token and provider-session fields are populated when the provider reports them. Recorded
 rejections do not yet change selection outside the loop’s existing cooldowns. An unknown account identity remains
 unknown; recording or replicating an observation does not verify it.
 
@@ -123,3 +122,31 @@ pinned to the inspected upstream revision. Local Claude is 2.1.283.
 Quota failures no longer consume the planner's four failed-plan attempts. The
 integration regression exhausts six profiles before reaching a healthy planner,
 and completes the resulting loop.
+
+## Task token attribution
+
+Loop invocations request structured Claude output and Codex JSON Lines. N2
+extracts the final agent result for the existing loop protocol and retains the
+reported provider-session ID and token counts separately. It records successful,
+quota-rejected and other failed turns. Unknown fields remain null.
+
+Claude `modelUsage` supplies whole-tree counts, including subagents, and remains
+split by model in history. A top-level `usage` fallback is labeled `main-agent`.
+Mixed-model totals have no invented single model; the requested alias is a
+separate field. These loop calls start fresh sessions. Resumed-session totals
+need a baseline before they can represent new work, so these parsers must not
+be used to sum resumed Claude conversations without that accounting.
+
+Codex cached input is a subset of input and is not added again. Claude input
+combines uncached, cache-read and cache-creation categories only when all counts
+are present. Missing categories leave the combined total unknown.
+
+`agents usage summary` groups retained task observations by provider, verified
+account where available, actual model and usage scope. Unverified bindings stay
+separate by machine/profile. Repeated observations of a task use its latest
+record. The result separates tasks with known totals from tasks with unknown
+counts and sums only reported totals. This is token activity, not subscription
+headroom or a bill.
+
+Primary references: [Codex non-interactive output](https://learn.chatgpt.com/docs/non-interactive-mode)
+and [Claude usage scope](https://code.claude.com/docs/en/agent-sdk/cost-tracking).
