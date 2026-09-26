@@ -42,3 +42,19 @@ replacement, and event-based responsiveness. Active means authentication state,
 never quota headroom. Existing usage eligibility behavior must remain covered.
 Later slices still owe login/reset, migration/repair actions, owner disconnection,
 and the complete native fleet acceptance requirements.
+
+## Implemented status view
+
+The native Codex profile now offers Account ownership under Configure. Opening
+it reads `agents fleet auth status` for that exact profile in a background task.
+It displays the owner identity, account fingerprint, and authentication state;
+it never alters the usage reading or starts authentication. A failed refresh
+clears earlier account details, and a late result cannot replace a newer profile.
+
+`sh scripts/test-account-ownership.sh` checks recorded active/retired responses,
+missing and malformed status, command arguments, background loading, immediate
+stale-result replacement, and out-of-order completion using event barriers.
+An optional PNG path renders the production detail component for visual review.
+The smoke gate runs the same proof; removing stale-result clearing in a discarded
+copy must make that gate fail. This is component and action testing, not completed
+live fleet GUI acceptance or proof of owner reachability.

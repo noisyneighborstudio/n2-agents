@@ -675,6 +675,7 @@ private struct SlotActions: View {
     @ObservedObject var model: PanelModel
     let actions: PanelActions
     @State private var copied: String?   // which row just copied
+    @State private var showOwnership = false
 
     private var usage: Usage? { model.usage[vendor.id]?[profile.name] }
     private var signedOut: Bool {
@@ -707,6 +708,10 @@ private struct SlotActions: View {
             }
 
             group("Configure", "slider.horizontal.3")
+            if vendor.id == "codex" {
+                ActionRow(title: "Account ownership", icon: "person.crop.circle") { showOwnership.toggle() }
+                if showOwnership { AccountOwnershipView(profile: profile.name) }
+            }
             if !profile.isActive(for: vendor.id) {
                 ActionRow(title: "Use for new sessions", icon: "checkmark.circle") {
                     actions.setActive(profile: profile.name, vendor: vendor.id)

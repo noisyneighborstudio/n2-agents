@@ -34,9 +34,11 @@ enum FleetSettingsLoader {
     }
 
     /// Synchronous by design. Call only from a detached task, never the UI.
-    static func run(_ args: [String]) -> String {
+    static func run(_ args: [String]) -> String { command(args).output }
+
+    static func command(_ args: [String]) -> (status: Int32, output: String) {
         precondition(!Thread.isMainThread, "Fleet CLI must not block the main thread")
-        guard let resources = Bundle.main.resourcePath else { return "App resources unavailable" }
+        guard let resources = Bundle.main.resourcePath else { return (1, "App resources unavailable") }
         let process = Process(), pipe = Pipe()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = [resources + "/agents", "fleet"] + args
@@ -44,9 +46,9 @@ enum FleetSettingsLoader {
         env["PATH"] = commandPATH
         process.environment = env
         process.standardOutput = pipe; process.standardError = pipe
-        do { try process.run() } catch { return error.localizedDescription }
+        do { try process.run() } catch { return (1, error.localizedDescription) }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return (process.terminationStatus, String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
     }
 }
