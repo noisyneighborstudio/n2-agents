@@ -25,6 +25,9 @@ class CodexRPC:
         self.failure = None
         self.next_id = 1
         self.account_generation = 0
+        self._bound_account = None
+        self._bound_generation = None
+        self._binding_failed = False
         self.process = subprocess.Popen(
             [executable, 'app-server'], cwd=cwd, env=dict(os.environ, CODEX_HOME=cfg),
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -80,6 +83,13 @@ class CodexRPC:
             self._put(None)
 
     def send(self, message, deadline=None):
+        if self._binding_failed:
+            raise RuntimeError('Codex account binding is invalid')
+        method = message.get('method')
+        if method is not None and not isinstance(method, str):
+            raise ValueError('invalid Codex request method')
+        if self._bound_account is not None and method is not None and (method.startswith('account/login/') or method == 'account/logout'):
+            raise RuntimeError('cannot replace a bound Codex account')
         deadline = deadline if deadline is not None else time.monotonic() + self.timeout
         body = json.dumps(message, allow_nan=False, separators=(',', ':')).encode() + b'\n'
         if len(body) > MAX_MESSAGE_BYTES:
@@ -110,6 +120,12 @@ class CodexRPC:
             raise RuntimeError(self.failure or 'Codex protocol stream closed')
         if message.get('method') == 'account/updated':
             self.account_generation += 1
+            if self._bound_account is not None:
+                self._binding_failed = True
+                raise RuntimeError('bound Codex account changed')
+        if message.get('method') == 'account/chatgptAuthTokens/refresh' and self._bound_account is not None:
+            self._binding_failed = True
+            raise RuntimeError('bound Codex account requires renewal')
         return message
 
     def call(self, method, params=None, deadline=None, on_notification=None):
@@ -165,6 +181,56 @@ class CodexRPC:
                 raise RuntimeError('allowance account does not match selected account')
         result.update(_native=True, account=account, workspaceRouting=routing)
         return result
+
+    @staticmethod
+    def _account_key(observation):
+        return json.dumps({'account': observation.get('account'),
+                           'workspaceRouting': observation.get('workspaceRouting')},
+                          sort_keys=True, separators=(',', ':'))
+
+    def pin_external_account(self, access_token, account_id):
+        """Pin this process's auth in memory and authenticate its allowance read.
+
+        The caller owns token lifecycle and must supply an isolated Codex home.
+        No refresh token is accepted or retained. A refresh server request fails
+        closed until the owner implements renewal for this exact account. This
+        pins authentication only; execution must also validate provider routing.
+        """
+        if self._bound_account is not None or self._binding_failed:
+            raise RuntimeError('Codex account binding already attempted')
+        try:
+            if not isinstance(access_token, str) or not access_token or not isinstance(account_id, str) or not account_id:
+                raise ValueError('missing Codex account credential')
+            result = self.call('account/login/start', {
+                'type': 'chatgptAuthTokens', 'accessToken': access_token, 'chatgptAccountId': account_id})
+            if result.get('type') != 'chatgptAuthTokens':
+                raise RuntimeError('Codex external authentication unavailable')
+            observation = self.read_usage()
+            routing = observation.get('workspaceRouting')
+            account = observation.get('account')
+            if not isinstance(routing, dict) or routing.get('chatgptAccountId') != account_id:
+                raise RuntimeError('Codex selected a different account')
+            if not isinstance(account, dict) or account.get('type') != 'chatgpt':
+                raise RuntimeError('Codex subscription authentication unavailable')
+            self._bound_account = self._account_key(observation)
+            self._bound_generation = self.account_generation
+            return observation
+        except Exception:
+            # A failed pin cannot be followed by a turn on a fallback account.
+            self._binding_failed = True
+            raise
+
+    def validate_account_binding(self):
+        if self._bound_account is None:
+            raise RuntimeError('Codex account is not bound')
+        try:
+            observation = self.read_usage()
+            if self._account_key(observation) != self._bound_account or self.account_generation != self._bound_generation:
+                raise RuntimeError('bound Codex account changed')
+            return observation
+        except Exception:
+            self._binding_failed = True
+            raise
 
     def close(self):
         self.stopping.set()

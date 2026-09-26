@@ -40,12 +40,23 @@ for line in sys.stdin:
         print('startup diagnostic', flush=True)
         print(json.dumps({'id': True, 'result': {'wrong': True}}), flush=True)
     result = {}
+    if method == 'thread/start' and mode in ('update-after-pin', 'refresh-after-pin'):
+        notice = {'method': 'account/updated', 'params': {'authMode': 'chatgpt'}}
+        if mode == 'refresh-after-pin': notice = {'id': 99, 'method': 'account/chatgptAuthTokens/refresh', 'params': {}}
+        print(json.dumps(notice), flush=True)
+    if method == 'account/login/start':
+        result = {'type': 'chatgptAuthTokens'}
+        if mode == 'unsupported-pin': result = {'type': 'chatgpt'}
+        print(json.dumps({'method': 'account/updated', 'params': {'authMode': 'chatgptAuthTokens'}}), flush=True)
     if method == 'account/read':
         result = {'account': {'type': 'chatgpt', 'email': 'fixture@example.invalid'},
                   'workspaceRouting': {'chatgptAccountId': 'workspace', 'backendOrigin': 'https://chatgpt.com'}}
-        if mode == 'switch' and request['id'] == 4:
+        if (mode == 'switch' and request['id'] == 4) or (mode == 'pin-switch' and request['id'] >= 6):
             result['workspaceRouting']['chatgptAccountId'] = 'other'
     if method == 'account/rateLimits/read':
+        if mode == 'refresh-pin':
+            print(json.dumps({'id': 99, 'method': 'account/chatgptAuthTokens/refresh', 'params': {'reason': 'unauthorized'}}), flush=True)
+            continue
         result = {'accountId': 'workspace', 'rateLimits': {'primary': {'usedPercent': 12}}}
         if mode == 'mismatch': result['accountId'] = 'other'
         if mode == 'invalid-account': result['accountId'] = True
@@ -151,6 +162,70 @@ class ProtocolTests(unittest.TestCase):
         for mode in ('inherited-pipe', 'stubborn-pipe'):
             self.run_client(mode, read, timeout=0.2)
         self.assertLess(time.monotonic() - start, 3)
+
+    def test_external_pin_is_validated_and_cannot_switch_accounts(self):
+        def read(client):
+            client.initialize()
+            observed = client.pin_external_account('synthetic-token', 'workspace')
+            self.assertEqual(observed['accountId'], 'workspace')
+            client.validate_account_binding()
+            with self.assertRaisesRegex(RuntimeError, 'cannot replace'):
+                client.call('account/logout')
+            with self.assertRaisesRegex(RuntimeError, 'cannot replace'):
+                client.send({'id': 99, 'method': 'account/logout'})
+            with self.assertRaisesRegex(RuntimeError, 'already attempted'):
+                client.pin_external_account('other-token', 'other-workspace')
+            client.validate_account_binding()
+        self.run_client('', read)
+
+    def test_wrong_pin_poisons_connection_instead_of_using_fallback(self):
+        def read(client):
+            client.initialize()
+            with self.assertRaisesRegex(RuntimeError, 'different account'):
+                client.pin_external_account('synthetic-token', 'other-workspace')
+            with self.assertRaisesRegex(RuntimeError, 'binding is invalid'):
+                client.call('thread/start', {})
+        self.run_client('', read)
+
+    def test_changed_pinned_account_cannot_start_more_work(self):
+        def read(client):
+            client.initialize()
+            client.pin_external_account('synthetic-token', 'workspace')
+            with self.assertRaises(RuntimeError):
+                client.validate_account_binding()
+            with self.assertRaisesRegex(RuntimeError, 'binding is invalid'):
+                client.call('thread/start', {})
+        self.run_client('pin-switch', read)
+
+    def test_unsupported_or_expired_external_auth_never_falls_back(self):
+        for mode in ('unsupported-pin', 'refresh-pin'):
+            def read(client):
+                client.initialize()
+                with self.assertRaises(RuntimeError):
+                    client.pin_external_account('synthetic-token', 'workspace')
+                with self.assertRaisesRegex(RuntimeError, 'binding is invalid'):
+                    client.send({'id': 99, 'method': 'thread/start', 'params': {}})
+            self.run_client(mode, read)
+
+    def test_invalid_pin_arguments_disable_fallback(self):
+        def read(client):
+            client.initialize()
+            with self.assertRaises(ValueError):
+                client.pin_external_account('', 'workspace')
+            with self.assertRaisesRegex(RuntimeError, 'binding is invalid'):
+                client.call('thread/start', {})
+        self.run_client('', read)
+
+    def test_observed_auth_change_or_refresh_immediately_disables_calls(self):
+        for mode in ('update-after-pin', 'refresh-after-pin'):
+            def read(client):
+                client.initialize()
+                client.pin_external_account('synthetic-token', 'workspace')
+                with self.assertRaises(RuntimeError):
+                    client.call('thread/start', {})
+                with self.assertRaisesRegex(RuntimeError, 'binding is invalid'):
+                    client.call('thread/start', {})
+            self.run_client(mode, read)
 
     def test_non_object_response_is_not_success(self):
         def read(client):

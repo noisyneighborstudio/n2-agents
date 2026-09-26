@@ -205,3 +205,29 @@ both local Codex identities verified, with Default at 2% weekly and ExpoIO at
 100% with a provider restriction. This change establishes the shared connection
 code; replacing the loop's separate CLI launch and issuing execution account
 receipts are still required.
+
+The shared client now has explicit external-token pinning and account validation.
+A failed pin disables further requests. Once bound, login/logout replacement is
+refused; an observed account change or renewal request immediately invalidates
+the connection. Seventeen subprocess tests cover these cases, including raw-send
+attempts, unsupported mode and invalid credentials. The full regression suite
+passes, and independent correctness/security follow-ups are clear. QA packaging
+and a synthetic pin/validate through the bundled client pass with ad-hoc signing
+and no app installation.
+
+An isolated Codex 0.157.1 experiment used the existing Default access token only
+for account/allowance reads. It selected the same verified account, created no
+`auth.json` in the disposable home and left the canonical credential file bytes
+unchanged. No model turn was started. Sanitized evidence is in
+[the external-auth audit](audits/codex-external-auth-2026-09-26.json). The public
+[app-server documentation](https://learn.chatgpt.com/docs/app-server) describes
+host-supplied tokens and host-owned renewal, while the installed experimental
+schema still labels the mode internal/unstable. This is tested capability for
+that version, not a stable compatibility promise.
+
+This helper pins authentication only. The execution owner must enforce home
+isolation, validate project/provider routing and the selected profile revision,
+handle renewal for the same account, and bind session/token outcomes to the
+result. A notification not yet consumed cannot prevent an already-sent request.
+The loop still uses its separate CLI launch; execution integration and receipts
+remain unfinished. No merge, installation or deployment was performed.

@@ -1,0 +1,26 @@
+[
+  {
+    "profile": "Default",
+    "probe": "external-token-account-read",
+    "modelTurnsStarted": 0,
+    "status": "ok",
+    "loginType": "chatgptAuthTokens",
+    "identity": {
+      "status": "verified",
+      "accountHash": "2ddea33d1f4be9e891cdb1032ff57c19840d359bd5aaf1e21f9d8a48b5ea87af"
+    },
+    "windows": [
+      {
+        "scope": "codex:primary",
+        "usedPercent": 2,
+        "durationSeconds": 604800,
+        "resetsAt": 1791015916
+      }
+    ],
+    "isolatedAuthFileCreated": false,
+    "canonicalCredentialUnchanged": true,
+    "providerCLI": "codex-cli 0.157.1",
+    "recordedAt": "2026-09-26T09:08:36.671399+00:00",
+    "scope": "isolated authentication and allowance reads only; no execution or token-renewal claim"
+  }
+]
