@@ -625,3 +625,13 @@ private execution home is currently disposable, so this checkpoint must not be
 presented as durable interactive-session support. Independent security review
 remains outstanding. The same relay is intended for the later T3 adapter; PR #26
 has not yet been implemented.
+
+
+Frontend execution accounting uses the provider's `turn/completed`,
+`thread/tokenUsage/updated`, and `model/rerouted` events documented in
+[Codex App Server](https://learn.chatgpt.com/docs/app-server). Receipts use the
+difference between cumulative thread counters at acknowledged turn boundaries,
+not the latest model-call counter and not a sum of cumulative snapshots. Missing
+boundaries remain unknown. The journal identifies the machine, selected account,
+provider thread, model when known, and one invocation identifier per turn.
+Quota failures use the existing durable fleet restriction exchange.

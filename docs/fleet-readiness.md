@@ -821,7 +821,7 @@ a private Unix socket; token fetching and renewal stay on the existing private
 authentication path. Direct unsupported owner-profile subcommands refuse implicit
 unmanaged fallback. Fourteen bridge tests, five WebSocket framing tests, 31 RPC
 tests and the bound-loop launch/journal/cancellation regressions pass. The complete
-repository suite is running for this candidate. Successful renewal yields back
+repository suite passes for checkpoint `0b000be`. Successful renewal yields back
 to frontend input, and account verification preserves unrelated provider
 notifications and approvals before admitting another execution. Three regressions
 exercise these paths through the real RPC implementation. Independent correctness
@@ -837,3 +837,30 @@ Persistent session resume/history, frontend usage receipts, concurrent turns,
 compatibility and process-lifetime acceptance, and live native TUI/provider tests
 remain open. The implementation is not yet ready for deployment or a complete
 interactive-route claim. PR #26 remains design-only.
+
+
+### Frontend turn accounting
+
+Owner-bound frontend turns now record sanitized execution receipts in the same
+account-scoped journal as loop outcomes. Cumulative thread counters are differenced
+at turn boundaries; missing counters and unknown baselines remain unknown.
+Cached input is not added to total tokens. Model rerouting clears model attribution,
+and an explicit requested model is retained separately from verified model data.
+Quota failures create durable restrictions with only unambiguous reset evidence.
+No prompts, outputs, credentials or raw provider errors enter these receipts.
+
+Completion is correlated to the acknowledged turn, including notifications that
+arrive before its acknowledgement. Account verification drains late notifications
+before publishing a completed receipt. A disconnected or unverified execution
+records unknown identity/counts and cannot establish successful recovery. Hard-kill
+recovery and durable session history remain unfinished.
+
+Twenty-four bridge tests pass, including an actual CLI/signed synthetic-owner
+three-turn run that records 180 tokens and transfers its quota rejection to a peer
+journal. All 26 journal, 7 owner-server and 15 owner-client tests pass. The QA app
+builds, and its byte-matched helpers pass all 24 bridge tests under a disposable
+home directory. Review found and fixed persistent model-override tracking so a later
+success clears the matching model-specific rejection. Rejected, unacknowledged
+turn requests preserve the previous selection and baseline; independent review
+verified both fixes. Live-provider acceptance
+and final security review remain open.

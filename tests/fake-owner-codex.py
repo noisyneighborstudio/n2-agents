@@ -15,6 +15,7 @@ if managed or not settings.get('allowExternalHome', False):
     assert not any(key in os.environ for key in ('OPENAI_API_KEY', 'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN', 'OPENAI_BASE_URL', 'HTTPS_PROXY'))
     assert os.environ['HOME'] == str(home)
 token = None
+turn_number = 0
 for line in sys.stdin:
     request = json.loads(line)
     method = request['method']
@@ -69,6 +70,19 @@ for line in sys.stdin:
                 continue
         result = {'account': {'type': 'chatgpt', 'email': 'other@example.invalid' if (token == 'rotated-secret' and mode == 'wrong-account') or mode == 'login-other-account' else 'fixture@example.invalid'},
                   'workspaceRouting': {'chatgptAccountId': 'workspace', 'backendOrigin': 'https://chatgpt.com'}}
+    elif method == 'thread/start':
+        result={'thread':{'id':'fixture-thread'},'modelProvider':'openai','cwd':os.getcwd(),'model':'fixture-model'}
+    elif method == 'turn/start':
+        turn_number+=1
+        turn_id='fixture-turn-'+str(turn_number)
+        print(json.dumps({'id':request['id'],'result':{'turn':{'id':turn_id}}}),flush=True)
+        counts={'inputTokens':50*turn_number,'cachedInputTokens':30*turn_number,'outputTokens':10*turn_number,'totalTokens':60*turn_number}
+        print(json.dumps({'method':'thread/tokenUsage/updated','params':{'threadId':'fixture-thread','turnId':turn_id,'tokenUsage':{'total':counts}}}),flush=True)
+        turn={'id':turn_id,'status':'completed'}
+        if turn_number==settings.get('quotaTurn'):
+            turn.update(status='failed',error={'codexErrorInfo':'usageLimitExceeded','message':'private quota diagnostic'})
+        print(json.dumps({'method':'turn/completed','params':{'threadId':'fixture-thread','turn':turn}}),flush=True)
+        continue
     elif method == 'account/rateLimits/read':
         if settings.get('rejectInitial') and (token == 'original-secret' or settings.get('rejectEveryToken')):
             print(json.dumps({'id':900,'method':'account/chatgptAuthTokens/refresh',

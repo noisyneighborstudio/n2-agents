@@ -9,6 +9,8 @@ import os
 import subprocess
 import unittest
 import time
+import tempfile
+import select
 
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('bridge',ROOT/'fleet-auth-bridge.py')
@@ -127,6 +129,98 @@ class RealRPCMessageTests(unittest.TestCase):
         self.bridge.frontend({'id':approval['id'],'result':{'decision':'decline'}})
         self.assertEqual(self.sent[-1],{'id':99,'result':{'decision':'decline'}})
 
+class ReceiptTests(unittest.TestCase):
+    def setUp(self):
+        directory=tempfile.TemporaryDirectory();self.addCleanup(directory.cleanup)
+        store=m.load('receipt_store_tests','usage-store.py')
+        self.journal=store.Journal(directory.name)
+        self.addCleanup(self.journal.db.close)
+        self.receipts=m.Receipts(self.journal,'Work','a'*64)
+        self.receipts.thread('thread','model-a',True)
+    def start(self,identifier='turn'):
+        self.receipts.begin('thread');self.receipts.acknowledge({'id':identifier})
+    def usage(self,total,identifier='turn'):
+        self.receipts.observe('thread/tokenUsage/updated',{'threadId':'thread','turnId':identifier,
+            'tokenUsage':{'total':{'inputTokens':total-10,'cachedInputTokens':5,'outputTokens':10,'totalTokens':total}}})
+    def complete(self,identifier='turn',status='completed',error=None):
+        self.receipts.observe('turn/completed',{'threadId':'thread','turn':{'id':identifier,'status':status,'error':error}})
+    def test_cumulative_thread_tokens_count_each_turn_once(self):
+        self.start();self.usage(60);self.complete();self.receipts.finish()
+        self.start('second');self.usage(90,'second');self.complete('second');self.receipts.finish()
+        result=self.journal.token_summary()
+        self.assertEqual(result['uniqueTasks'],2)
+        self.assertEqual(result['groups'][0]['reportedTotalTokens'],90)
+        self.assertEqual(result['groups'][0]['accountHash'],'a'*64)
+        self.assertEqual(result['groups'][0]['usageScope'],'provider-turn')
+    def test_missing_boundary_does_not_attribute_previous_turn_tokens(self):
+        self.start();self.complete();self.receipts.finish()
+        self.start('second');self.usage(90,'second');self.complete('second');self.receipts.finish()
+        group=self.journal.token_summary()['groups'][0]
+        self.assertEqual(group['knownTokenTasks'],0);self.assertEqual(group['unknownTokenTasks'],2)
+    def test_quota_failure_is_durable_and_has_no_raw_error(self):
+        self.start();self.complete(status='failed',error={'codexErrorInfo':'usageLimitExceeded','message':'private error secret'})
+        self.receipts.finish()
+        events=self.journal.events();self.assertEqual(events[0]['kind'],'quota-rejected')
+        self.assertFalse(events[0]['data']['resetKnown'])
+        self.assertNotIn('private error secret',json.dumps(events))
+        self.assertTrue(self.journal.active_rejections())
+    def test_early_notifications_and_foreign_completion_are_correlated(self):
+        self.receipts.begin('thread');self.usage(60);self.complete('foreign');self.complete()
+        self.receipts.acknowledge({'id':'turn'})
+        self.assertEqual(self.receipts.current['completion']['id'],'turn')
+        self.receipts.finish();self.assertEqual(self.journal.token_summary()['groups'][0]['reportedTotalTokens'],60)
+    def test_reroute_and_disconnection_do_not_invent_attribution(self):
+        self.start();self.usage(60)
+        self.receipts.observe('model/rerouted',{'threadId':'thread','turnId':'turn','toModel':'other'})
+        self.complete();self.receipts.finish(verified=False)
+        event=self.journal.events()[0]
+        self.assertEqual(event['kind'],'execution-failed');self.assertIsNone(event['data']['model'])
+        self.assertEqual(event['data']['identity'],{'status':'unknown'})
+        self.assertIsNone(event['data']['attribution']['totalTokens'])
+    def test_persistent_model_override_allows_later_success_to_clear_rejection(self):
+        self.receipts.begin('thread','model-b');self.receipts.acknowledge({'id':'turn'})
+        self.complete(status='failed',error={'codexErrorInfo':'usageLimitExceeded'})
+        self.receipts.finish();self.assertEqual(len(self.journal.active_rejections()),1)
+        self.start('second');self.complete('second');self.receipts.finish()
+        self.assertEqual(self.journal.active_rejections(),[])
+        events=self.journal.events()
+        self.assertEqual({event['data']['requestedModel'] for event in events},{'model-b'})
+        self.assertTrue(all(event['data']['model'] is None for event in events))
+
+    def test_rejected_turn_request_does_not_change_effective_model(self):
+        provider=Provider();bridge=m.Bridge(provider,lambda _:None,self.receipts)
+        bridge.frontend({'id':1,'method':'initialize'});bridge.threads.add('thread')
+        bridge.frontend({'id':2,'method':'turn/start','params':{'threadId':'thread','model':'model-b'}})
+        key=provider.sent[-1]['id']
+        bridge.backend({'id':key,'error':{'code':-32602,'message':'invalid parameters'}})
+        self.start('second')
+        self.assertIsNone(self.receipts.current['requestedModel'])
+        self.assertEqual(self.receipts.current['model'],'model-a')
+        self.usage(60,'second');self.complete('second');self.receipts.finish()
+        events=self.journal.events()
+        success=next(event for event in events if event['kind']=='execution-succeeded')
+        self.assertIsNone(success['data']['requestedModel'])
+        self.assertEqual(success['data']['attribution']['totalTokens'],60)
+
+    def test_counter_reset_remains_unknown(self):
+        self.start();self.usage(60);self.complete();self.receipts.finish()
+        self.start('second');self.usage(30,'second');self.complete('second');self.receipts.finish()
+        group=self.journal.token_summary()['groups'][0]
+        self.assertEqual(group['reportedTotalTokens'],60);self.assertEqual(group['unknownTokenTasks'],1)
+    def test_bridge_completion_checks_binding_and_records_once(self):
+        provider=Provider();out=[];bridge=m.Bridge(provider,out.append,self.receipts)
+        bridge.frontend({'id':1,'method':'initialize'});bridge.threads.add('thread')
+        bridge.frontend({'id':2,'method':'turn/start','params':{'threadId':'thread'}})
+        key=provider.sent[-1]['id']
+        bridge.backend({'method':'thread/tokenUsage/updated','params':{'threadId':'thread','turnId':'turn',
+            'tokenUsage':{'total':dict(inputTokens=50,cachedInputTokens=30,outputTokens=10,totalTokens=60)}}})
+        bridge.backend({'method':'turn/completed','params':{'threadId':'thread','turn':{'id':'turn','status':'completed'}}})
+        bridge.backend({'id':key,'result':{'turn':{'id':'turn'}}})
+        bridge.flush_receipts();bridge.flush_receipts()
+        self.assertEqual(provider.verified,2);self.assertFalse(bridge.active)
+        self.assertEqual(len(self.journal.events()),1)
+        self.assertEqual(self.journal.token_summary()['groups'][0]['reportedTotalTokens'],60)
+
 class BridgeIntegrationTests(unittest.TestCase):
     def setUp(self):
         spec=importlib.util.spec_from_file_location('bridge_fixture',ROOT/'scripts/test-fleet-auth-manage.py')
@@ -142,6 +236,48 @@ class BridgeIntegrationTests(unittest.TestCase):
         return subprocess.run([str(ROOT/'agents'),'run','Work','--vendor','codex',*args],
             env=dict(os.environ,N2_AGENTS_ROOT=str(self.root)),input=''.join(json.dumps(r)+'\n' for r in requests),
             text=True,capture_output=True,timeout=20)
+    def test_actual_frontend_turns_record_tokens_and_share_quota_rejection(self):
+        (self.wire.bin/'settings.json').write_text(json.dumps({'allowExternalHome':True,'quotaTurn':3}))
+        process=subprocess.Popen([str(ROOT/'agents'),'run','Work','--vendor','codex','app-server'],
+            env=dict(os.environ,N2_AGENTS_ROOT=str(self.root)),stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
+        def cleanup():
+            if process.poll() is None:process.kill()
+            process.wait(timeout=5)
+            for stream in (process.stdin,process.stdout,process.stderr):stream.close()
+        self.addCleanup(cleanup)
+        def send(value):process.stdin.write(json.dumps(value).encode()+b'\n');process.stdin.flush()
+        def until(predicate):
+            deadline=time.monotonic()+10;raw=b''
+            while time.monotonic()<deadline:
+                ready,_,_=select.select([process.stdout],[],[],max(0,deadline-time.monotonic()))
+                self.assertTrue(ready,'frontend response timed out')
+                byte=process.stdout.read(1);self.assertTrue(byte,'frontend closed unexpectedly')
+                raw+=byte
+                if byte==b'\n':
+                    message=json.loads(raw);raw=b''
+                    if predicate(message):return message
+            self.fail('frontend response timed out')
+        send({'id':1,'method':'initialize'});until(lambda x:x.get('id')==1)
+        send({'id':2,'method':'thread/start'});until(lambda x:x.get('id')==2)
+        for turn in range(3):
+            send({'id':3+turn,'method':'turn/start','params':{'threadId':'fixture-thread','input':[]}})
+            until(lambda x:x.get('method')=='turn/completed')
+        send({'id':9,'method':'account/read'});until(lambda x:x.get('id')==9)
+        process.stdin.close();self.assertEqual(process.wait(timeout=5),0)
+        store=m.load('receipt_integration_store','usage-store.py');journal=store.Journal(self.root)
+        self.addCleanup(journal.db.close)
+        summary=journal.token_summary()
+        self.assertEqual(summary['uniqueTasks'],3)
+        self.assertEqual(sum(g['reportedTotalTokens'] for g in summary['groups']),180)
+        self.assertEqual({g['accountHash'] for g in summary['groups']},{self.wire.context['accountHash']})
+        self.assertEqual(len(journal.active_rejections()),1)
+        self.assertNotIn('private quota diagnostic',json.dumps(journal.events()))
+        peer_dir=self.wire.base/'receipt-peer';peer=store.Journal(peer_dir)
+        self.addCleanup(peer.db.close)
+        events=journal.events();peer.import_events(events,events[0]['origin'])
+        self.assertEqual(len(peer.active_rejections()),1)
+        self.assertEqual(peer.token_summary()['uniqueTasks'],3)
+
     def test_actual_cli_connects_to_remote_owner_without_forwarding_credentials(self):
         result=self.run_cli([{'id':10,'method':'initialize'}, {'method':'initialized'},
                              {'id':11,'method':'account/read','params':{'refreshToken':True}},

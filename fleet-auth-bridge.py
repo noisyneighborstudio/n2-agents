@@ -18,6 +18,7 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 
 ROOT=Path(__file__).resolve().parent
 
@@ -47,9 +48,89 @@ def decode(raw):
     return value
 
 
+class Receipts:
+    """Sanitized per-turn accounting from cumulative provider thread counters."""
+    COUNTS=('inputTokens','cachedInputTokens','outputTokens','totalTokens')
+    def __init__(self,journal,profile,account):
+        self.journal=journal;self.profile=profile;self.account=account
+        self.threads={};self.current=None
+
+    def thread(self,identifier,model,fresh):
+        self.threads[identifier]={'model':model,'requestedModel':None,'total':dict.fromkeys(self.COUNTS,0) if fresh else None}
+
+    def begin(self,thread,model=None):
+        if self.current is not None:raise ValueError('unfinished execution receipt')
+        previous=self.threads[thread]
+        requested=model if model is not None else previous['requestedModel']
+        self.current={'thread':thread,'turn':None,'model':None if requested is not None else previous['model'],'requestedModel':requested,
+                      'baseline':previous['total'],'total':None,'started':time.time(),
+                      'task':str(uuid.uuid4()),'completion':None,'early':[]}
+
+    def acknowledge(self,turn):
+        current=self.current
+        if not current or not isinstance(turn,dict) or not valid_id(turn.get('id')) or not isinstance(turn['id'],str):
+            raise ValueError('invalid execution acknowledgement')
+        current['turn']=turn['id']
+        early=current.pop('early')
+        for method,params in early:self.observe(method,params)
+
+    def observe(self,method,params):
+        current=self.current
+        if not current or not isinstance(params,dict) or params.get('threadId')!=current['thread']:return
+        if method not in ('thread/tokenUsage/updated','turn/completed','model/rerouted'):return
+        if current['turn'] is None:
+            if len(current['early'])>=128:raise ValueError('too many early execution events')
+            current['early'].append((method,params));return
+        turn=params.get('turn') if method=='turn/completed' else None
+        identifier=turn.get('id') if isinstance(turn,dict) else params.get('turnId')
+        if identifier!=current['turn']:return
+        if method=='turn/completed':
+            if turn.get('status') not in ('completed','failed','interrupted'):raise ValueError('invalid completion state')
+            if current['completion'] is not None:raise ValueError('duplicate turn completion')
+            current['completion']=turn
+        elif method=='model/rerouted':current['model']=None
+        else:
+            usage=params.get('tokenUsage');total=usage.get('total') if isinstance(usage,dict) else None
+            if not isinstance(total,dict):raise ValueError('invalid token counters')
+            counts={key:total.get(key) for key in self.COUNTS}
+            if any(type(value) is not int or value<0 or value>=2**63 for value in counts.values()):raise ValueError('invalid token counters')
+            if counts['cachedInputTokens']>counts['inputTokens']:raise ValueError('invalid cached token count')
+            current['total']=counts
+
+    def finish(self,verified=True):
+        current=self.current
+        if current is None:return
+        completion=current['completion'] or {'status':'interrupted'}
+        counts=dict.fromkeys(self.COUNTS)
+        baseline,total=current['baseline'],current['total']
+        if baseline is not None and total is not None and all(total[k]>=baseline[k] for k in self.COUNTS):
+            counts={k:total[k]-baseline[k] for k in self.COUNTS}
+            if counts['cachedInputTokens']>counts['inputTokens']:counts=dict.fromkeys(self.COUNTS)
+        if not verified:counts=dict.fromkeys(self.COUNTS)
+        if current['turn'] is not None:
+            self.threads[current['thread']]['total']=total
+            self.threads[current['thread']]['model']=current['model']
+            self.threads[current['thread']]['requestedModel']=current['requestedModel']
+        error=completion.get('error');error=error if isinstance(error,dict) else {}
+        code=error.get('codexErrorInfo')
+        quota=verified and completion['status']=='failed' and code in ('usageLimitExceeded','rateLimitExceeded')
+        success=verified and completion['status']=='completed'
+        reset=runner.load('n2_receipt_rpc','codex-rpc.py').reported_quota_reset(error,time.time()) if quota else None
+        data={'status':'restricted' if quota else ('ok' if success else 'execution-failed'),
+              'identity':{'status':'verified','accountHash':self.account} if verified else {'status':'unknown'},
+              'source':'codex-app-server','session':current['thread'],'model':current['model'],'requestedModel':current['requestedModel'],
+              'usageScope':'provider-turn','startedAt':current['started'],
+              'attribution':dict(counts,task=current['task'])}
+        if quota:
+            data.update(restrictions=[{'scope':'execution','reason':'quota-rejected','resetsAt':reset}],
+                        resetKnown=reset is not None,recheckAt=reset)
+        self.journal.append('codex',self.profile,'quota-rejected' if quota else ('execution-succeeded' if success else 'execution-failed'),data)
+        self.current=None
+
+
 class Bridge:
-    def __init__(self,provider,emit):
-        self.provider=provider;self.emit=emit;self.initialized=False
+    def __init__(self,provider,emit,receipts=None):
+        self.provider=provider;self.emit=emit;self.initialized=False;self.receipts=receipts
         self.sequence=0;self.pending={};self.approvals={};self.threads=set();self.active=False
 
     def key(self):
@@ -93,6 +174,8 @@ class Bridge:
         if method in ('thread/resume','thread/fork','turn/start','turn/steer','review/start'):
             if params.get('threadId') not in self.threads:
                 self.error(message,'Thread has no account binding in this session');return
+        if method=='review/start' and params.get('delivery')=='detached':
+            self.error(message,'Detached review requires a separate account-bound session');return
         if method in ('thread/start','thread/resume','thread/fork','turn/start','review/start'):
             if self.active or self.approvals:
                 self.error(message,'Finish the current turn and approvals before starting another');return
@@ -103,7 +186,9 @@ class Bridge:
             if self.active or self.approvals:
                 self.error(message,'Finish the current turn and approvals before starting another');return
         key=self.key();self.pending[key]=(message['id'],method)
-        if method in ('turn/start','review/start'):self.active=True
+        if method in ('turn/start','review/start'):
+            self.active=True
+            if self.receipts:self.receipts.begin(params['threadId'],params.get('model'))
         try:self.provider.send(dict(message,id=key,params=params))
         except BaseException:
             self.pending.pop(key,None);raise
@@ -117,23 +202,39 @@ class Bridge:
             if not isinstance(identifier,str) or identifier not in self.pending:
                 raise ValueError('unknown provider response')
             frontend_id,request_method=self.pending.pop(identifier)
-            if request_method in ('turn/start','review/start') and 'error' in message:self.active=False
+            if request_method in ('turn/start','review/start'):
+                if 'error' in message:
+                    self.active=False
+                    if self.receipts:self.receipts.finish()
+                elif self.receipts:self.receipts.acknowledge(message.get('result',{}).get('turn'))
             if request_method in ('thread/start','thread/resume','thread/fork') and 'result' in message:
                 result=message['result'];thread=result.get('thread') if isinstance(result,dict) else None
                 if (not isinstance(thread,dict) or not isinstance(thread.get('id'),str) or not thread['id']
                         or result.get('modelProvider')!='openai' or result.get('cwd')!=self.provider.cwd):
                     raise RuntimeError('thread route does not match selected account')
                 self.threads.add(thread['id'])
+                if self.receipts:self.receipts.thread(thread['id'],result.get('model'),request_method=='thread/start')
             self.emit(dict(message,id=frontend_id));return
         if not isinstance(method,str):raise ValueError('invalid provider method')
-        if method=='turn/completed':self.active=False
+        if self.receipts:self.receipts.observe(method,message.get('params'))
+        if method=='turn/completed' and (self.receipts is None or (self.receipts.current and self.receipts.current['completion'])):self.active=False
         if 'id' in message:
             if not valid_id(identifier) or len(self.approvals)>=128:raise ValueError('invalid approval request')
             key=self.key();self.approvals[key]=identifier;message=dict(message,id=key)
         self.emit(message)
 
 
-def serve(provider,source,sink):
+    def flush_receipts(self):
+        if not self.receipts or not self.receipts.current or not self.receipts.current['completion']:return
+        if self.pending or self.approvals:return
+        deferred=[]
+        self.provider.validate_account_binding(deferred_messages=deferred)
+        for message in deferred:self.backend(message)
+        self.receipts.finish()
+        self.active=False
+
+
+def serve(provider,source,sink,receipts=None):
     ingress=queue.Queue(maxsize=128);stopped=threading.Event()
     def read():
         try:
@@ -153,7 +254,7 @@ def serve(provider,source,sink):
         if len(raw)>MAX_BYTES:raise ValueError('response too large')
         sink.write(raw);sink.flush()
     reader=threading.Thread(target=read,daemon=True);reader.start()
-    bridge=Bridge(provider,emit);waiting=[];eof=False;last_progress=time.monotonic()
+    bridge=Bridge(provider,emit,receipts);waiting=[];eof=False;last_progress=time.monotonic()
     try:
         while True:
             if not provider.messages.empty():
@@ -169,15 +270,18 @@ def serve(provider,source,sink):
                     if len(waiting)>=128:raise ValueError('too many frontend requests')
                     waiting.append(message)
             except queue.Empty:pass
+            bridge.flush_receipts()
             if waiting and not bridge.pending:
                 bridge.frontend(waiting.pop(0));last_progress=time.monotonic()
             if eof and not waiting and not bridge.pending:return
             if (waiting or bridge.pending) and time.monotonic()-last_progress>120:
                 raise TimeoutError('frontend request timed out')
-    finally:stopped.set()
+    finally:
+        stopped.set()
+        if receipts and receipts.current:receipts.finish(verified=False)
 
 
-def terminal(provider,home,executable,arguments):
+def terminal(provider,home,executable,arguments,receipts=None):
     # The directory restricts access to this user; there is no TCP listener or
     # bearer credential in command arguments, socket names or filesystem data.
     if any(arg=='--remote' or arg.startswith('--remote=') or arg.startswith('--remote-auth-token-env') for arg in arguments):
@@ -200,7 +304,7 @@ def terminal(provider,home,executable,arguments):
                 except socket.timeout:continue
             listener.close()
             stream=load('n2_private_websocket','fleet-auth-websocket.py').Stream(connection)
-            serve(provider,stream,stream)
+            serve(provider,stream,stream,receipts)
             stream.close();return process.wait(timeout=5)
         finally:
             signal.signal(signal.SIGINT,previous);listener.close()
@@ -222,14 +326,16 @@ def main():
     signal.signal(signal.SIGTERM,interrupted)
     try:
         broker=client.for_profile(args.root,args.config,args.profile)
+        journal=runner.load('n2_bridge_journal','usage-store.py').Journal(args.root,broker.recipient)
+        receipts=Receipts(journal,args.profile,broker.record['accountHash'])
         with tempfile.TemporaryDirectory(prefix='n2-owner-session-') as directory:
             runner.prepare_home(Path(args.config).resolve(strict=True),Path(directory))
             with broker.connection(directory,os.getcwd(),time.monotonic()+20,executable=args.executable) as (provider,_):
                 if args.tui:
                     arguments=args.frontend_args[1:] if args.frontend_args[:1]==['--'] else args.frontend_args
-                    return terminal(provider,directory,args.executable,arguments)
+                    return terminal(provider,directory,args.executable,arguments,receipts)
                 if args.frontend_args:raise ValueError('unexpected app-server arguments')
-                serve(provider,sys.stdin.buffer,sys.stdout.buffer)
+                serve(provider,sys.stdin.buffer,sys.stdout.buffer,receipts)
         return 0
     except (Exception,KeyboardInterrupt):
         print('agents: account-bound app-server unavailable',file=sys.stderr);return 1
