@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 // Compiled with the loop sources minus main.swift (see scripts/test.sh).
 @main struct LoopTests {
@@ -14,6 +15,22 @@ import Foundation
     }
 
     static func main() {
+        // Even descriptors without FD_CLOEXEC must stay in the controller.
+        let source = open("/dev/null", O_RDONLY)
+        let inherited = fcntl(source, F_DUPFD, 100)
+        close(source)
+        expect(inherited >= 100, "create descriptor inheritance fixture")
+        defer { close(inherited) }
+        for detached in [false, true] {
+            do {
+                let result = try spawnAndWait(
+                    ["/bin/sh", "-c", "test ! -e /dev/fd/\(inherited)"], cwd: "/",
+                    stdin: "/dev/null", stdout: "/dev/null", stderr: "/dev/null",
+                    timeout: 5, detach: detached, abort: Flag())
+                expect(result.0 == 0 && !result.1 && !result.2, "spawn closes unrelated descriptors, detached=\(detached)")
+            } catch { expect(false, "spawn descriptor test: \(error)") }
+        }
+
         // Reports: the last marker wins, strings with braces don't confuse it.
         let text = "echo of the prompt: N2_RESULT {\"x\":1}\nwork…\nN2_RESULT {\"status\":\"done\",\"summary\":\"a } brace\"}\ntokens used: 12"
         expect(parseReport(text)?["summary"] as? String == "a } brace", "parses the last N2_RESULT object")
