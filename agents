@@ -1428,12 +1428,32 @@ cmd_version() {
 }
 
 
+# Internal read-only inventory consumed by profile-metadata.py. NUL fields
+# preserve spaces and tabs in paths. Never invoke a provider or read credentials.
+cmd_profile_routes() {
+  printf 'n2-profile-routes-v1\0%s\0%s\0%s\0' "$N2_VENDORS" "$root" "$(fleet_self_id 2>/dev/null || true)"
+  cpr_count=0
+  for cpr_name in $(all_profiles); do
+    cpr_count=$((cpr_count + 1))
+    [ "$cpr_count" -le 1024 ] || return 1
+    for cpr_vendor in $N2_VENDORS; do
+      cpr_home=$(config_dir "$cpr_name" "$cpr_vendor") || return 1
+      cpr_cli=$(vendor_cli "$cpr_vendor")
+      cpr_binary=$(command -v "$cpr_cli" 2>/dev/null || true)
+      printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+        "$cpr_name" "$cpr_vendor" "$cpr_home" "$(vendor_env "$cpr_vendor")" \
+        "$(vendor_env_value "$cpr_vendor" "$cpr_home")" "$(vendor_env_extra "$cpr_vendor" "$cpr_name")" \
+        "$cpr_cli" "$cpr_binary"
+    done
+  done
+}
+
 cmd_profiles() {
   case ${1:-} in
     '') all_profiles ;;
     --json)
       [ "$#" = 1 ] || die "usage: agents profiles [--json|--ensure-ids]"
-      /usr/bin/python3 "$scripts_dir/profile-metadata.py" report "$root" --machine "$(fleet_self_id 2>/dev/null || true)" ;;
+      /usr/bin/python3 "$scripts_dir/profile-metadata.py" report "$root" --with-routes --machine "$(fleet_self_id 2>/dev/null || true)" ;;
     --ensure-ids)
       [ "$#" = 1 ] || die "usage: agents profiles [--json|--ensure-ids]"
       sync_need
@@ -1531,6 +1551,7 @@ case $cmd in
   fleet)    cmd_fleet "$@" ;;
   loop)     cmd_loop "$@" ;;
   profiles) cmd_profiles "$@" ;;
+  _profile-routes) cmd_profile_routes ;;
   porcelain) cmd_porcelain ;;
   version)  cmd_version ;;
   help|-h|--help) cmd_help ;;

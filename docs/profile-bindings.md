@@ -52,7 +52,32 @@ metadata presence; existing per-resource sync consent still governs transfers.
 It does not itself prove agreement on a source profile UUID. Profile-level adopted directory links
 remain supported by N2's existing containment rules.
 
-The JSON response has `schemaVersion: 1`. It does not yet expose a configuration
-revision or a T3 binding. Those remain required follow-up work. These IDs also do
-not prove that profiles with the same ID resolve to the same provider account on
-every machine; account verification remains a separate requirement.
+## Routing revision
+
+The JSON response has `schemaVersion: 1`. Each profile also exposes `routes`,
+`routingStatus`, `revisionScope` and `configurationRevision`. The revision scope
+`n2-profile-routing-v1` covers the profile ID, display name, machine, scope and
+N2's selected provider homes, launch environment, executable paths and resolved
+symlink destinations. A rename, route change or symlink retarget changes the
+revision. Missing provider homes and executables have explicit route statuses.
+
+Environment values and configured paths retain their literal spelling. For a
+relative binding, `workingDirectory` records the directory needed to interpret
+those values; consumers must preserve that context or reject the binding.
+`resolvedConfigDir` and `resolvedExecutable` report filesystem resolution
+separately. Inventory invokes only N2's route accessors. It does not execute a
+provider or read credential contents.
+
+Two consecutive route samples and profile metadata reads must agree before N2
+publishes a revision. Changed machine identity, incomplete inventory, unstable
+metadata or missing enrollment withhold the revision. A changed snapshot reports
+`routingStatus: "changed-during-read"`. This check is not a reservation. Consumers
+must reread and compare the revision before applying a binding or launching.
+
+This revision does not cover provider configuration contents, credential bytes,
+executable contents, project settings or inherited authentication overrides.
+Every route reports `accountIdentity.status: "unknown"`. A matching revision
+cannot establish account identity or provider configuration parity. The adapter
+must still verify the account and effective provider settings in its execution
+process. Profiles with the same ID may resolve to different accounts on different
+machines. T3 binding and runtime verification remain separate requirements.

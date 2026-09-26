@@ -371,8 +371,8 @@ The [profile identity contract](profile-bindings.md) adds persistent opaque IDs
 and `agents profiles --json`. Named profiles carry their IDs through the signed
 sync protocol; Default remains machine-local. Missing, legacy, invalid,
 conflicting and duplicate metadata remain explicit. These IDs are not provider
-account verification, and configuration revisions and adapter binding remain
-open.
+account verification. Scoped routing revisions now describe the N2 binding
+inputs; runtime account verification and adapter binding remain open.
 
 Initialization is explicit for existing legacy markers. Ordinary upgrade/sync
 preserves legacy bytes until one machine initializes and propagates the agreed
@@ -393,3 +393,21 @@ The [managed-auth concurrency audit](audits/codex-auth-concurrency-2026-09-26.md
 adds a canonical provider constraint to the remaining authentication work:
 file-conflict handling does not prove safe concurrent renewal of one copied
 Codex login across machines. Renewal ownership remains unimplemented.
+
+
+### Profile routing revisions
+
+`agents profiles --json` now supplies a revision of N2's profile routing inputs.
+It records literal provider environment values, configured and resolved paths,
+and the working directory needed for relative bindings. Repeated samples must
+agree on profile metadata, machine identity and routes before a revision is
+published. Missing or conflicting identities withhold it. Account identity stays
+unknown until separately verified in the provider execution process.
+
+Eight routing tests cover stable reads, symlink changes, Default fallback, XDG
+paths, missing routes, metadata and machine drift, wrong roots, rename behavior
+and equality with an actual relative-path launch. Scoped correctness and security
+reviews are clear. The ad-hoc QA build and packaged CLI snapshot/symlink checks
+pass, with packaged helper bytes matching the source. The contract explicitly
+excludes credential and provider-config contents from this routing revision.
+The full regression suite passes with both metadata and routing tests included.
