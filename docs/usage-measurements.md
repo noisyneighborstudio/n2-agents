@@ -90,3 +90,36 @@ local task reference and requested Claude model where known. Token totals,
 provider-session identity and verified account identity remain unknown. Recorded
 rejections do not yet change selection outside the loop’s existing cooldowns. An unknown account identity remains
 unknown; recording or replicating an observation does not verify it.
+
+## Provider identity evidence
+
+When Codex returns `account/read.workspaceRouting`, N2 retains a hash binding
+of the backend origin, selected `chatgptAccountId`, and CLI-reported login. Users
+in the same workspace remain separate. Missing routing remains `login-only`;
+N2 never substitutes a profile label for a workspace. The local Codex 0.155.1
+probe on September 25 returned login-only for both measured profiles. Default
+reported 75% weekly use and ExpoIO 100%, so this host has not established live
+workspace verification through that field.
+
+Claude identity comes from `claude auth status --json` with the same literal
+`CLAUDE_CONFIG_DIR` used for launch and measurement. First-party Claude.ai status
+with both login and organization produces an account-binding hash; API-key or
+alternate-provider status prevents measuring a different subscription account.
+Unavailable or incomplete CLI identity remains explicit. This identifies the
+provider CLI's selected account; it does not establish credential portability or
+refresh safety across machines.
+
+References: [Codex selected workspace routing](https://github.com/openai/codex/blob/de9e78e3e7caed0fdd75d20ae617faa646dfef3c/codex-rs/app-server/README.md#selected-workspace-routing)
+and [Claude authentication status](https://code.claude.com/docs/en/cli-reference).
+Synthetic tests cover routing retention, different users/workspaces, absent
+routing, literal Claude paths and alternate authentication modes.
+
+Identity and allowance reads are checked for a consistent snapshot. Claude
+credentials must remain unchanged across the CLI identity lookup; Codex account
+and routing must match before and after the rate-limit read. A changed sample is
+unavailable, rather than attributed to either account. The reference above is
+pinned to the inspected upstream revision. Local Claude is 2.1.283.
+
+Quota failures no longer consume the planner's four failed-plan attempts. The
+integration regression exhausts six profiles before reaching a healthy planner,
+and completes the resulting loop.

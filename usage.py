@@ -35,13 +35,51 @@ def claude_creds(cfg, is_default):
         return None, 'stale-token'
     return credential, 'ok' if expires / 1000 > time.time() else 'stale-token'
 
+def claude_identity(cfg):
+    """Ask the provider CLI which login its literal configured route selects."""
+    with tempfile.TemporaryDirectory(prefix='n2-claude-identity-') as cwd:
+        try:
+            result = subprocess.run(['claude', 'auth', 'status', '--json'],
+                                    env=dict(os.environ, CLAUDE_CONFIG_DIR=cfg), cwd=cwd,
+                                    capture_output=True, text=True, timeout=10)
+            value = json.loads(result.stdout)
+            if result.returncode != 0 or not isinstance(value, dict) or not value.get('loggedIn'):
+                return {'status': 'unavailable'}
+            if value.get('authMethod') != 'claude.ai' or value.get('apiProvider') != 'firstParty':
+                return {'status': 'conflicting'}
+            email, organization = value.get('email'), value.get('orgId')
+            if not isinstance(email, str) or not email:
+                return {'status': 'unknown'}
+            identity = {'status': 'login-only', 'loginHash': hashlib.sha256(email.lower().encode()).hexdigest()}
+            if isinstance(organization, str) and organization:
+                key = json.dumps(['claude', organization, email.lower()], separators=(',', ':'))
+                identity.update(status='verified', accountHash=hashlib.sha256(key.encode()).hexdigest(),
+                                organizationHash=hashlib.sha256(organization.encode()).hexdigest())
+            return identity
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return {'status': 'unavailable'}
+
+
 def claude(name, cfg):
     c, status = claude_creds(cfg, name == 'Default')
     if status != 'ok':
         return status, None
-    return 'ok', urllib.request.Request('https://api.anthropic.com/api/oauth/usage',
+    identity = claude_identity(cfg)
+    if identity['status'] == 'conflicting':
+        return 'credential-override', None
+    current, current_status = claude_creds(cfg, name == 'Default')
+    if current_status != 'ok' or current != c:
+        return 'fetch-error', None
+    request = urllib.request.Request('https://api.anthropic.com/api/oauth/usage',
         headers={'Authorization': 'Bearer ' + c['accessToken'],
                  'anthropic-beta': 'oauth-2025-04-20', 'User-Agent': 'n2-agents'})
+    def read():
+        result = json.load(urllib.request.urlopen(request, timeout=10))
+        if not isinstance(result, dict):
+            raise ValueError('invalid usage response')
+        result['_identity'] = identity
+        return result
+    return 'ok', read
 
 def claude_row(r):
     five, seven = r.get('five_hour') or {}, r.get('seven_day') or {}
@@ -90,13 +128,18 @@ def codex_native(cfg):
             receive(1)
             send({'method': 'initialized'})
             send({'id': 2, 'method': 'account/read', 'params': {'refreshToken': False}})
-            account = receive(2).get('account')
+            account_response = receive(2)
+            account = account_response.get('account')
             if not account or account.get('type') != 'chatgpt':
                 return {'_native': True, '_status': 'no-token' if not account else 'no-usage-api', 'account': account}
             send({'id': 3, 'method': 'account/rateLimits/read'})
             result = receive(3)
+            send({'id': 4, 'method': 'account/read', 'params': {'refreshToken': False}})
+            if receive(4) != account_response:
+                raise RuntimeError('account changed during usage read')
             result['_native'] = True
             result['account'] = account
+            result['workspaceRouting'] = account_response.get('workspaceRouting')
             return result
         finally:
             try:
@@ -146,6 +189,17 @@ def details(vendor, data):
             email = account.get('email')
             if isinstance(email, str) and email:
                 result['identity'] = {'status': 'login-only', 'loginHash': hashlib.sha256(email.lower().encode()).hexdigest()}
+                routing = data.get('workspaceRouting')
+                if isinstance(routing, dict):
+                    workspace = routing.get('chatgptAccountId')
+                    origin = routing.get('backendOrigin')
+                    if isinstance(workspace, str) and workspace and isinstance(origin, str) and origin.startswith('https://'):
+                        # Quotas can differ between users in one workspace. Both
+                        # login and selected workspace belong in the binding.
+                        key = json.dumps(['codex', origin.rstrip('/'), workspace, email.lower()], separators=(',', ':'))
+                        result['identity'].update(status='verified', accountHash=hashlib.sha256(key.encode()).hexdigest(),
+                                                  organizationHash=hashlib.sha256(workspace.encode()).hexdigest())
+
             buckets = data.get('rateLimitsByLimitId')
             if not isinstance(buckets, dict) or not buckets:
                 single = data.get('rateLimits') or {}
@@ -171,6 +225,7 @@ def details(vendor, data):
                                                if k in credits and isinstance(credits[k], (bool, int, float, str))
                                                and (not isinstance(credits[k], float) or math.isfinite(credits[k]))}
     elif vendor == 'claude':
+        result['identity'] = data.get('_identity', {'status': 'unknown'})
         for key, value in data.items():
             if key == 'five_hour' or key.startswith('seven_day'):
                 window(key, value, 18000 if key == 'five_hour' else 604800)

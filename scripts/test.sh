@@ -11,6 +11,11 @@ export TMPDIR="$test_root/tmp"
 export N2_CODEX_USAGE_URL="file://$test_root/codex-usage.json"
 export CLANG_MODULE_CACHE_PATH="$test_root/cache/clang"
 export SWIFT_MODULECACHE_PATH="$test_root/cache/swift"
+# Provider-path assertions describe the disposable fixture, independent of
+# whichever account/home the host coding agent inherited.
+unset CODEX_HOME CLAUDE_CONFIG_DIR GROK_HOME CURSOR_CONFIG_DIR XDG_CONFIG_HOME TBH_CREDENTIAL_BACKEND
+unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN CLAUDE_SECURESTORAGE_CONFIG_DIR
+
 
 # Fake vendor CLIs. Each echoes the config-dir env var it was handed, which is
 # exactly what the pinning tests need to assert — and it keeps the whole suite
@@ -701,6 +706,15 @@ wait_for DONE
 new_loop fail-b-once liar
 wait_for PAUSED
 [[ "$(field 's["reason"]')" == *"doesn't hold"* ]]
+
+# More than four exhausted slots must not hide the healthy planner after them.
+for p in Q1 Q2 Q3 Q4 Q5; do
+  env $loop_env ./agents new $p --vendors codex >/dev/null 2>&1
+  echo "$codex_auth" > "$loop_root/home/.n2-agents/$p/codex/auth.json"
+done
+new_loop quota-Home quota-Q1 quota-Q2 quota-Q3 quota-Q4 quota-Q5
+wait_for DONE
+[ "$(field 'len([t for t in s["turns"] if t["role"] == "planner" and t["outcome"] == "quota"])')" -ge 5 ]
 
 run_agents help | grep -Fq 'agents loop "goal"'
 

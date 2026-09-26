@@ -97,7 +97,8 @@ func agentsCLI() throws -> String {
 /// One planner turn, failing over across slots the way the controller does.
 func planOnce(_ s: inout RunState, cli: String, source: SlotSource, cwd: String, errors: [String]) throws -> [String: Any] {
     var avoid = Set<String>()
-    for attempt in 1...4 {
+    var failedPlans = 0
+    while failedPlans < 4 {
         guard let slot = pick(try source.slots(), effort: .deep, cooldowns: s.cooldowns, busy: [:], avoidSlots: avoid) else {
             throw LoopError("no signed-in slot with quota left to plan with (see: agents list, agents best)")
         }
@@ -127,10 +128,13 @@ func planOnce(_ s: inout RunState, cli: String, source: SlotSource, cwd: String,
             recordUsageOutcome(cli: cli, slot: slot.key, outcome: outcome, task: "\(s.id)/\(id)", effort: .deep)
             s.cooldowns[slot.key] = cooldown
         }
+        // Exhausted capacity says nothing about the planner's answer. Try
+        // each remaining slot without spending the invalid-plan allowance.
+        if s.turns[i].outcome != "quota" { failedPlans += 1 }
         avoid.insert(slot.key)
-        print("  \(slot.key) \(out.exit == 0 ? "returned no plan" : "failed: " + oneLine(out.tail, 160))\(attempt < 4 ? " — trying another slot" : "")")
+        print("  \(slot.key) \(out.exit == 0 ? "returned no plan" : "failed: " + oneLine(out.tail, 160))\(failedPlans < 4 ? " — trying another slot" : "")")
     }
-    throw LoopError("four planner turns failed; see \(Store.standard().dir(s.id))/turns")
+    throw LoopError("four non-quota planner turns failed; see \(Store.standard().dir(s.id))/turns")
 }
 
 /// Plan until the draft validates, repairing it from the named problems.

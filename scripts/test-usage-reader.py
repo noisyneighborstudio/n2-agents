@@ -36,6 +36,38 @@ class ReaderTests(unittest.TestCase):
             self.assertEqual(events[1]['data']['windows'], [])
             self.assertLessEqual(events[0]['at'], events[1]['at'])
 
+    def test_native_workspace_identity_separates_users_and_workspaces(self):
+        response = {'_native': True, 'account': {'email': 'one@example.invalid'},
+                    'workspaceRouting': {'chatgptAccountId': 'workspace-one', 'backendOrigin': 'https://chatgpt.com'}}
+        first = u.details('codex', response)['identity']
+        self.assertEqual(first['status'], 'verified')
+        response['workspaceRouting']['chatgptAccountId'] = 'workspace-two'
+        self.assertNotEqual(first['accountHash'], u.details('codex', response)['identity']['accountHash'])
+        response['workspaceRouting']['chatgptAccountId'] = 'workspace-one'
+        response['account']['email'] = 'two@example.invalid'
+        self.assertNotEqual(first['accountHash'], u.details('codex', response)['identity']['accountHash'])
+        response['workspaceRouting'] = None
+        self.assertEqual(u.details('codex', response)['identity']['status'], 'login-only')
+
+    def test_claude_identity_uses_literal_route_and_provider_status(self):
+        payload = {'loggedIn': True, 'authMethod': 'claude.ai', 'apiProvider': 'firstParty',
+                   'email': 'fixture@example.invalid', 'orgId': 'fixture-org'}
+        with patch.object(u.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=json.dumps(payload))) as run:
+            identity = u.claude_identity('/literal/symlink/path')
+        self.assertEqual(run.call_args.kwargs['env']['CLAUDE_CONFIG_DIR'], '/literal/symlink/path')
+        self.assertEqual(identity['status'], 'verified')
+        self.assertNotIn('fixture@example.invalid', json.dumps(identity))
+        payload['authMethod'] = 'api_key'
+        with patch.object(u.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=json.dumps(payload))):
+            self.assertEqual(u.claude_identity('/fixture')['status'], 'conflicting')
+
+    def test_claude_switch_between_token_and_identity_is_refused(self):
+        with patch.object(u, 'claude_creds', side_effect=[({'accessToken': 'first'}, 'ok'), ({'accessToken': 'second'}, 'ok')]), \
+             patch.object(u, 'claude_identity', return_value={'status': 'verified', 'accountHash': 'b' * 64}):
+            status, request = u.claude('Default', '/fixture')
+        self.assertEqual(status, 'fetch-error')
+        self.assertIsNone(request)
+
     def test_weekly_only(self):
         row = u.codex_row({"rate_limit": {"primary_window": {
             "used_percent": 72, "limit_window_seconds": 604800, "reset_at": 1790411072}}})
@@ -110,7 +142,9 @@ for line in sys.stdin:
         continue
     result = {}
     if request['method'] == 'account/read':
-        result = {'account': {'type': 'chatgpt', 'email': 'fixture@example.com'}}
+        result = {'account': {'type': 'chatgpt', 'email': 'fixture@example.com'}, 'workspaceRouting': {'chatgptAccountId': 'fixture-workspace', 'backendOrigin': 'https://chatgpt.com'}}
+        if request.get('id') == 4 and os.environ.get('N2_TEST_SWITCH'):
+            result['workspaceRouting']['chatgptAccountId'] = 'changed-workspace'
     elif request['method'] == 'account/rateLimits/read':
         result = {'rateLimitsByLimitId': {'fixture': {'primary': {'usedPercent': 12, 'windowDurationMins': 15}}}}
     print(json.dumps({'id': request['id'], 'result': result}), flush=True)
@@ -119,9 +153,13 @@ for line in sys.stdin:
             with patch.dict(os.environ, {'PATH': directory + ':/usr/bin:/bin', 'N2_TEST_CAPTURE': str(capture)}):
                 response = u.codex_native(directory + '/account-home')
             self.assertEqual(u.details('codex', response)['windows'][0]['durationSeconds'], 900)
+            self.assertEqual(u.details('codex', response)['identity']['status'], 'verified')
             calls = [json.loads(line) for line in capture.read_text().splitlines()]
-            self.assertEqual([c['method'] for c in calls], ['initialize', 'initialized', 'account/read', 'account/rateLimits/read'])
+            self.assertEqual([c['method'] for c in calls], ['initialize', 'initialized', 'account/read', 'account/rateLimits/read', 'account/read'])
             self.assertTrue(all(c['home'] == directory + '/account-home' for c in calls))
+            with patch.dict(os.environ, {'PATH': directory + ':/usr/bin:/bin', 'N2_TEST_CAPTURE': str(capture), 'N2_TEST_SWITCH': '1'}):
+                with self.assertRaisesRegex(RuntimeError, 'account changed'):
+                    u.codex_native(directory + '/account-home')
 
     def test_invalid_percentage_is_unknown(self):
         for value in [float('nan'), float('inf'), -1, 101, True, '10']:
