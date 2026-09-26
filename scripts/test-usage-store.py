@@ -177,6 +177,138 @@ class JournalTests(unittest.TestCase):
         self.b.import_events(exported, 'peer-a')
         self.assertEqual(len(self.b.active_rejections()), 1)
 
+    def test_paginated_snapshot_is_complete_immutable_and_atomically_published(self):
+        old = time.time() - 40 * 86400
+        for i in range(1005):
+            self.a.append('codex', 'P' + str(i), 'quota-rejected', {'status': 'restricted'}, old + i)
+        with self.assertRaises(ValueError):
+            self.a.events(own=True)
+        first = self.a.export_page('peer-b')
+        self.assertEqual(len(first['events']), 1000)
+        self.assertEqual(first['total'], 1005)
+        cursor = self.b.import_page(first, 'peer-a')
+        self.assertEqual(self.b.active_rejections(), [], 'partial snapshot cannot affect scheduling')
+        self.a.append('codex', 'New', 'quota-rejected', {'status': 'restricted'})
+        last = self.a.export_page('peer-b', cursor)
+        self.assertEqual(len(last['events']), 5)
+        self.assertIsNone(self.b.import_page(last, 'peer-a', cursor))
+        self.assertEqual(len(self.b.active_rejections()), 1005)
+        self.assertNotIn('New', {event['profile'] for event in self.b.active_rejections()})
+        self.assertEqual(self.a.export_page('peer-b')['total'], 1006)
+        self.assertEqual(self.b.export_page('peer-a')['total'], 0, 'no relabeling remote evidence')
+
+    def test_paginated_recovery_never_publishes_without_later_rejection(self):
+        now = time.time()
+        old = self.a.append('codex', 'Default', 'quota-rejected', {'status': 'restricted'}, now - 20)
+        self.b.import_events([old], 'peer-a')
+        success = self.a.append('codex', 'Default', 'execution-succeeded', {'status': 'ok', 'startedAt': now - 10}, now - 5)
+        rejection = self.a.append('codex', 'Default', 'quota-rejected', {'status': 'restricted'}, now)
+        token = 'a' * 32
+        first = {'schemaVersion': 1, 'snapshot': token, 'offset': 0, 'total': 2,
+                 'nextCursor': token + ':1', 'events': [success]}
+        last = dict(first, offset=1, nextCursor=None, events=[rejection])
+        with self.assertRaises(ValueError): self.b.import_page(last, 'peer-a', token + ':1')
+        self.b.import_page(first, 'peer-a')
+        with self.assertRaises(ValueError): self.b.import_page(first, 'peer-a', token + ':1')
+        with self.assertRaises(ValueError): self.b.import_page(first, 'peer-a')
+        self.assertEqual(self.b.exchange_cursor('peer-a'), token + ':1')
+        self.assertEqual(self.b.active_rejections()[0]['id'], old['id'])
+        self.b.import_page(last, 'peer-a', token + ':1')
+        self.assertEqual([event['id'] for event in self.b.active_rejections()], [rejection['id']])
+
+    def test_snapshot_cursor_recipient_bounds_and_page_spoof(self):
+        self.a.append('codex', 'Default', 'quota-rejected', {'status': 'restricted'})
+        fingerprint = 'SHA256:2xSk+qxDpnRMReWRitqoXtc2MqHt7WRSAP1EY/k0SQs'
+        self.assertEqual(self.a.export_page(fingerprint)['total'], 1)
+        page = self.a.export_page('peer-b')
+        token = page['snapshot']
+        for cursor in ['bad', token + ':2']:
+            with self.assertRaises(ValueError): self.a.export_page('peer-b', cursor)
+        with self.assertRaises(ValueError): self.a.export_page('impostor', token + ':0')
+        with self.assertRaises(ValueError): self.b.import_page(page, 'impostor')
+        with self.assertRaises(ValueError): self.b.import_page(dict(page, total=2), 'peer-a')
+        with self.assertRaises(ValueError): self.b.import_page(dict(page, offset=True), 'peer-a')
+        self.assertEqual(self.b.active_rejections(), [])
+
+    def test_pages_respect_encoded_byte_limit(self):
+        from unittest.mock import patch
+        for i in range(40):
+            self.a.append('codex', 'P' + str(i), 'quota-rejected', {'status': 'restricted', 'source': 'é' * 200})
+        with patch.object(u, 'MAX_BYTES', 4096):
+            cursor, count, pages = '', 0, 0
+            while True:
+                page = self.a.export_page('peer-b', cursor)
+                self.assertLessEqual(len((u.canonical(page) + '\n').encode()), 4096)
+                count += len(page['events'])
+                pages += 1
+                cursor = self.b.import_page(page, 'peer-a', cursor)
+                if cursor is None: break
+            self.assertEqual(count, 40)
+            self.assertGreater(pages, 1)
+        self.assertEqual(len(self.b.active_rejections()), 40)
+
+    def test_evicted_snapshot_discards_only_matching_staging(self):
+        from unittest.mock import patch
+        self.a.append('codex', 'One', 'quota-rejected', {'status': 'restricted'})
+        self.a.append('codex', 'Two', 'quota-rejected', {'status': 'restricted'})
+        with patch.object(u, 'MAX_BATCH', 1):
+            first = self.a.export_page('peer-b')
+            cursor = self.b.import_page(first, 'peer-a')
+            for _ in range(4): self.a.export_page('peer-b')
+            with self.assertRaises(u.SnapshotUnavailable): self.a.export_page('peer-b', cursor)
+            unavailable = {'schemaVersion': 1, 'error': 'snapshot-unavailable', 'snapshot': first['snapshot']}
+            with self.assertRaises(ValueError): self.b.import_page(unavailable, 'peer-a', 'f' * 32 + ':1')
+            self.b.import_page(unavailable, 'peer-a', cursor)
+            self.assertEqual(self.b.exchange_cursor('peer-a'), '')
+            replacement = self.a.export_page('peer-b')
+            next_cursor = self.b.import_page(replacement, 'peer-a')
+            self.b.import_page(unavailable, 'peer-a', cursor)
+            self.assertEqual(self.b.exchange_cursor('peer-a'), next_cursor, 'late stale response cannot discard replacement')
+            last = self.a.export_page('peer-b', next_cursor)
+            self.b.import_page(last, 'peer-a', next_cursor)
+            self.assertEqual(len(self.b.active_rejections()), 2)
+
+    def test_import_locks_before_receipt_validation(self):
+        import sqlite3
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        now = time.time()
+        old = self.a.append('codex', 'Default', 'quota-rejected', {'status': 'restricted'}, now - 30)
+        newer = self.a.append('codex', 'Default', 'quota-rejected', {'status': 'restricted'}, now - 1)
+        success = self.a.append('codex', 'Default', 'execution-succeeded', {'status': 'ok', 'startedAt': now - 10}, now)
+        self.b.import_events([old], 'peer-a')
+        token = 'a' * 32
+        first = {'schemaVersion': 1, 'snapshot': token, 'offset': 0, 'total': 2,
+                 'nextCursor': token + ':1', 'events': [newer]}
+        last = dict(first, offset=1, nextCursor=None, events=[success])
+        other_first = dict(first, snapshot='b' * 32, nextCursor='b' * 32 + ':1', events=[old])
+        self.b.import_page(first, 'peer-a')
+        other = u.Journal(Path(self.temp.name) / 'b', 'peer-b')
+        self.addCleanup(other.db.close)
+        other.db.execute('PRAGMA busy_timeout=50')
+        raw = self.b.db
+        attempts = []
+        class Interleaving:
+            def __enter__(self):
+                raw.__enter__()
+                return self
+            def __exit__(self, *args): return raw.__exit__(*args)
+            def execute(self, sql, args=()):
+                result = raw.execute(sql, args)
+                if sql.startswith('SELECT token, next_position, total FROM import_snapshots'):
+                    rows = result.fetchall()
+                    try:
+                        other.import_page(other_first, 'peer-a')
+                    except sqlite3.OperationalError as error:
+                        attempts.append(str(error))
+                    return SimpleNamespace(fetchone=lambda: rows[0] if rows else None)
+                return result
+        with patch.object(self.b, 'db', Interleaving()):
+            self.b.import_page(last, 'peer-a', token + ':1')
+        self.assertEqual(len(attempts), 1, 'concurrent replacement must be locked before receipt validation')
+        self.assertIn('locked', attempts[0])
+        self.assertEqual([event['id'] for event in self.b.active_rejections()], [newer['id']])
+
     def test_symlink_database_refused(self):
         root = Path(self.temp.name) / 'linked'
         root.mkdir()

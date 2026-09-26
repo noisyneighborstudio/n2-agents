@@ -22,3 +22,29 @@ assert original['origin'] == sys.argv[3]
 assert original['kind'] == 'quota-rejected'
 PY
 echo 'ok authenticated usage exchange retains original event without replay duplication'
+# More durable restrictions than fit in one response must cross the actual
+# signed carrier, even when diagnostic history has already expired.
+python3 - "$repo" "$base/a/.n2-agents" "$a" <<'PY'
+import importlib.util,sys,time
+spec=importlib.util.spec_from_file_location('usage_store',sys.argv[1]+'/usage-store.py')
+u=importlib.util.module_from_spec(spec); spec.loader.exec_module(u)
+j=u.Journal(sys.argv[2],sys.argv[3])
+for i in range(8105):
+    j.append('codex','Paged'+str(i),'quota-rejected',{'status':'restricted'},time.time()-40*86400+i)
+j.db.close()
+PY
+peer b fleet sync tick --interval 1 >/dev/null
+peer b usage restrictions > "$base/partial-restrictions"
+python3 - "$base/partial-restrictions" <<'PY'
+import json,sys
+assert len(json.load(open(sys.argv[1])))==1, 'eight-page tick must retain old state until remaining pages arrive'
+PY
+peer b fleet sync tick --interval 1 >/dev/null
+peer b usage restrictions > "$base/restrictions"
+python3 - "$base/restrictions" "$a" <<'PY'
+import json,sys
+rows=json.load(open(sys.argv[1]))
+assert len(rows)==8106, 'all durable restrictions must arrive across pages'
+assert all(row['origin']==sys.argv[2] for row in rows)
+PY
+echo 'ok paginated signed exchange publishes all 8106 durable restrictions across bounded ticks'

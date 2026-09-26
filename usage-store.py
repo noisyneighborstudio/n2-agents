@@ -158,6 +158,10 @@ def validate(event):
     return event
 
 
+class SnapshotUnavailable(ValueError):
+    pass
+
+
 class Journal:
     def __init__(self, root, origin=None):
         directory = Path(root) / '.usage'
@@ -175,6 +179,14 @@ class Journal:
         self.db.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
         self.db.execute('CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, origin TEXT NOT NULL, at REAL NOT NULL, provider TEXT NOT NULL, profile TEXT NOT NULL, body TEXT NOT NULL)')
         self.db.execute('CREATE INDEX IF NOT EXISTS events_binding ON events(origin, provider, profile, at)')
+        self.db.execute('CREATE TABLE IF NOT EXISTS export_snapshots (token TEXT PRIMARY KEY, recipient TEXT NOT NULL, created REAL NOT NULL, total INTEGER NOT NULL)')
+        self.db.execute('CREATE TABLE IF NOT EXISTS export_items (token TEXT NOT NULL, position INTEGER NOT NULL, event_id TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(token, position), UNIQUE(token, event_id))')
+        self.db.execute('CREATE TABLE IF NOT EXISTS import_snapshots (source TEXT PRIMARY KEY, token TEXT NOT NULL, next_position INTEGER NOT NULL, total INTEGER NOT NULL, created REAL NOT NULL)')
+        self.db.execute('CREATE TABLE IF NOT EXISTS import_items (source TEXT NOT NULL, position INTEGER NOT NULL, event_id TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(source, position), UNIQUE(source, event_id))')
+        self.db.execute('DELETE FROM export_items WHERE token IN (SELECT token FROM export_snapshots WHERE created < ?)', (time.time() - 3600,))
+        self.db.execute('DELETE FROM export_snapshots WHERE created < ?', (time.time() - 3600,))
+        self.db.execute('DELETE FROM import_items WHERE source IN (SELECT source FROM import_snapshots WHERE created < ?)', (time.time() - 3600,))
+        self.db.execute('DELETE FROM import_snapshots WHERE created < ?', (time.time() - 3600,))
         self.db.execute('CREATE TABLE IF NOT EXISTS execution_state (binding TEXT NOT NULL, kind TEXT NOT NULL, at REAL NOT NULL, id TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(binding, kind))')
         self.db.execute('INSERT OR IGNORE INTO settings VALUES (?, ?)', ('local-origin', 'local:' + str(uuid.uuid4())))
         self.local_origin = self.db.execute('SELECT value FROM settings WHERE key=?', ('local-origin',)).fetchone()[0]
@@ -315,6 +327,133 @@ class Journal:
             size += added
         return result
 
+    def export_page(self, recipient, cursor=''):
+        if not isinstance(recipient, str) or not re.fullmatch(r'[A-Za-z0-9:+/=_-]{1,128}', recipient):
+            raise ValueError('invalid recipient')
+        if cursor:
+            match = re.fullmatch(r'([a-f0-9]{32}):([0-9]{1,12})', cursor)
+            if not match:
+                raise ValueError('invalid cursor')
+            token, offset = match[1], int(match[2])
+        else:
+            token, offset = uuid.uuid4().hex, 0
+            with self.db:
+                # Retain concurrent transfers for one peer without letting
+                # abandoned snapshots accumulate indefinitely.
+                old = self.db.execute('SELECT token FROM export_snapshots WHERE recipient=? ORDER BY created DESC LIMIT -1 OFFSET 3', (recipient,)).fetchall()
+                for row in old:
+                    self.db.execute('DELETE FROM export_items WHERE token=?', row)
+                    self.db.execute('DELETE FROM export_snapshots WHERE token=?', row)
+                self.db.execute('INSERT INTO export_snapshots VALUES (?, ?, ?, 0)', (token, recipient, time.time()))
+                position = 0
+                for row in self.db.execute('SELECT body FROM execution_state ORDER BY id'):
+                    event = json.loads(row[0])
+                    if event['origin'] != self.origin:
+                        continue
+                    self.db.execute('INSERT INTO export_items VALUES (?, ?, ?, ?)', (token, position, event['id'], row[0]))
+                    position += 1
+                for event_id, body in self.db.execute('SELECT id, body FROM events WHERE origin=? ORDER BY id', (self.origin,)):
+                    if self.db.execute('SELECT 1 FROM export_items WHERE token=? AND event_id=?', (token, event_id)).fetchone():
+                        continue
+                    self.db.execute('INSERT INTO export_items VALUES (?, ?, ?, ?)', (token, position, event_id, body))
+                    position += 1
+                self.db.execute('UPDATE export_snapshots SET total=? WHERE token=?', (position, token))
+        snapshot = self.db.execute('SELECT total FROM export_snapshots WHERE token=? AND recipient=?', (token, recipient)).fetchone()
+        if not snapshot:
+            raise SnapshotUnavailable('snapshot unavailable')
+        if offset > snapshot[0]:
+            raise ValueError('invalid cursor offset')
+        total = snapshot[0]
+        with self.db:
+            self.db.execute('UPDATE export_snapshots SET created=? WHERE token=?', (time.time(), token))
+        events, size = [], 1024  # reserve envelope and cursor bytes
+        for row in self.db.execute('SELECT body FROM export_items WHERE token=? AND position>=? ORDER BY position LIMIT ?', (token, offset, MAX_BATCH)):
+            added = len(row[0].encode('utf-8')) + 1
+            if size + added > MAX_BYTES:
+                break
+            events.append(json.loads(row[0]))
+            size += added
+        next_offset = offset + len(events)
+        if next_offset < total and not events:
+            raise ValueError('event exceeds page size')
+        return {'schemaVersion': 1, 'snapshot': token, 'offset': offset, 'total': total,
+                'nextCursor': token + ':' + str(next_offset) if next_offset < total else None,
+                'events': events}
+
+    def import_page(self, page, source, requested_cursor=''):
+        if not isinstance(source, str) or not re.fullmatch(r'[A-Za-z0-9:+/=_-]{1,128}', source):
+            raise ValueError('invalid authenticated source')
+        if isinstance(page, dict) and page.get('error') == 'snapshot-unavailable':
+            if (set(page) != {'schemaVersion', 'error', 'snapshot'} or
+                    type(page['schemaVersion']) is not int or page['schemaVersion'] != 1 or
+                    not isinstance(requested_cursor, str) or
+                    not re.fullmatch(r'[a-f0-9]{32}:[0-9]{1,12}', requested_cursor) or
+                    page['snapshot'] != requested_cursor.split(':')[0]):
+                raise ValueError('unavailable response does not match request')
+            with self.db:
+                self.db.execute('BEGIN IMMEDIATE')
+                receipt = self.db.execute('SELECT token FROM import_snapshots WHERE source=?', (source,)).fetchone()
+                if receipt and receipt[0] == page['snapshot']:
+                    self.db.execute('DELETE FROM import_items WHERE source=?', (source,))
+                    self.db.execute('DELETE FROM import_snapshots WHERE source=?', (source,))
+            return None  # The next bounded tick starts a new snapshot.
+        fields(page, {'schemaVersion', 'snapshot', 'offset', 'total', 'nextCursor', 'events'})
+        if set(page) != {'schemaVersion', 'snapshot', 'offset', 'total', 'nextCursor', 'events'}:
+            raise ValueError('incomplete page')
+        if type(page['schemaVersion']) is not int or page['schemaVersion'] != 1:
+            raise ValueError('unsupported page schema')
+        token, offset, total, events = page['snapshot'], page['offset'], page['total'], page['events']
+        if not isinstance(token, str) or not re.fullmatch('[a-f0-9]{32}', token):
+            raise ValueError('invalid snapshot')
+        if type(offset) is not int or type(total) is not int or not 0 <= offset <= total <= 10**12:
+            raise ValueError('invalid page position')
+        if not isinstance(events, list) or len(events) > MAX_BATCH or len(canonical(page).encode()) + 1 > MAX_BYTES:
+            raise ValueError('invalid page size')
+        if requested_cursor:
+            if requested_cursor != token + ':' + str(offset):
+                raise ValueError('response does not match requested cursor')
+        elif offset != 0:
+            raise ValueError('initial response has nonzero offset')
+        end = offset + len(events)
+        expected = token + ':' + str(end) if end < total else None
+        if end > total or page['nextCursor'] != expected or (end < total and not events):
+            raise ValueError('invalid page continuation')
+        for event in events:
+            validate(event)
+            if event['origin'] != source:
+                raise ValueError('event origin does not match authenticated peer')
+        with self.db:
+            # Lock before checking progress. A concurrent restart must not swap
+            # staging between receipt validation and final publication.
+            self.db.execute('BEGIN IMMEDIATE')
+            receipt = self.db.execute('SELECT token, next_position, total FROM import_snapshots WHERE source=?', (source,)).fetchone()
+            if offset == 0:
+                if receipt and receipt[0] == token and receipt[1] > 0:
+                    raise ValueError('snapshot already in progress')
+                self.db.execute('DELETE FROM import_items WHERE source=?', (source,))
+                self.db.execute('INSERT OR REPLACE INTO import_snapshots VALUES (?, ?, 0, ?, ?)', (source, token, total, time.time()))
+            elif receipt != (token, offset, total):
+                raise ValueError('page is not the expected continuation')
+            for i, event in enumerate(events):
+                self.db.execute('INSERT INTO import_items VALUES (?, ?, ?, ?)', (source, offset + i, event['id'], canonical(event)))
+            self.db.execute('UPDATE import_snapshots SET next_position=?, created=? WHERE source=?', (end, time.time(), source))
+            if end == total:
+                # No partial success/rejection set is visible to scheduling.
+                # The final page publishes the whole snapshot atomically.
+                for row in self.db.execute('SELECT body FROM import_items WHERE source=? ORDER BY position', (source,)):
+                    event = json.loads(row[0])
+                    self.db.execute('INSERT OR IGNORE INTO events VALUES (?, ?, ?, ?, ?, ?)',
+                                    (event['id'], source, event['at'], event['provider'], event['profile'], row[0]))
+                    self._retain_execution(event)
+                self.db.execute('DELETE FROM events WHERE at < ?', (time.time() - 30 * 86400,))
+                self.db.execute('DELETE FROM import_items WHERE source=?', (source,))
+                self.db.execute('DELETE FROM import_snapshots WHERE source=?', (source,))
+        return page['nextCursor']
+
+    def exchange_cursor(self, source):
+        receipt = self.db.execute('SELECT token, next_position FROM import_snapshots WHERE source=?', (source,)).fetchone()
+        return receipt[0] + ':' + str(receipt[1]) if receipt else ''
+
     def token_summary(self):
         # A task can be observed again during recovery. Use its latest record,
         # rather than counting that invocation twice. Imported replays already
@@ -366,14 +505,28 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--root', required=True)
     parser.add_argument('--origin')
-    parser.add_argument('verb', choices=['history', 'summary', 'restrictions', 'export', 'import', 'record'])
+    parser.add_argument('verb', choices=['history', 'summary', 'restrictions', 'export', 'import', 'export-page', 'import-page', 'exchange-cursor', 'record'])
     parser.add_argument('--source')
+    parser.add_argument('--cursor', default='')
     parser.add_argument('--provider')
     parser.add_argument('--profile')
     parser.add_argument('--kind', default='measurement')
     parser.add_argument('--data', help='sanitized metadata JSON; otherwise read stdin')
     args = parser.parse_args()
     journal = Journal(args.root, args.origin)
+    if args.verb == 'exchange-cursor':
+        print(journal.exchange_cursor(args.source))
+        return
+    if args.verb == 'export-page':
+        cursor = sys.stdin.read(257).strip()
+        if len(cursor) > 256:
+            raise ValueError('cursor too large')
+        try:
+            result = journal.export_page(args.source, cursor)
+        except SnapshotUnavailable:
+            result = {'schemaVersion': 1, 'error': 'snapshot-unavailable', 'snapshot': cursor.split(':')[0]}
+        print(canonical(result))
+        return
     if args.verb == 'restrictions':
         print(canonical(journal.active_rejections()))
         return
@@ -387,7 +540,11 @@ def main():
     if len(raw) > MAX_BYTES:
         raise ValueError('event batch too large')
     data = json.loads(raw)
-    if args.verb == 'import':
+    if args.verb == 'import-page':
+        if not args.source:
+            raise ValueError('authenticated source required')
+        print(journal.import_page(data, args.source, args.cursor) or '')
+    elif args.verb == 'import':
         if not args.source:
             raise ValueError('authenticated source required')
         journal.import_events(data, args.source)

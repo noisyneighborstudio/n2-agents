@@ -2681,6 +2681,12 @@ fleet_handle_usage_export() {
   fleet_ok "$3/out"
 }
 
+fleet_handle_usage_page() {
+  fleet_approved "$1" || { echo "ERR not-approved"; return 1; }
+  /usr/bin/python3 "$scripts_dir/usage-store.py" --root "$root" --origin "$(fleet_self_id)" export-page --source "$1" < "$2" > "$3/out" || { echo "ERR usage-journal"; return 1; }
+  fleet_ok "$3/out"
+}
+
 sync_usage_pull() (
   sup_dir=$(mktemp -d "${TMPDIR:-/tmp}/n2usagepull.XXXXXX") || exit 1
   trap 'rm -rf "$sup_dir"' EXIT
@@ -2688,7 +2694,15 @@ sync_usage_pull() (
   for sup_peer in $(fleet_peer_ids); do
     [ "$sup_peer" = "$(fleet_self_id)" ] && continue
     fleet_approved "$sup_peer" || continue
-    fleet_call "$sup_peer" usage-export "$sup_dir/request" > "$sup_dir/events" 2>/dev/null || continue
-    /usr/bin/python3 "$scripts_dir/usage-store.py" --root "$root" --origin "$(fleet_self_id)" import --source "$sup_peer" < "$sup_dir/events" || exit 1
+    sup_cursor=$(/usr/bin/python3 "$scripts_dir/usage-store.py" --root "$root" --origin "$(fleet_self_id)" exchange-cursor --source "$sup_peer") || exit 1
+    printf '%s' "$sup_cursor" > "$sup_dir/request"
+    sup_pages=0
+    while [ "$sup_pages" -lt 8 ]; do
+      sup_pages=$((sup_pages + 1))
+      fleet_call "$sup_peer" usage-page "$sup_dir/request" > "$sup_dir/events" 2>/dev/null || break
+      sup_cursor=$(/usr/bin/python3 "$scripts_dir/usage-store.py" --root "$root" --origin "$(fleet_self_id)" import-page --source "$sup_peer" --cursor "$sup_cursor" < "$sup_dir/events") || { fleet_event usage-sync-error "peer=$sup_peer invalid-page"; break; }
+      [ -n "$sup_cursor" ] || break
+      printf '%s' "$sup_cursor" > "$sup_dir/request"
+    done
   done
 )

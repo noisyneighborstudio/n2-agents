@@ -120,10 +120,23 @@ outcomes still lack verified account attribution, so ordinary loop failures
 currently propagate as diagnostic evidence but only block that local route.
 Imported, verified outcome evidence is covered by synthetic cross-peer tests.
 
-Fleet export prioritizes durable execution state before diagnostic history and
-retains success records to prevent replay from resurrecting old restrictions.
-It fails explicitly if that state exceeds the existing batch bound. Pagination
-and pre-enrollment evidence transfer remain fleet-completion work. An unreadable
+Fleet transfer freezes a recipient-bound snapshot of durable execution state and
+retained diagnostic history, including recovery records that prevent replay from
+resurrecting old restrictions. Each signed page is limited to 1,000 events and
+2 MiB. The receiver stages pages and publishes the complete snapshot in one
+transaction; partial recovery evidence never reaches scheduling. Responses must
+match the requested snapshot and offset.
+
+Each sync tick transfers at most eight pages per peer and resumes unfinished
+transfers on later ticks. Invalid responses do not prevent other peers or task
+monitoring from running. Snapshots and staged transfers expire after an hour of
+inactivity; active progress extends that lifetime. A sender retains at most four
+concurrent snapshots for each recipient. An unavailable snapshot response clears
+only the matching staged transfer; the next tick restarts it. An older response
+cannot discard a newer transfer. The older `agents usage export` command
+remains a bounded diagnostic interface; fleet sync uses the paginated protocol.
+
+Pre-enrollment evidence transfer remains fleet-completion work. An unreadable
 local journal makes measurements unavailable rather than ignoring restrictions.
 
 ## Provider identity evidence

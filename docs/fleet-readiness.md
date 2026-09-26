@@ -90,3 +90,12 @@ pre-enrollment state transfer and paginated exchange remain required. The full
 regression, 17 journal tests, 16 reader tests and release packaging pass. Packaging
 used ad-hoc signing and did not install the app. Independent follow-up reviews
 are clear after the concurrency and reset fixes.
+
+Fleet usage exchange now uses immutable, recipient-bound snapshots with bounded
+pages and atomic receiver publication. A signed transport test transfers 8,106
+durable restrictions across two ticks while preserving the receiver's previous
+state until completion. Twenty-three journal tests cover cursor replay, page byte
+bounds, concurrent staging replacement and snapshot consistency. Independent
+correctness and security follow-ups are clear. The full regression, release
+packaging and all 635 sync checks across 75 sections pass. Packaging used ad-hoc
+signing and did not install the app.
