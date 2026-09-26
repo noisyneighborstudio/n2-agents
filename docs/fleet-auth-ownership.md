@@ -467,9 +467,9 @@ Profile/route changes during login cause publication to fail instead of replacin
 newer intent. The verified private grant is retained for recovery if publication
 fails. Pending or failed logins are not usable grants.
 
-The command currently runs on the designated owner and refuses an implicit
-remote-owner takeover. Non-owner initiation and status/cancel transport remain
-required. The device flow follows the official app-server documentation at
+For a remote owner, the command requests device login on that owner through the
+signed control protocol below. It never takes over ownership. The device flow
+follows the official app-server documentation at
 https://learn.chatgpt.com/docs/app-server and was checked against the installed
 Codex-generated LoginAccountParams, LoginAccountResponse and completion schemas.
 The synthetic tests do not establish real account device-code availability.
@@ -516,9 +516,31 @@ fields, are rejected. Each verifier accepts at most one reply. The private
 pinned-SSH carrier keeps replies in memory; generic `fleet send auth-login` is
 refused before dialing because that path creates response files.
 
-This increment implements the wire and carrier only. The owner endpoint and
-operation worker remain unfinished. They must persist requester-bound operation
-intent, enforce management consent and current approval, correlate native login
-completion, handle disconnect/cancel/expiry, and serialize final publication with
-cancellation and the original binding revision. A signed message alone is not
-permission to start login, replace an account or publish a binding.
+The owner endpoint persists requester-bound operations and runs native login in
+an isolated private grant. The owner must first run
+`agents fleet auth allow-login Profile --peer ID`; token-use permission alone
+cannot initiate login. `deny-login` revokes that permission and pending workers
+stop. Management permission is tied to the original grant generation; a new
+grant needs its own explicit management consent.
+
+Provider verification leaves the operation `verified` without publishing. The
+requester's `finish` action publishes under the normal profile/resource locks,
+with the original binding revision checked again. A process supervisor retains
+the operation lock until the publication process group exits, so cancellation
+cannot acknowledge while a writer is still running. Repeated finish reconciles
+an already-published binding. Old grants remain available to existing sessions.
+Same-account remote replacement preserves token-use consent. Explicit account
+replacement starts with owner-only access.
+
+Ordinary renewal lock contention returns a signed `busy` result, and the client
+retries the same action within its timeout. Workers also retry contention while
+continuing to enforce their operation deadline. Revoked consent, changed intent
+and changed bindings remain errors. The client attempts cancellation on failure
+or interruption; an unreachable owner may retain a pending operation until its
+ten-minute deadline, but verification alone cannot publish it.
+
+After owner completion, the client runs ordinary fleet sync and reports
+`registered` only when the local unconflicted binding matches. A failed sync
+reports `owner-completed` with `localBinding: pending-sync`. No credential is
+copied into the requester profile. Live-provider and restart acceptance and independent security review remain
+required before overall readiness.

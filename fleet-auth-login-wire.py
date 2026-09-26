@@ -22,7 +22,7 @@ NAMESPACE='n2-agents-login-response-v1'
 MAX_BYTES=16384
 FIELDS={'schemaVersion','owner','recipient','nonce','expiresAt','operationId','action',
         'profileId','grantId','ownershipGeneration','accountHash','bindingRevision','replaceAccount'}
-STATES={'starting','login-required','verifying','verified','completed','cancelled','failed'}
+STATES={'starting','login-required','verifying','verified','completed','cancelled','failed','busy'}
 
 
 def validate_context(context):

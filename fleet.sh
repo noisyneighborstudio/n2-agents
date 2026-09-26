@@ -398,6 +398,11 @@ fleet_handle_auth_token() {
   python3 "$scripts_dir/fleet-auth-server.py" "$root" "$1" "$2"
 }
 
+fleet_handle_auth_login() {
+  [ -n "${SSH_CONNECTION:-}" ] || { echo "ERR encrypted-carrier-required" >&2; return 1; }
+  python3 "$scripts_dir/fleet-auth-login.py" serve "$root" "$1" "$2"
+}
+
 fleet_handle_ping() { printf 'pong %s %s\n' "$(fleet_self_machine)" "$(fleet_self_id)" > "$3/out"; fleet_ok "$3/out"; }
 
 fleet_handle_status() {
@@ -1582,7 +1587,7 @@ fleet_route() {  # fleet_route <peerid> <transport> <address> <port> <user> <hom
 fleet_auth_manage() (
   set +e
   action=${1:-}; name=${2:-}
-  case $action in register|status|allow|deny|login|reconcile|retire|grants) ;; *) fleet_die "usage: agents fleet auth <register|status|allow|deny|login|reconcile|retire|grants> Profile [--grant ID|--peer ID]" ;; esac
+  case $action in register|status|allow|deny|login|reconcile|retire|grants|allow-login|deny-login) ;; *) fleet_die "usage: agents fleet auth <register|status|allow|deny|login|reconcile|retire|grants|allow-login|deny-login> Profile [--grant ID|--peer ID]" ;; esac
   [ -n "$name" ] || fleet_die "an auth profile is required"
   shift 2
   name=$(resolve_profile "$name") || fleet_die "unknown profile"
@@ -1634,7 +1639,7 @@ agents fleet <verb>
   tools <verb>                             fleet-managed utilities (tools help)
   task <verb>                              dispatch, handoff and task lifecycle (task help)
   send <peerid> --verb <v> [--payload-file <f>]   raw signed request
-  auth <register|status|allow|deny|login|reconcile|retire|grants> Profile  owner binding and explicit peer consent
+  auth <register|status|allow|deny|login|reconcile|retire|grants|allow-login|deny-login> Profile  owner binding and explicit peer consent
   serve                                    stdio responder (the remote end)
   help                                     this list
 EOF

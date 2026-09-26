@@ -730,3 +730,27 @@ The ad-hoc QA package passes all 28 login-wire/token-response/token-transport
 tests with helper byte parity and private fixture HOME roots. Seven endpoint and
 fifteen owner-client source regressions also pass. Packaged staging omits the QA
 root selector, and no app or live credential change is performed.
+
+
+### Remote owner login implementation
+
+The owner endpoint, persistent worker and CLI now implement remote login with
+separate management consent, explicit finish/publication, cancellation, expiry,
+same-account access continuity and ordinary public-binding sync. Nine disposable
+remote-login tests pass. They include the real CLI from requester to owner and
+back, signed lock-contention responses, continued login during renewal contention,
+revocation, stale intent, cancellation and truthful pending-sync reporting.
+Nine wire tests and nineteen management tests also pass from source.
+
+The correctness review found that a two-second grant-lock timeout was being
+mistaken for revocation. Workers now retry contention at initial/final
+authorization and during monitoring; the endpoint returns signed `busy` for
+retryable contention. Revocation still stops the worker. This checkpoint does
+not establish live-provider acceptance, restart coverage, or the
+outstanding independent security-review gate. PR #3 remains draft and PR #26
+remains design-only.
+
+The ad-hoc QA bundle passes the same 37 remote-login, wire and management
+tests using byte-matched bundled helpers and disposable fixture homes. The first
+packaged staging attempt omitted the synthetic provider fixture; correcting the
+test staging allowed all checks to run. No app was installed or deployed.
