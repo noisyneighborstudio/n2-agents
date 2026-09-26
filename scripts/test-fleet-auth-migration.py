@@ -22,6 +22,114 @@ class MigrationTests(unittest.TestCase):
         self.fixture=fixture.ManageTests('test_register_status_and_explicit_revision')
         self.addCleanup(self.fixture.doCleanups);self.fixture.setUp()
         self.root=self.fixture.root;self.slot=self.fixture.slot
+    def archive_fixture(self):
+        conflict=self.root/'fleet/sync/conflicts'/'archive-fixture'
+        conflict.mkdir(parents=True)
+        (conflict/'meta').write_text('addr=auth|Work|codex|auth.json\n')
+        files=[self.slot/'auth.json',conflict/'local',conflict/'remote']
+        for index,path in enumerate(files):path.write_bytes(('synthetic-archive-secret-'+str(index)).encode())
+        revision=self.fixture.command('migration-begin')['migrationRevision']
+        return files,revision
+
+    def test_archive_roundtrip_preserves_pending_and_conflict_bytes(self):
+        files,revision=self.archive_fixture();original=[p.read_bytes() for p in files]
+        result=self.fixture.command('migration-archive','--expected-revision',revision)
+        self.assertEqual(result['status'],'migration-pending')
+        self.assertEqual(result['localArchive'],{'state':'archived','copies':3})
+        self.assertFalse(result['inventoryComplete']);self.assertEqual(result['providerRevocation'],'unconfirmed')
+        public=json.dumps(result)
+        for raw in original:
+            self.assertNotIn(raw.decode(),public);self.assertNotIn(hashlib.sha256(raw).hexdigest(),public)
+        self.assertTrue(all(not p.exists() for p in files))
+        self.assertTrue((self.slot/migration.MARKER).exists())
+        self.fixture.command('migration-archive','--expected-revision',revision)
+        self.fixture.command('migration-abandon','--allow-legacy','--expected-revision',revision)
+        self.assertEqual([p.read_bytes() for p in files],original)
+        self.assertFalse((self.slot/migration.MARKER).exists())
+
+    def test_archive_refuses_stale_symlink_and_intervening_files(self):
+        files,revision=self.archive_fixture();raw=files[0].read_bytes()
+        self.fixture.command('migration-archive','--expected-revision','0'*64,success=False)
+        outside=self.fixture.fixture.base/'outside-archive';outside.write_bytes(raw)
+        files[0].unlink();files[0].symlink_to(outside)
+        self.fixture.command('migration-archive','--expected-revision',revision,success=False)
+        self.assertEqual(outside.read_bytes(),raw)
+        files[0].unlink();os.link(outside,files[0])
+        self.fixture.command('migration-archive','--expected-revision',revision,success=False)
+        files[0].unlink();files[0].write_bytes(raw)
+        with files[0].open('r+b') as stream:stream.truncate(8*1024*1024+1)
+        self.fixture.command('migration-archive','--expected-revision',revision,success=False)
+        files[0].write_bytes(raw)
+        self.fixture.command('migration-archive','--expected-revision',revision)
+        files[0].write_bytes(b'new-intervening-login')
+        self.fixture.command('migration-abandon','--allow-legacy','--expected-revision',revision,success=False)
+        self.assertEqual(files[0].read_bytes(),b'new-intervening-login')
+        self.assertTrue((self.slot/migration.MARKER).exists())
+        files[0].unlink()
+        self.fixture.command('migration-abandon','--allow-legacy','--expected-revision',revision)
+        self.assertEqual(files[0].read_bytes(),raw)
+
+    def test_archive_and_restore_reconcile_interrupted_publication(self):
+        files,revision=self.archive_fixture();original=[p.read_bytes() for p in files]
+        directory=self.root/'fleet/auth-archives'/revision
+        sync=migration.manage.binding.owner.sync_directory
+        def archive_crash(path):
+            if Path(path).resolve()==directory.resolve() and (directory/'0.blob').exists():raise OSError('archive publication interrupted')
+            return sync(path)
+        with patch.object(migration.manage.binding.owner,'sync_directory',side_effect=archive_crash):
+            with self.assertRaises(OSError):migration.archive(self.root,'Work',self.slot,revision)
+        self.assertEqual(files[0].read_bytes(),original[0])
+        self.assertTrue((directory/'0.blob.partial').exists())
+        migration.archive(self.root,'Work',self.slot,revision)
+        self.assertFalse(list(directory.glob('*.partial')))
+        def restore_crash(path):
+            if Path(path).resolve()==self.slot.resolve() and files[0].exists():raise OSError('restore publication interrupted')
+            return sync(path)
+        with patch.object(migration.manage.binding.owner,'sync_directory',side_effect=restore_crash):
+            with self.assertRaises(OSError):migration.abandon(self.root,'Work',self.slot,revision,True)
+        self.assertTrue((self.slot/migration.MARKER).exists())
+        self.fixture.command('migration-abandon','--allow-legacy','--expected-revision',revision)
+        self.assertEqual([p.read_bytes() for p in files],original)
+        self.assertFalse(list(directory.glob('*.blob')))
+        self.assertFalse(list(self.slot.glob('.n2-restore-*')))
+
+    def test_abandon_during_partial_archive_removes_partial_copies(self):
+        files,revision=self.archive_fixture();original=[p.read_bytes() for p in files]
+        directory=self.root/'fleet/auth-archives'/revision
+        with patch.object(migration.os,'link',side_effect=OSError('before publication')):
+            with self.assertRaises(OSError):migration.archive(self.root,'Work',self.slot,revision)
+        self.assertTrue((directory/'0.blob.partial').exists())
+        self.fixture.command('migration-abandon','--allow-legacy','--expected-revision',revision)
+        self.assertEqual([p.read_bytes() for p in files],original)
+        self.assertEqual([p.name for p in directory.iterdir()],['manifest.json'])
+
+    def test_archive_retries_sync_source_before_forgetting_backup(self):
+        files,revision=self.archive_fixture();directory=self.root/'fleet/auth-archives'/revision
+        sync=migration.manage.binding.owner.sync_directory
+        def after_source_unlink(path):
+            if Path(path).resolve()==self.slot.resolve() and not files[0].exists():raise OSError('source unlink sync interrupted')
+            return sync(path)
+        with patch.object(migration.manage.binding.owner,'sync_directory',side_effect=after_source_unlink):
+            with self.assertRaises(OSError):migration.archive(self.root,'Work',self.slot,revision)
+        self.assertFalse(files[0].exists());self.assertTrue((directory/'0.blob').exists())
+        with patch.object(migration.manage.binding.owner,'sync_directory',wraps=sync) as calls:
+            migration.archive(self.root,'Work',self.slot,revision)
+        self.assertIn(self.slot.resolve(),[Path(c.args[0]).resolve() for c in calls.call_args_list])
+        def after_temporary_unlink(path):
+            if (Path(path).resolve()==self.slot.resolve() and files[0].exists()
+                    and not list(self.slot.glob('.n2-restore-*'))):raise OSError('restore unlink sync interrupted')
+            return sync(path)
+        with patch.object(migration.manage.binding.owner,'sync_directory',side_effect=after_temporary_unlink):
+            with self.assertRaises(OSError):migration.abandon(self.root,'Work',self.slot,revision,True)
+        self.assertTrue((directory/'0.blob').exists());source_synced=[]
+        def verify_order(path):
+            if Path(path).resolve()==self.slot.resolve():source_synced.append(True)
+            if Path(path).resolve()==directory.resolve() and not (directory/'0.blob').exists():
+                self.assertTrue(source_synced,'archive deletion persisted before source publication')
+            return sync(path)
+        with patch.object(migration.manage.binding.owner,'sync_directory',side_effect=verify_order):
+            migration.abandon(self.root,'Work',self.slot,revision,True)
+
     def test_peer_preparation_requires_consent_and_preserves_legacy_bytes(self):
         wire = self.fixture.fixture
         peer_root = wire.base/'client'; peer_slot = peer_root/'Renamed/codex'
@@ -126,6 +234,8 @@ class MigrationTests(unittest.TestCase):
         (wire.bin/'ssh').write_text(ssh)
         initial=self.fixture.command('migration-begin');revision=initial['migrationRevision']
         self.fixture.command('migration-prepare','--peer',peer,'--expected-revision',revision)
+        migration.archive(peer_root,'Work',peer_slot,revision)
+        self.assertFalse((peer_slot/'auth.json').exists())
         delayed=migration.request(self.root,'Work',self.slot,peer,revision)
         payload=wire.base/'delayed-prepare';payload.write_bytes(migration.canonical(delayed))
         args=('--allow-legacy','--expected-revision',revision)

@@ -1601,7 +1601,7 @@ fleet_route() {  # fleet_route <peerid> <transport> <address> <port> <user> <hom
 fleet_auth_manage() (
   set +e
   action=${1:-}; name=${2:-}
-  case $action in register|status|allow|deny|login|reconcile|retire|grants|allow-login|deny-login|migration-status|migration-begin|migration-abandon|migration-allow|migration-deny|migration-prepare|migration-accept|migration-recover) ;; *) fleet_die "usage: agents fleet auth <register|status|allow|deny|login|reconcile|retire|grants|allow-login|deny-login|migration-status|migration-begin|migration-abandon|migration-allow|migration-deny|migration-prepare> Profile [--grant ID|--peer ID]" ;; esac
+  case $action in register|status|allow|deny|login|reconcile|retire|grants|allow-login|deny-login|migration-status|migration-begin|migration-archive|migration-abandon|migration-allow|migration-deny|migration-prepare|migration-accept|migration-recover) ;; *) fleet_die "usage: agents fleet auth <register|status|allow|deny|login|reconcile|retire|grants|allow-login|deny-login|migration-status|migration-begin|migration-archive|migration-abandon|migration-allow|migration-deny|migration-prepare> Profile [--grant ID|--peer ID]" ;; esac
   [ -n "$name" ] || fleet_die "an auth profile is required"
   shift 2
   name=$(resolve_profile "$name") || fleet_die "unknown profile"
@@ -1682,7 +1682,7 @@ agents fleet <verb>
   tools <verb>                             fleet-managed utilities (tools help)
   task <verb>                              dispatch, handoff and task lifecycle (task help)
   send <peerid> --verb <v> [--payload-file <f>]   raw signed request
-  auth <register|status|allow|deny|login|reconcile|retire|grants|allow-login|deny-login|migration-status|migration-begin|migration-abandon|migration-allow|migration-deny|migration-prepare> Profile  owner binding and explicit peer consent
+  auth <register|status|allow|deny|login|reconcile|retire|grants|allow-login|deny-login|migration-status|migration-begin|migration-archive|migration-abandon|migration-allow|migration-deny|migration-prepare> Profile  owner binding and explicit peer consent
   serve                                    stdio responder (the remote end)
   help                                     this list
 EOF

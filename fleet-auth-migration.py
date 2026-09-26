@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Read-only migration inventory and an explicit local migration barrier.
 
-No credentials are opened, exported, moved, deleted or fingerprinted here.
+Inventory is read-only. Explicit archival preserves known copies privately for recovery.
 An inventory is evidence of known copies, never proof that other copies do not exist.
 """
 import importlib.util
@@ -107,11 +107,15 @@ def inventory(root,name,config):
     revision=None
     if migration and migration['state']=='pending':
         revision=hashlib.sha256(manage.binding.owner.private_file(config/MARKER,4096)).hexdigest()
+    archived=None
+    if revision:
+        _,manifest=archive_manifest(root,name,config,revision)
+        if manifest:archived={'state':manifest['phase'],'copies':len(manifest['rows'])}
     for row in peers:
         row['migrationBarrier']='prepared' if revision and acknowledged(root,revision,row['peer'],migration) else 'unacknowledged'
     return {'schemaVersion':1,'profileId':profile_id,'machine':me,'observedAt':int(time.time()),
             'status':'migration-pending' if migration and migration['state']=='pending' else 'migration-invalid' if migration else 'inventory-only',
-            'migration':migration,'migrationRevision':revision,'credentialFiles':files,'retainedSyncCopies':copies,'peers':peers,
+            'migration':migration,'migrationRevision':revision,'localArchive':archived,'credentialFiles':files,'retainedSyncCopies':copies,'peers':peers,
             'keychain':'not-inspected','embeddedCredentials':'not-inspected','unmanagedProcesses':'unknown',
             'providerRevocation':'unconfirmed','inventoryScope':'top-level-credential-files-and-sync-conflicts','inventoryComplete':False,'unknowns':sorted(set(unknown))}
 
@@ -175,6 +179,7 @@ def abandon(root,name,config,expected_revision,allow_legacy=False):
         plan=recovery_plan(root,name,config,expected_revision,True)
         for request_value in plan:
             if not recovery_confirmed(root,request_value):raise ValueError('peer recovery is unconfirmed')
+    restore_archived(root,name,config,expected_revision)
     record={'schemaVersion':1,'outcome':'abandoned','migration':current,'revision':expected_revision}
     if previous is not None and previous!=record:raise ValueError('migration history changed')
     if previous is None:
@@ -191,6 +196,172 @@ def abandon(root,name,config,expected_revision,allow_legacy=False):
     if manage.binding.owner.private_file(config/MARKER,4096)!=raw:raise ValueError('migration changed')
     os.unlink(config/MARKER);manage.binding.owner.sync_directory(config)
     return {'status':'legacy-unmanaged','migrationId':current['migrationId'],'migrationComplete':False}
+
+
+# Archival is local evidence only. Private hashes support retry verification;
+# neither hashes nor source paths are included in public status.
+def archive_read(path, links=1):
+    fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+    try:
+        before=os.fstat(fd)
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid!=os.getuid()
+                or before.st_mode & 0o022 or stat.S_IMODE(before.st_mode)>0o777 or before.st_nlink>links):raise ValueError('unsafe archive source')
+        with os.fdopen(fd,'rb',closefd=False) as stream:data=stream.read(8*1024*1024+1)
+        after=os.fstat(fd)
+        def identity(s):return [s.st_dev,s.st_ino,s.st_mtime_ns,s.st_size,stat.S_IMODE(s.st_mode)]
+        if len(data)>8*1024*1024 or identity(before)!=identity(after):raise ValueError('archive source changed')
+        return data,identity(after)
+    finally:os.close(fd)
+
+
+def archive_source(root,config,route):
+    if not isinstance(route,list):raise ValueError('invalid archive route')
+    if len(route)==2 and route[0]=='slot' and route[1] in FILES:return config/route[1]
+    if (len(route)!=3 or route[0]!='conflict' or route[2] not in ('local','remote')
+            or not isinstance(route[1],str) or route[1] in ('.','..')
+            or not route[1] or any(not (c.isalnum() or c in '-_.') for c in route[1])):
+        raise ValueError('invalid archive route')
+    directory=root/'fleet'
+    for part in ('sync','conflicts',route[1]):
+        manage.binding.controlled_directory(directory);directory=directory/part
+    manage.binding.controlled_directory(directory)
+    return directory/route[2]
+
+
+def archive_manifest(root,name,config,revision,create=False):
+    parent=root/'fleet/auth-archives';directory=parent/revision
+    manage.binding.controlled_directory(root/'fleet')
+    if not os.path.lexists(parent) and not create:return None,None
+    manage.binding.owner.private_directory(parent,create=create)
+    if not os.path.lexists(directory) and not create:return directory,None
+    manage.binding.owner.private_directory(directory,create=create)
+    if create:manage.binding.owner.sync_directory(parent);manage.binding.owner.sync_directory(parent.parent)
+    path=directory/'manifest.json'
+    if not os.path.lexists(path):return directory,None
+    value=json.loads(manage.binding.owner.private_file(path,4*1024*1024),object_pairs_hook=manage.binding.owner.unique)
+    info=config.stat()
+    if (not isinstance(value,dict) or set(value)!={'schemaVersion','profileId','revision','config','phase','rows'}
+            or value['schemaVersion']!=1 or value['profileId']!=manage.profile(root,name)
+            or value['revision']!=revision or value['config']!=[info.st_dev,info.st_ino]
+            or value['phase'] not in ('archiving','archived','restoring','restored')
+            or not isinstance(value['rows'],list) or len(value['rows'])>MAX_ENTRIES):raise ValueError('invalid archive manifest')
+    routes=set()
+    for row in value['rows']:
+        if (not isinstance(row,dict) or set(row)!={'route','parent','fingerprint','digest'}
+                or not manage.binding.owner.hash_value(row['digest'])
+                or not isinstance(row['parent'],list) or len(row['parent'])!=2
+                or not isinstance(row['fingerprint'],list) or len(row['fingerprint'])!=5
+                or any(type(v) is not int or v<0 for v in row['parent']+row['fingerprint'])
+                or row['fingerprint'][4]>0o777 or row['fingerprint'][4]&0o022):raise ValueError('invalid archive row')
+        source=archive_source(root,config,row['route']);parent_info=source.parent.stat()
+        route=tuple(row['route'])
+        if route in routes or row['parent']!=[parent_info.st_dev,parent_info.st_ino]:raise ValueError('archive path changed')
+        routes.add(route)
+    return directory,value
+
+
+def archive_bytes(path,data):
+    # The deterministic partial file lets a retry reconcile a hard kill before
+    # or after publication without leaving an untracked credential copy.
+    partial=path.with_name(path.name+'.partial')
+    if not os.path.lexists(path):
+        fd=os.open(partial,os.O_WRONLY|os.O_CREAT|os.O_NOFOLLOW|os.O_NONBLOCK,0o600)
+        try:
+            info=os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid()
+                    or info.st_mode&0o077 or info.st_nlink!=1):raise ValueError('unsafe partial archive')
+            os.ftruncate(fd,0)
+            with os.fdopen(fd,'wb',closefd=False) as out:out.write(data);out.flush();os.fsync(fd)
+            os.link(partial,path,follow_symlinks=False);manage.binding.owner.sync_directory(path.parent)
+        finally:os.close(fd)
+    if os.path.lexists(partial):
+        a=partial.lstat();b=path.lstat()
+        if (a.st_dev,a.st_ino)!=(b.st_dev,b.st_ino):raise ValueError('partial archive changed')
+        partial.unlink();manage.binding.owner.sync_directory(path.parent)
+
+
+
+def archive(root,name,config,revision):
+    root=Path(root).resolve(strict=True);config=Path(config).resolve(strict=True)
+    manage.binding.controlled_directory(config)
+    current=pending(root,name,config)
+    if (not manage.binding.owner.hash_value(revision) or not current or current.get('state')!='pending'
+            or hashlib.sha256(manage.binding.owner.private_file(config/MARKER,4096)).hexdigest()!=revision
+            or os.path.lexists(config/manage.binding.MARKER) or manage.binding.conflicted(root,name)):
+        raise ValueError('migration changed')
+    directory,value=archive_manifest(root,name,config,revision,True)
+    if value is None:
+        routes=[['slot',file] for file in FILES if os.path.lexists(config/file)]
+        conflict_root=root/'fleet/sync/conflicts'
+        for ancestor in (root/'fleet/sync',conflict_root):
+            if os.path.lexists(ancestor):manage.binding.controlled_directory(ancestor)
+        for entry in entries(conflict_root):
+            manage.binding.controlled_directory(entry)
+            address=metadata(entry/'meta').get('addr','').split('|')
+            if len(address)!=4:raise ValueError('invalid conflict metadata')
+            if address[0] in ('auth','settings','mcp') and address[1:3]==[name,'codex']:
+                routes.extend(['conflict',entry.name,side] for side in ('local','remote') if os.path.lexists(entry/side))
+        if len(routes)>MAX_ENTRIES:raise ValueError('too many archive copies')
+        rows=[]
+        for route in routes:
+            source=archive_source(root,config,route);data,info=archive_read(source);parent_info=source.parent.stat()
+            rows.append({'route':route,'parent':[parent_info.st_dev,parent_info.st_ino],
+                         'fingerprint':info,'digest':hashlib.sha256(data).hexdigest()})
+        info=config.stat()
+        value={'schemaVersion':1,'profileId':current['profileId'],'revision':revision,'config':[info.st_dev,info.st_ino],
+               'phase':'archiving','rows':rows}
+        atomic(directory/'manifest.json',value)
+    if value['phase'] not in ('archiving','archived'):raise ValueError('archive is recovering')
+    for index,row in enumerate(value['rows']):
+        source=archive_source(root,config,row['route']);blob=directory/(str(index)+'.blob')
+        if os.path.lexists(source):
+            if value['phase']=='archived':raise ValueError('new credential copy appeared')
+            data,info=archive_read(source)
+            if info!=row['fingerprint'] or hashlib.sha256(data).hexdigest()!=row['digest']:raise ValueError('source changed')
+            archive_bytes(blob,data)
+        data,_=archive_read(blob)
+        if hashlib.sha256(data).hexdigest()!=row['digest']:raise ValueError('archive copy changed')
+        manage.binding.owner.sync_directory(directory)
+        if os.path.lexists(source):
+            data,info=archive_read(source)
+            if info!=row['fingerprint'] or hashlib.sha256(data).hexdigest()!=row['digest']:raise ValueError('source changed')
+            source.unlink()
+        manage.binding.owner.sync_directory(source.parent)
+    value['phase']='archived';atomic(directory/'manifest.json',value)
+    return inventory(root,name,config)
+
+
+def restore_archived(root,name,config,revision):
+    directory,value=archive_manifest(root,name,config,revision)
+    if value is None:return
+    value['phase']='restoring';atomic(directory/'manifest.json',value)
+    for index,row in enumerate(value['rows']):
+        source=archive_source(root,config,row['route']);blob=directory/(str(index)+'.blob')
+        temporary=source.parent/('.n2-restore-'+revision+'-'+str(index))
+        if os.path.lexists(source):
+            data,_=archive_read(source,2)
+            if hashlib.sha256(data).hexdigest()!=row['digest']:raise ValueError('new file prevents restoration')
+        else:
+            data,_=archive_read(blob)
+            if hashlib.sha256(data).hexdigest()!=row['digest']:raise ValueError('archive copy changed')
+            archive_bytes(temporary,data)
+            restored,_=archive_read(temporary)
+            if restored!=data:raise ValueError('restore temporary changed')
+            temporary.chmod(row['fingerprint'][4])
+            os.link(temporary,source,follow_symlinks=False)
+            manage.binding.owner.sync_directory(source.parent)
+        if os.path.lexists(temporary.with_name(temporary.name+'.partial')):archive_bytes(temporary,data)
+        if os.path.lexists(blob.with_name(blob.name+'.partial')):archive_bytes(blob,data)
+        if os.path.lexists(temporary):
+            restored,_=archive_read(temporary,2)
+            if hashlib.sha256(restored).hexdigest()!=row['digest']:raise ValueError('restore temporary changed')
+            temporary.unlink();manage.binding.owner.sync_directory(source.parent)
+        # A retry must persist an earlier source publication even if its
+        # temporary link has already disappeared before the prior sync failed.
+        manage.binding.owner.sync_directory(source.parent)
+        if os.path.lexists(blob):blob.unlink()
+        manage.binding.owner.sync_directory(directory)
+    value['phase']='restored';atomic(directory/'manifest.json',value)
 
 
 def canonical(value):
@@ -361,6 +532,7 @@ def recover(root,name,config,peer,payload):
         if current!=marker or hashlib.sha256(manage.binding.owner.private_file(config/MARKER,4096)).hexdigest()!=value['revision']:
             raise ValueError('conflicting migration')
     elif previous is None and not permission(root,profile_id,peer):raise ValueError('migration consent required')
+    if current is not None:restore_archived(root,name,config,value['revision'])
     if previous is None:atomic(path,tombstone)
     if current is not None:
         os.unlink(config/MARKER);manage.binding.owner.sync_directory(config)

@@ -52,3 +52,37 @@ handling, unmanaged-session/revocation evidence, fresh owner activation, and a
 verified final transition. Those requirements remain in the ownership contract;
 this staged archival step does not replace them. No current fixture permits a
 completed-ownership claim.
+
+## Recoverable local archive
+
+`agents fleet auth migration-archive Profile --expected-revision REVISION`
+archives the known top-level credential files and matching retained conflict
+payloads. The existing slot gate serializes N2 writers. Each bounded regular-file
+copy is verified before its source is removed; copy publication supports separate
+filesystems. Symlinks, hard-linked inputs, unsafe permissions, changed sources,
+and files over 8 MiB are refused without completing migration.
+
+A private per-revision manifest records paths, file identity and hashes for retry
+verification. Public inventory reports only archive state and copy count, alongside
+the existing incomplete inventory and unconfirmed provider revocation. This is
+local archival, not retirement, activation, or completed ownership.
+
+Explicit abandonment restores bytes before removing the local or prepared peer
+barrier. Atomic no-overwrite publication refuses conflicting new files. Matching
+already-restored bytes allow interrupted recovery to resume. Deterministic partial
+files are reconciled on retry or abandonment, including interrupted publication.
+Archive payloads are removed after restoration; the private manifest remains.
+Keychain, unmanaged copies, remote archival coordination and provider revocation
+remain outside this slice and required for final ownership completion.
+
+Failure-injection checks cover partial copy publication and unlink-before-sync
+retries. Source directories are synced again even when a retry observes the
+source or temporary file already absent. This prevents cleanup metadata from
+being treated as durable based only on the current directory view. The review
+finding concerns cleanup durability, not demonstrated loss of restored bytes.
+The smoke negative control leaves active copies behind and is rejected.
+
+All 19 migration tests, the full regression suite, expanded smoke, formatting and
+lint pass locally. Independent transactional correctness review is clear after
+the directory-sync fixes. Exact-head CI remains required. No real credentials,
+Keychain records, provider sessions or enrolled machines were changed.

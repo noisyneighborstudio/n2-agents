@@ -212,7 +212,7 @@ def validate_incoming(root,name,config,payload):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action',choices=('register','status','allow','deny','login','reconcile','retire','grants','allow-login','deny-login','validate-incoming','migration-status','migration-begin','migration-abandon','migration-allow','migration-deny','migration-request','migration-accept','migration-record','migration-recovery-plan','migration-recover','migration-recovery-record'))
+    parser.add_argument('action',choices=('register','status','allow','deny','login','reconcile','retire','grants','allow-login','deny-login','validate-incoming','migration-status','migration-begin','migration-archive','migration-abandon','migration-allow','migration-deny','migration-request','migration-accept','migration-record','migration-recovery-plan','migration-recover','migration-recovery-record'))
     parser.add_argument('root');parser.add_argument('profile');parser.add_argument('config')
     parser.add_argument('--request')
     parser.add_argument('--allow-legacy',action='store_true')
@@ -258,6 +258,9 @@ def main():
         elif args.action=='register':
             if not args.grant or args.peer:raise ValueError('register requires grant')
             result=register(args.root,args.profile,args.config,args.grant,args.expected_revision,args.login_operation)
+        elif args.action=='migration-archive':
+            if args.grant or args.peer:raise ValueError('invalid archive options')
+            result=load('n2_migration','fleet-auth-migration.py').archive(args.root,args.profile,args.config,args.expected_revision)
         elif args.action=='migration-abandon':
             if args.grant or args.peer:raise ValueError('invalid migration options')
             result=load('n2_migration','fleet-auth-migration.py').abandon(args.root,args.profile,args.config,args.expected_revision,args.allow_legacy)
