@@ -74,8 +74,8 @@ Run commands from the repository root on macOS 26 with its Xcode SDK.
   style or type analysis.
 - Tests: `scripts/test.sh`.
 - Smoke run: `scripts/smoke.sh` starts the real CLI against throwaway state and
-  a signed synthetic owner. It checks session discovery and resume without live
-  provider credentials. Extend it when a slice adds observable behavior.
+  a signed synthetic owner. It checks session discovery, resume, and transport descendant cleanup without
+  live provider credentials. Extend it when a slice adds observable behavior.
 
 CI must be green on the exact pushed commit before reporting a slice complete.
 

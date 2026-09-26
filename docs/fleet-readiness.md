@@ -987,3 +987,18 @@ smoke gates were each deliberately broken, observed failing, restored and rerun
 successfully. Branch CI runs the same gates and the repository test suite.
 The full local repository test gate passes. The active queue and exact commands
 are in `docs/slices.md`. The pushed commit still requires its CI result.
+
+
+### Transport child receipt fixture
+
+The first push CI run for session discovery failed because the transport fixture
+assumed its child had written a PID file after 30 ms. A bounded spike reproduced
+the missing receipt with a stopped child while confirming production cleanup
+killed it. The corresponding PR run passed, so rerunning alone is not a repair.
+The fixture now publishes a start receipt before triggering response rejection;
+the test observes child-exit EOF on a private lifetime pipe. Neither readiness
+nor cleanup depends on a sleep. A negative control that kills only the leader
+fails the EOF check. All seven transport tests, the expanded smoke and the full
+local repository test gate pass. Independent correctness review is clear.
+Production transport behavior is unchanged. The recorded spike is in
+`docs/audits/transport-child-receipt-spike.json`.

@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 import secrets
+import select
+import signal
 import subprocess
 import tempfile
 import time
@@ -17,7 +19,7 @@ spec = importlib.util.spec_from_file_location('transport', ROOT / 'fleet-auth-tr
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 
 SSH = '''#!/usr/bin/env python3
-import base64, importlib.util, json, os, pathlib, subprocess, sys, tempfile, time
+import base64, importlib.util, json, os, pathlib, signal, subprocess, sys, tempfile, time
 root = pathlib.Path(os.environ['FIXTURE_ROOT'])
 repo = pathlib.Path(os.environ['FIXTURE_REPO'])
 args = sys.argv[1:]
@@ -32,9 +34,18 @@ if mode == 'timeout': time.sleep(30)
 if mode == 'large':
     sys.stdout.write('x' * 300000); sys.stdout.flush(); sys.exit(0)
 if mode == 'descendant':
+    ready_read, ready_write = os.pipe()
     if os.fork() == 0:
-        (root/'descendant').write_text(str(os.getpid())); time.sleep(30); os._exit(0)
-    time.sleep(.03); os._exit(0)
+        os.close(ready_read)
+        lifetime = os.open(root/'descendant-events', os.O_WRONLY)
+        os.write(lifetime, str(os.getpid()).encode()+b'\\n')
+        os.write(ready_write, b'1'); os.close(ready_write)
+        signal.pause(); os._exit(0)
+    os.close(ready_write)
+    assert os.read(ready_read, 1) == b'1'
+    os.close(ready_read)
+    # Reject the response only after the child holds stdout and its lifetime FD.
+    sys.stdout.write('x' * 300000); sys.stdout.flush(); os._exit(0)
 request = sys.stdin.buffer.read()
 with tempfile.TemporaryDirectory(dir=root) as temp:
     temp = pathlib.Path(temp); (temp/'request').write_bytes(request)
@@ -124,10 +135,22 @@ class TransportTests(unittest.TestCase):
             self.assertLess(time.monotonic()-started,2)
 
     def test_descendant_inheriting_stdout_is_reaped(self):
-        with self.assertRaises(ValueError): self.exchange('descendant',timeout=.7)
-        pid=int((self.base/'descendant').read_text())
-        result=subprocess.run(['ps','-p',str(pid),'-o','stat='],capture_output=True,text=True).stdout.strip()
-        self.assertTrue(not result or result.startswith('Z'))
+        events = self.base/'descendant-events'; os.mkfifo(events, 0o600)
+        descriptor = os.open(events, os.O_RDONLY | os.O_NONBLOCK)
+        pid = None
+        try:
+            with self.assertRaises(ValueError): self.exchange('descendant', timeout=10)
+            receipt = os.read(descriptor, 128)
+            self.assertTrue(receipt.endswith(b'\n'), 'child did not publish its start receipt')
+            pid = int(receipt)
+            readable, _, _ = select.select([descriptor], [], [], 2)
+            self.assertTrue(readable, 'child retained its lifetime pipe after cleanup')
+            self.assertEqual(os.read(descriptor, 1), b'', 'expected child-exit EOF')
+        finally:
+            os.close(descriptor)
+            if pid is not None:
+                try: os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError: pass
 
     def test_route_changes_after_precheck_cannot_change_carrier(self):
         payload=self.base/'request'; payload.write_bytes(m.codec.canonical(self.context))
