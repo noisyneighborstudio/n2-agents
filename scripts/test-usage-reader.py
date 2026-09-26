@@ -78,7 +78,9 @@ class ReaderTests(unittest.TestCase):
         with patch.object(u.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=json.dumps(payload))) as run:
             identity = u.claude_identity('/literal/symlink/path')
         self.assertEqual(run.call_args.kwargs['env']['CLAUDE_CONFIG_DIR'], '/literal/symlink/path')
-        self.assertEqual(identity['status'], 'verified')
+        self.assertEqual(identity['status'], 'login-only')
+        self.assertNotIn('accountHash', identity, 'cached organization cannot establish account ownership')
+        self.assertNotIn('organizationHash', identity)
         self.assertNotIn('fixture@example.invalid', json.dumps(identity))
         payload['authMethod'] = 'api_key'
         with patch.object(u.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=json.dumps(payload))):

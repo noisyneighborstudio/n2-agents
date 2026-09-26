@@ -47,15 +47,13 @@ def claude_identity(cfg):
                 return {'status': 'unavailable'}
             if value.get('authMethod') != 'claude.ai' or value.get('apiProvider') != 'firstParty':
                 return {'status': 'conflicting'}
-            email, organization = value.get('email'), value.get('orgId')
+            # auth status reports cached oauthAccount metadata, including orgId.
+            # It succeeds even with a fabricated bearer token. This is a login
+            # hint, not evidence tying the usage request to a provider account.
+            email = value.get('email')
             if not isinstance(email, str) or not email:
                 return {'status': 'unknown'}
-            identity = {'status': 'login-only', 'loginHash': hashlib.sha256(email.lower().encode()).hexdigest()}
-            if isinstance(organization, str) and organization:
-                key = json.dumps(['claude', organization, email.lower()], separators=(',', ':'))
-                identity.update(status='verified', accountHash=hashlib.sha256(key.encode()).hexdigest(),
-                                organizationHash=hashlib.sha256(organization.encode()).hexdigest())
-            return identity
+            return {'status': 'login-only', 'loginHash': hashlib.sha256(email.lower().encode()).hexdigest()}
         except (OSError, ValueError, subprocess.SubprocessError):
             return {'status': 'unavailable'}
 

@@ -107,3 +107,13 @@ three-peer tests verify enrollment, single token attribution and later recovery.
 Twenty-six journal tests pass, and independent correctness and security reviews
 are clear. Full regression, release packaging and all 635 sync checks across 75
 sections pass. Packaging used ad-hoc signing without installation.
+
+Claude identity evidence was corrected after inspecting provider-distributed
+Claude Code 2.1.283 and running `claude auth status --json` with fabricated
+credentials and account metadata in a temporary HOME/config directory. It exited
+0 with `loggedIn: true` and echoed the synthetic email and organization. No real
+credentials or model invocation were used. The command's identity is now only a
+login hint, never a verified account used for cross-machine restriction matching.
+The [canonical CLI documentation](https://code.claude.com/docs/en/cli-reference)
+describes authentication status, but does not promise a server-validated identity
+response. Authenticated account evidence remains required before launch binding.

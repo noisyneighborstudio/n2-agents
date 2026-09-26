@@ -161,13 +161,15 @@ probe on September 25 returned login-only for both measured profiles. Default
 reported 75% weekly use and ExpoIO 100%, so this host has not established live
 workspace verification through that field.
 
-Claude identity comes from `claude auth status --json` with the same literal
-`CLAUDE_CONFIG_DIR` used for launch and measurement. First-party Claude.ai status
-with both login and organization produces an account-binding hash; API-key or
-alternate-provider status prevents measuring a different subscription account.
-Unavailable or incomplete CLI identity remains explicit. This identifies the
-provider CLI's selected account; it does not establish credential portability or
-refresh safety across machines.
+Claude login hints come from `claude auth status --json` with the same literal
+`CLAUDE_CONFIG_DIR` used for launch and measurement. Email and organization in
+that response are cached metadata, not server-validated account evidence.
+An isolated Claude Code 2.1.283 probe with fabricated credentials returned
+`loggedIn: true` and the synthetic account metadata. N2 therefore retains only a
+`login-only` hint and never creates a verified account hash from this response.
+API-key or alternate-provider status prevents measuring a different subscription
+account. Unavailable or incomplete CLI identity remains explicit. Authenticated
+account evidence and credential refresh safety remain unresolved.
 
 References: [Codex selected workspace routing](https://github.com/openai/codex/blob/de9e78e3e7caed0fdd75d20ae617faa646dfef3c/codex-rs/app-server/README.md#selected-workspace-routing)
 and [Claude authentication status](https://code.claude.com/docs/en/cli-reference).
