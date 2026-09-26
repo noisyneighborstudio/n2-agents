@@ -433,9 +433,13 @@ def main():
                 module_spec.loader.exec_module(journal_module)
                 journal = journal_module.Journal(os.environ['N2_USAGE_ROOT'], os.environ.get('N2_USAGE_ORIGIN') or None)
                 journal.append(vendor, name, 'measurement', measurement)
+                measurement = journal.effective(vendor, name, measurement)
+                status = measurement['status']
                 journal.db.close()
             except Exception:
                 print('agents: could not retain usage observation', file=sys.stderr)
+                status = 'fetch-error'
+                measurement['status'] = status
         if os.environ.get('N2_USAGE_FORMAT') == 'json':
             measurement.update({'schemaVersion': 1, 'provider': vendor, 'profile': name,
                                 'observedAt': datetime.now(timezone.utc).isoformat(), 'status': status,

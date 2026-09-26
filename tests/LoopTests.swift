@@ -29,6 +29,11 @@ import Foundation
         if case .quota(let until) = Failure.classify("429 Too Many Requests", now: now) {
             expect(until == now.addingTimeInterval(3600), "an unstated reset waits an hour")
         } else { expect(false, "429 is quota") }
+        expect(Failure.reportedResetTime(in: "try again in 1 hour and 30 minutes", now: now) == nil, "compound reset is not a one-hour expiry")
+        expect(Failure.reportedResetTime(in: "try again in 2 seconds.", now: now) == now.addingTimeInterval(2), "complete relative reset is known")
+        expect(Failure.reportedResetTime(in: "try again at Sep 26 11:20 AM", now: now) == nil, "missing year/timezone is unknown")
+        expect(Failure.reportedResetTime(in: "try again at 2099-09-26T11:20:00Z", now: now) != nil, "qualified future ISO reset is known")
+        expect(Failure.reportedResetTime(in: "try again at 2000-09-26T11:20:00Z", now: now) == nil, "past reset is not recovery evidence")
         if case .auth = Failure.classify("Error: not logged in") {} else { expect(false, "not logged in is auth") }
         if case .attention = Failure.classify("[ACTION REQUIRED] An update to our Consumer Terms has taken effect. You must run `claude` to review the updated terms.") {}
         else { expect(false, "new terms need a person") }

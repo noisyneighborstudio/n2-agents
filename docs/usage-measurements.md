@@ -95,8 +95,36 @@ The bounded `agents usage record --provider <provider> --profile <profile>
 --kind quota-rejected` interface accepts structured JSON on stdin. It rejects
 unknown fields, including nested credential fields. The loop records quota rejections and successful turns automatically, with its
 local task reference and requested Claude model where known. Verified account attribution of loop outcomes remains open; token and provider-session fields are populated when the provider reports them. Recorded
-rejections do not yet change selection outside the loop’s existing cooldowns. An unknown account identity remains
-unknown; recording or replicating an observation does not verify it.
+rejections now constrain subsequent usage reads and loop selection. An unknown
+account identity remains unknown; recording or replicating an observation does
+not verify it.
+
+`agents usage restrictions` lists unresolved execution rejections. Their state
+and recovery evidence persist separately from the 30-day diagnostic log. Every
+independent rejection remains active until a supported provider reset passes or
+a matching successful invocation that began after the rejection proves recovery.
+A success that was already running does not clear a later failure. Percentage
+polls never erase execution rejections. Different requested models and different
+originating routes have separate recovery evidence.
+
+Complete relative reset expressions and future ISO timestamps with an explicit
+timezone can expire a rejection. Ambiguous expressions, timezone-free dates and
+missing resets remain unknown. The loop's older cooldown estimate is only a
+retry hint. When all applicable restrictions have known resets, the reader
+retains the latest of those times so a waiting loop can recheck it.
+
+A verified account match applies a peer's rejection even when the local profile
+has a different name. Without verified identity, a rejection applies only to its
+originating local route. Enrollment preserves earlier local constraints. Loop
+outcomes still lack verified account attribution, so ordinary loop failures
+currently propagate as diagnostic evidence but only block that local route.
+Imported, verified outcome evidence is covered by synthetic cross-peer tests.
+
+Fleet export prioritizes durable execution state before diagnostic history and
+retains success records to prevent replay from resurrecting old restrictions.
+It fails explicitly if that state exceeds the existing batch bound. Pagination
+and pre-enrollment evidence transfer remain fleet-completion work. An unreadable
+local journal makes measurements unavailable rather than ignoring restrictions.
 
 ## Provider identity evidence
 

@@ -91,6 +91,92 @@ class JournalTests(unittest.TestCase):
         self.assertEqual(summary['uniqueTasks'], 1)
         self.assertEqual({g['model']: g['reportedTotalTokens'] for g in summary['groups']}, {'parent': 10, 'child': 20})
 
+    def test_rejection_survives_polls_retention_and_exchange(self):
+        at = time.time() - 40 * 86400
+        rejected = self.a.append('codex', 'Default', 'quota-rejected', {'status': 'restricted'}, at)
+        self.assertEqual(self.a.events(), [], 'diagnostic retention still applies')
+        self.a.append('codex', 'Default', 'measurement', {'status': 'ok'})
+        healthy = {'status': 'ok', 'identity': {'status': 'unknown'}, 'restrictions': []}
+        self.assertEqual(self.a.effective('codex', 'Default', healthy)['status'], 'restricted')
+        self.assertEqual(healthy['status'], 'ok', 'provider evidence remains unmodified')
+        self.b.import_events(self.a.events(own=True), 'peer-a')
+        self.assertEqual(self.b.active_rejections()[0]['id'], rejected['id'])
+        self.assertEqual(self.b.effective('codex', 'Default', healthy)['status'], 'ok', 'same name is not account identity')
+
+    def test_verified_account_rejection_crosses_profile_names(self):
+        identity = {'status': 'verified', 'accountHash': 'a' * 64}
+        self.a.append('codex', 'Work', 'quota-rejected', {'status': 'restricted', 'identity': identity})
+        self.b.import_events(self.a.events(own=True), 'peer-a')
+        self.assertEqual(self.b.effective('codex', 'Default', {'status': 'ok', 'identity': identity})['status'], 'restricted')
+        different = {'status': 'verified', 'accountHash': 'b' * 64}
+        self.assertEqual(self.b.effective('codex', 'Work', {'status': 'ok', 'identity': different})['status'], 'ok')
+        self.assertEqual(self.a.effective('codex', 'Work', {'status': 'ok', 'identity': different})['status'], 'ok')
+        self.assertEqual(self.b.effective('claude', 'Default', {'status': 'ok', 'identity': identity})['status'], 'ok')
+
+    def test_matching_recovery_is_durable_and_replay_cannot_resurrect(self):
+        at = time.time() - 40 * 86400
+        rejection = self.a.append('claude', 'Default', 'quota-rejected',
+                                  {'status': 'restricted', 'requestedModel': 'opus'}, at)
+        self.a.append('claude', 'Default', 'execution-succeeded',
+                      {'status': 'ok', 'requestedModel': 'sonnet', 'startedAt': at + 0.5}, at + 1)
+        self.assertEqual(len(self.a.active_rejections()), 1, 'another model is not recovery')
+        self.a.append('claude', 'Default', 'execution-succeeded',
+                      {'status': 'ok', 'requestedModel': 'opus', 'model': 'resolved-opus-version', 'startedAt': at + 1.5}, at + 2)
+        self.assertEqual(self.a.active_rejections(), [])
+        self.b.import_events(self.a.events(own=True), 'peer-a')
+        self.b.import_events([rejection], 'peer-a')
+        self.assertEqual(self.b.active_rejections(), [], 'old replay cannot defeat recovery tombstone')
+        self.assertEqual(self.b.events(own=True), [], 'foreign recovery cannot be relabeled')
+
+    def test_enrollment_does_not_forget_local_rejection(self):
+        root = Path(self.temp.name) / 'enrolling'
+        local = u.Journal(root)
+        local.append('codex', 'Default', 'quota-rejected', {'status': 'restricted'})
+        local.db.close()
+        enrolled = u.Journal(root, 'new-fleet-id')
+        self.addCleanup(enrolled.db.close)
+        self.assertEqual(enrolled.effective('codex', 'Default', {'status': 'ok'})['status'], 'restricted')
+        enrolled.append('codex', 'Default', 'execution-succeeded', {'status': 'ok', 'startedAt': time.time()})
+        self.assertEqual(enrolled.active_rejections(), [])
+
+    def test_preexisting_invocation_cannot_clear_rejection_in_either_arrival_order(self):
+        now = time.time()
+        rejection = self.a.append('codex', 'Default', 'quota-rejected', {'status': 'restricted'}, now - 5)
+        success = self.a.append('codex', 'Default', 'execution-succeeded', {'status': 'ok', 'startedAt': now - 10}, now)
+        self.assertEqual(len(self.a.active_rejections()), 1)
+        self.b.import_events([success, rejection], 'peer-a')
+        self.assertEqual(len(self.b.active_rejections()), 1)
+        later = self.a.append('codex', 'Default', 'execution-succeeded', {'status': 'ok', 'startedAt': now - 1}, now + 0.1)
+        self.b.import_events([later], 'peer-a')
+        self.assertEqual(self.b.active_rejections(), [])
+
+    def test_independent_rejections_survive_newer_short_reset_in_any_order(self):
+        now = time.time()
+        unknown = self.a.append('codex', 'Default', 'quota-rejected', {'status': 'restricted'}, now - 10)
+        known = self.a.append('codex', 'Default', 'quota-rejected', {'status': 'restricted', 'resetKnown': True, 'recheckAt': now + 10}, now - 5)
+        self.assertEqual([e['id'] for e in self.a.active_rejections(now + 11)], [unknown['id']])
+        self.b.import_events([known, unknown], 'peer-a')
+        self.assertEqual([e['id'] for e in self.b.active_rejections(now + 11)], [unknown['id']])
+        effective = self.a.effective('codex', 'Default', {'status': 'ok'})
+        self.assertIsNone(effective['restrictions'][0]['resetsAt'])
+
+    def test_only_explicit_reset_expires_rejection(self):
+        now = time.time()
+        self.a.append('codex', 'Known', 'quota-rejected', {'status': 'restricted', 'resetKnown': True, 'recheckAt': now + 10})
+        self.a.append('codex', 'Unknown', 'quota-rejected', {'status': 'restricted', 'resetKnown': False, 'recheckAt': now + 10})
+        self.assertEqual(len(self.a.active_rejections(now + 5)), 2)
+        self.assertEqual([e['profile'] for e in self.a.active_rejections(now + 11)], ['Unknown'])
+
+    def test_exchange_prioritizes_rejection_over_measurement_volume(self):
+        event = self.a.append('codex', 'Default', 'quota-rejected', {'status': 'restricted'}, time.time() - 10000)
+        for i in range(1001):
+            self.a.append('codex', 'Default', 'measurement', {'status': 'ok'}, time.time() - i)
+        exported = self.a.events(own=True)
+        self.assertEqual(len(exported), 1000)
+        self.assertEqual(exported[0]['id'], event['id'])
+        self.b.import_events(exported, 'peer-a')
+        self.assertEqual(len(self.b.active_rejections()), 1)
+
     def test_symlink_database_refused(self):
         root = Path(self.temp.name) / 'linked'
         root.mkdir()

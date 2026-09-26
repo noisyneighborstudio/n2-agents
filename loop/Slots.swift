@@ -174,6 +174,26 @@ enum Failure {
         return .other
     }
 
+    /// Only complete relative expressions or timezone-qualified ISO timestamps
+    /// can expire durable restrictions. The legacy cooldown parser below is a
+    /// retry hint and must not be treated as provider evidence of recovery.
+    static func reportedResetTime(in text: String, now: Date) -> Date? {
+        guard let range = text.range(of: #"(?i)try again (at|after|in) [^\n]+"#, options: .regularExpression) else { return nil }
+        let phrase = String(text[range]).replacingOccurrences(of: #"(?i)^try again (at|after|in) "#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        if phrase.range(of: #"(?i)^\d+\s+(minutes?|mins?|hours?|hrs?|seconds?|secs?)$"#, options: .regularExpression) != nil {
+            let parts = phrase.split(whereSeparator: { $0.isWhitespace })
+            guard let amount = Double(parts[0]), amount.isFinite, amount > 0 else { return nil }
+            let unit = parts[1].lowercased()
+            let seconds = amount * (unit.hasPrefix("h") ? 3600 : unit.hasPrefix("m") ? 60 : 1)
+            guard seconds.isFinite else { return nil }
+            return now.addingTimeInterval(seconds)
+        }
+        guard phrase.range(of: #"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$"#, options: .regularExpression) != nil,
+              let date = SlotMeasurement.date(phrase), date > now else { return nil }
+        return date
+    }
+
     /// "try again at Sep 26th, 2026 11:20 AM" and similar, when the lab says.
     static func resetTime(in text: String, now: Date) -> Date? {
         guard let r = text.range(of: #"(?i)try again (at|after|in) ([^.\n]+)"#, options: .regularExpression) else { return nil }
@@ -198,16 +218,18 @@ enum Failure {
 
 /// Retain only structured execution evidence. Provider output and prompts never
 /// enter the shared journal; unavailable token/account/session fields stay null.
-func recordUsageOutcome(cli: String, slot: String, outcome: String, task: String, effort: Effort, usage: TaskUsage = TaskUsage()) {
+func recordUsageOutcome(cli: String, slot: String, outcome: String, task: String, effort: Effort, usage: TaskUsage = TaskUsage(), failureText: String = "", startedAt: Date? = nil) {
     let parts = slot.split(separator: "|", maxSplits: 1).map(String.init)
     guard parts.count == 2 else { return }
     let requestedModel: Any = parts[0] == "claude" ? ([Effort.deep: "opus", .standard: "sonnet", .light: "haiku"][effort] ?? "unknown") as Any : NSNull()
+    let reset = outcome == "quota" ? Failure.reportedResetTime(in: failureText, now: Date()) : nil
     let value: [String: Any] = [
         "status": outcome == "quota" ? "restricted" : (outcome == "ok" ? "ok" : "execution-failed"), "source": "n2-loop",
         "identity": ["status": "unknown"], "session": usage.session as Any? ?? NSNull(), "model": usage.model as Any? ?? NSNull(),
         "requestedModel": requestedModel, "usageScope": usage.scope,
+        "startedAt": startedAt?.timeIntervalSince1970 as Any? ?? NSNull(),
         "modelUsage": usage.models.mapValues { $0.counts },
-        "resetKnown": false,
+        "resetKnown": reset != nil, "recheckAt": reset?.timeIntervalSince1970 as Any? ?? NSNull(),
         "restrictions": outcome == "quota" ? [["scope": "unknown", "reason": "quota-rejected"]] : [],
         "attribution": ["task": task, "inputTokens": usage.inputTokens as Any? ?? NSNull(), "outputTokens": usage.outputTokens as Any? ?? NSNull(),
                         "cachedInputTokens": usage.cachedInputTokens as Any? ?? NSNull(),

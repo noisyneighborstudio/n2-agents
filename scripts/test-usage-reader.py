@@ -36,6 +36,29 @@ class ReaderTests(unittest.TestCase):
             self.assertEqual(events[1]['data']['windows'], [])
             self.assertLessEqual(events[0]['at'], events[1]['at'])
 
+    def test_live_output_respects_durable_rejection_and_journal_failure(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as root:
+            subprocess.run(['python3', str(Path(__file__).resolve().parents[1] / 'usage-store.py'),
+                            '--root', root, '--origin', 'fixture-peer', 'record', '--provider', 'codex',
+                            '--profile', 'Default', '--kind', 'quota-rejected', '--data', '{"status":"restricted"}'],
+                           check=True, capture_output=True)
+            def read():
+                output = io.StringIO()
+                with patch.dict(os.environ, {'N2_USAGE_ROOT': root, 'N2_USAGE_ORIGIN': 'fixture-peer', 'N2_USAGE_FORMAT': 'json'}), \
+                     patch.object(u.sys, 'argv', ['usage.py', 'codex', 'Default=/fixture']), \
+                     patch.object(u, 'codex', return_value=('ok', lambda: {'rate_limit': {'primary_window': {'used_percent': 12, 'limit_window_seconds': 18000}}})), \
+                     contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+                    u.main()
+                return json.loads(output.getvalue())
+            result = read()
+            self.assertEqual(result['status'], 'restricted')
+            self.assertTrue(any(r['reason'] == 'quota-rejected' for r in result['restrictions']))
+            database = Path(root) / '.usage/events.sqlite'
+            database.rename(database.with_suffix('.saved'))
+            database.symlink_to(database.with_suffix('.saved'))
+            self.assertEqual(read()['status'], 'fetch-error', 'unreadable rejection state cannot advertise capacity')
+
     def test_native_workspace_identity_separates_users_and_workspaces(self):
         response = {'_native': True, 'account': {'email': 'one@example.invalid'},
                     'workspaceRouting': {'chatgptAccountId': 'workspace-one', 'backendOrigin': 'https://chatgpt.com'}}

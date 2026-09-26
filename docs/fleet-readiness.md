@@ -80,3 +80,13 @@ custom windows, explicit restrictions, missing resets and malformed percentages.
 The full regression and release loop build pass. Independent correctness and
 security reviews are clear after fixing invalid fallback percentages. This does
 not yet connect journal rejections to shared scheduling.
+
+Durable execution restrictions now constrain fresh measurements. Independent
+rejections survive diagnostic retention; successful invocations must have begun
+after the rejection before they establish recovery. Model/route matching,
+out-of-order replay, verified cross-peer account matching, explicit reset expiry,
+and local enrollment continuity have focused coverage. Outcome identity pinning,
+pre-enrollment state transfer and paginated exchange remain required. The full
+regression, 17 journal tests, 16 reader tests and release packaging pass. Packaging
+used ad-hoc signing and did not install the app. Independent follow-up reviews
+are clear after the concurrency and reset fixes.

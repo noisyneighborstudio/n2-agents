@@ -20,6 +20,8 @@ import Foundation
         precondition(unknownReset.resets == nil)
         let explicit = try parse(windows: [healthy], restrictions: [["scope": "account", "reason": "blocked"]])
         precondition(explicit.status == "restricted" && explicit.resets == nil)
+        let retry = try parse(windows: [healthy], restrictions: [["scope": "execution", "reason": "quota-rejected", "resetsAt": now.addingTimeInterval(100).timeIntervalSince1970]])
+        precondition(retry.status == "restricted" && retry.resets == now.addingTimeInterval(100))
         for invalid: Any in [true, -1, 101, "20", NSNull()] {
             let result = try parse(windows: [healthy, ["usedPercent": invalid]])
             precondition(result.status == "fetch-error", "invalid bucket cannot advertise headroom")

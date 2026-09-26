@@ -116,7 +116,7 @@ func planOnce(_ s: inout RunState, cli: String, source: SlotSource, cwd: String,
         s.turns[i].endedAt = Date()
         if out.exit == 0, let report = parseReport(out.stdout) {
             s.turns[i].outcome = "ok"
-            recordUsageOutcome(cli: cli, slot: slot.key, outcome: "ok", task: "\(s.id)/\(id)", effort: .deep, usage: out.usage)
+            recordUsageOutcome(cli: cli, slot: slot.key, outcome: "ok", task: "\(s.id)/\(id)", effort: .deep, usage: out.usage, failureText: out.tail, startedAt: s.turns[i].startedAt)
             return report
         }
         s.turns[i].note = oneLine(out.tail, 300)
@@ -127,7 +127,7 @@ func planOnce(_ s: inout RunState, cli: String, source: SlotSource, cwd: String,
             s.turns[i].outcome = outcome
             s.cooldowns[slot.key] = cooldown
         }
-        recordUsageOutcome(cli: cli, slot: slot.key, outcome: s.turns[i].outcome ?? "failed", task: "\(s.id)/\(id)", effort: .deep, usage: out.usage)
+        recordUsageOutcome(cli: cli, slot: slot.key, outcome: s.turns[i].outcome ?? "failed", task: "\(s.id)/\(id)", effort: .deep, usage: out.usage, failureText: out.tail, startedAt: s.turns[i].startedAt)
         // Exhausted capacity says nothing about the planner's answer. Try
         // each remaining slot without spending the invalid-plan allowance.
         if s.turns[i].outcome != "quota" { failedPlans += 1 }

@@ -73,8 +73,9 @@ struct SlotMeasurement {
         let restricted = status == "restricted" || !restrictions.isEmpty || !full.isEmpty
         // A missing reset must not turn another bucket's reset into a promise
         // that the entire account will be available at that time.
-        let resets = !full.isEmpty && full.allSatisfy { $0.1 != nil } && restrictions.isEmpty && !incomplete
-            ? full.compactMap { $0.1 }.max() : nil
+        let resetEvidence = full.map { $0.1 } + restrictions.map { date($0["resetsAt"]) }
+        let resets = !resetEvidence.isEmpty && resetEvidence.allSatisfy { $0 != nil } && !incomplete
+            ? resetEvidence.compactMap { $0 }.max() : nil
         return SlotMeasurement(provider: provider, profile: profile,
                                status: restricted ? "restricted" : (incomplete || readings.isEmpty ? "fetch-error" : "ok"),
                                used: readings.map { $0.0 }.max(), resets: resets)

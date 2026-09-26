@@ -628,6 +628,15 @@ wait_for() {  # status
 }
 # A fresh repository and scenario, planned and approved the way a person would.
 new_loop() {  # scenario files…
+  # Each scenario starts after a synthetic successful invocation on the fixture
+  # routes. Real rejections intentionally survive new loop runs now.
+  fixture_recovery=$(python3 -c 'import json,time; print(json.dumps({"status":"ok","source":"test-fixture","startedAt":time.time()}))')
+  for fixture_profile in Home Work Q1 Q2 Q3 Q4 Q5; do
+    if [ -d "$loop_root/home/.n2-agents/$fixture_profile/codex" ]; then
+      env $loop_env "$n2_root/agents" usage record --provider codex --profile "$fixture_profile" \
+        --kind execution-succeeded --data "$fixture_recovery" >/dev/null
+    fi
+  done
   loop_fake=$(mktemp -d "$loop_root/fake.XXXXXX")
   for f in "$@"; do  # name, or name=contents
     case $f in *=*) echo "${f#*=}" > "$loop_fake/${f%%=*}" ;; *) touch "$loop_fake/$f" ;; esac
@@ -667,11 +676,23 @@ events=json.load(open(sys.argv[1]))
 matched=[e for e in events if e['kind']=='quota-rejected' and e['data'].get('attribution',{}).get('task','').startswith(sys.argv[2]+'/')]
 assert matched and matched[0]['profile']=='Home'
 assert matched[0]['data']['identity']['status']=='unknown'
+assert matched[0]['data']['resetKnown'] is False, 'timezone-free date is only a local retry hint'
+assert matched[0]['data']['recheckAt'] is None
 assert matched[0]['data']['attribution']['totalTokens'] is None
 successes=[e for e in events if e['kind']=='execution-succeeded' and e['data'].get('attribution',{}).get('task','').startswith(sys.argv[2]+'/')]
 assert successes and successes[0]['data']['attribution']['totalTokens']==60
 assert successes[0]['data']['attribution']['cachedInputTokens']==30
 assert successes[0]['data']['session'].startswith('fixture-')
+PYTEST
+# The fresh reader must report the persisted rejection even though the fake
+# allowance endpoint continues to report headroom.
+env $loop_env "$n2_root/agents" best --json --vendor codex > "$loop_root/effective-usage.jsonl"
+python3 - "$loop_root/effective-usage.jsonl" <<'PYTEST'
+import json,sys
+rows=[json.loads(line) for line in open(sys.argv[1])]
+home=next(row for row in rows if row['profile']=='Home')
+assert home['status']=='restricted'
+assert any(r['reason']=='quota-rejected' for r in home['restrictions'])
 PYTEST
 [ "$(field 's["cooldowns"]["codex|Home"]["until"][:4]')" = 2099 ]   # the reset time the lab stated
 [ "$(field '{c["lastSlot"] for c in s["plan"]["chunks"]}')" = "{'codex|Work'}" ]
