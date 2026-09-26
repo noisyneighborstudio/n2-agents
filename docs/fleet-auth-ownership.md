@@ -590,3 +590,38 @@ An atomic private history record is persisted before barrier removal. A retry
 reconciles interruption before or after removal, while an older request cannot
 clear a newly started migration. Credential files are never opened or modified.
 Malformed migration state remains blocked and requires a separate repair path.
+
+
+## Shared app-server frontend bridge
+
+Owner-managed `agents run Profile --vendor codex app-server` now resolves the
+same public binding and uses `OwnerClient.connection` before accepting frontend
+requests. The backend initializes and independently authenticates first. Its
+initialization result is retained for the frontend handshake. Frontend request
+and approval IDs use separate namespaces from internal authentication RPCs.
+Login/logout and configuration mutation requests cannot replace the bound
+account; unknown methods, foreign threads and route overrides are refused.
+Refresh requests stay inside the existing owner client and token verifier.
+
+An ordinary fresh interactive launch connects the native Codex TUI to this
+bridge over a private Unix socket. There is no TCP listener or token in the
+frontend command line. The frontend receives an isolated home and terminal
+settings. Unsupported direct subcommands fail instead of silently opening an
+unmanaged account. Existing unmanaged profiles keep their original launch path.
+The bridge serializes turn admission and forwards native approval requests and
+responses without granting approval itself.
+
+This uses the documented [`codex --remote` Unix-socket interface](https://learn.chatgpt.com/docs/app-server),
+also present in the installed CLI. Source tests cover the signed remote-owner
+connection, isolated credentials, private-socket frontend launch, request-ID
+correlation, approval replies, account-control refusal, route checks and bounded
+WebSocket framing. The frontend/provider integration fixture is synthetic; it
+is not live provider or native TUI end-to-end acceptance.
+
+The bridge is incomplete: persistent session history/resume, turn receipts and
+usage attribution, broader command compatibility, concurrent turns, final process
+lifetime checks and live-provider/native-TUI acceptance remain required. The
+private execution home is currently disposable, so this checkpoint must not be
+presented as durable interactive-session support. Independent security review
+remains outstanding. The same relay is intended for the later T3 adapter; PR #26
+has not yet been implemented.

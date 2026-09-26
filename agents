@@ -675,6 +675,17 @@ migration_launch_guard() {
 exec_vendor() {  # vendor, profile, cfg, cli, args...
   ev_vendor=$1 ev_profile=$2 ev_cfg=$3; shift 3
   migration_launch_guard "$ev_vendor" "$ev_cfg"
+  if [ "$ev_vendor" = codex ] && sync_owner_managed "$ev_profile" codex; then
+    ev_cli=$1; shift
+    if [ "$#" -eq 1 ] && [ "$1" = app-server ]; then
+      exec /usr/bin/python3 "$scripts_dir/fleet-auth-bridge.py" --root "$root" --profile "$ev_profile" --config "$ev_cfg" --executable "$ev_cli"
+    fi
+    case ${1:-} in
+      login|logout|auth|exec|e|review|resume|fork|app-server|app|mcp|plugin|remote-control|exec-server|cloud|agents|queue|archive|delete|unarchive|migrate-rollouts|sandbox|debug|apply|a|completion|update|doctor|features|help)
+        die "this owner-managed profile requires N2's bound runner or app-server route for that command" ;;
+    esac
+    exec /usr/bin/python3 "$scripts_dir/fleet-auth-bridge.py" --root "$root" --profile "$ev_profile" --config "$ev_cfg" --executable "$ev_cli" --tui -- "$@"
+  fi
   # shellcheck disable=SC2046
   exec env "$(vendor_env "$ev_vendor")=$(vendor_env_value "$ev_vendor" "$ev_cfg")" \
     $(vendor_env_extra "$ev_vendor" "$ev_profile") "$@"

@@ -261,7 +261,7 @@ class CodexRPC:
             self._binding_failed = True
             raise RuntimeError('bound Codex account requires renewal') from None
 
-    def receive(self, deadline):
+    def receive(self, deadline, return_after_control=False):
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -292,10 +292,12 @@ class CodexRPC:
                 # Reserve one second of the provider's approximate 10-second
                 # deadline, including time already spent in our inbound queue.
                 self._renew_external_account(message, min(deadline, received_at + RENEWAL_REPLY_SECONDS))
+                if return_after_control:
+                    return None
                 continue
             return message
 
-    def call(self, method, params=None, deadline=None, on_notification=None):
+    def call(self, method, params=None, deadline=None, on_notification=None, deferred_messages=None):
         request_id = self.next_id
         self.next_id += 1
         request = {'id': request_id, 'method': method}
@@ -313,6 +315,11 @@ class CodexRPC:
                 if not isinstance(result, dict):
                     raise ValueError('invalid Codex response: ' + method)
                 return result
+            if deferred_messages is not None:
+                if len(deferred_messages) >= 128:
+                    raise RuntimeError('too many deferred Codex messages')
+                deferred_messages.append(message)
+                continue
             if 'method' in message and 'id' in message:
                 # Read-only calls must not grant approvals or provide secrets.
                 # A future execution owner must explicitly handle such requests.
@@ -321,15 +328,15 @@ class CodexRPC:
                 on_notification(message)
 
     def initialize(self, deadline=None):
-        self.call('initialize', {
+        self.initialization = self.call('initialize', {
             'clientInfo': {'name': 'n2_usage', 'version': '1.0.0'},
             'capabilities': {'experimentalApi': True}}, deadline=deadline)
         self.send({'method': 'initialized'}, deadline=deadline)
 
-    def _subscription_provider(self, deadline):
+    def _subscription_provider(self, deadline, deferred_messages=None):
         # The saved ChatGPT login can coexist with a custom model provider.
         # Its allowance must not make that unrelated route look runnable.
-        response = self.call('config/read', {'cwd': self.cwd, 'includeLayers': False}, deadline)
+        response = self.call('config/read', {'cwd': self.cwd, 'includeLayers': False}, deadline, deferred_messages=deferred_messages)
         config = response.get('config')
         if not isinstance(config, dict):
             raise ValueError('invalid Codex effective configuration')
@@ -349,12 +356,12 @@ class CodexRPC:
                 return None
         return provider or 'openai'
 
-    def read_usage(self, deadline=None):
+    def read_usage(self, deadline=None, deferred_messages=None):
         deadline = deadline if deadline is not None else time.monotonic() + self.timeout
-        provider = self._subscription_provider(deadline)
+        provider = self._subscription_provider(deadline, deferred_messages)
         if provider != 'openai':
             return {'_native': True, '_status': 'no-usage-api'}
-        account_response = self.call('account/read', {'refreshToken': False}, deadline)
+        account_response = self.call('account/read', {'refreshToken': False}, deadline, deferred_messages=deferred_messages)
         account = account_response.get('account')
         if account is not None and not isinstance(account, dict):
             raise ValueError('invalid Codex account response')
@@ -366,9 +373,9 @@ class CodexRPC:
         if requires_auth is False:
             return {'_native': True, '_status': 'no-usage-api'}
         generation = self.account_generation
-        result = self.call('account/rateLimits/read', deadline=deadline)
-        after = self.call('account/read', {'refreshToken': False}, deadline)
-        after_provider = self._subscription_provider(deadline)
+        result = self.call('account/rateLimits/read', deadline=deadline, deferred_messages=deferred_messages)
+        after = self.call('account/read', {'refreshToken': False}, deadline, deferred_messages=deferred_messages)
+        after_provider = self._subscription_provider(deadline, deferred_messages)
         if provider != after_provider:
             raise RuntimeError('provider changed during usage read')
         if after != account_response or self.account_generation != generation:
@@ -432,11 +439,11 @@ class CodexRPC:
         finally:
             self._initial_owner_account = None
 
-    def validate_account_binding(self):
+    def validate_account_binding(self, deferred_messages=None):
         if self._bound_account is None:
             raise RuntimeError('Codex account is not bound')
         try:
-            observation = self.read_usage()
+            observation = self.read_usage(deferred_messages=deferred_messages)
             if self._account_key(observation) != self._bound_account or self.account_generation != self._bound_generation:
                 raise RuntimeError('bound Codex account changed')
             return observation

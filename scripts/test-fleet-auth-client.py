@@ -127,7 +127,7 @@ class ClientTests(unittest.TestCase):
     def measure(self,root,slot,extra=None):
         settings=self.fixture.bin/'settings.json'
         value=json.loads(settings.read_text());value['allowExternalHome']=True;settings.write_text(json.dumps(value))
-        env=dict(os.environ,N2_USAGE_ROOT=str(root),N2_USAGE_FORMAT='json',N2_USAGE_ORIGIN=self.fixture.identities['client'])
+        env=dict(os.environ,N2_USAGE_ROOT=str(root),N2_USAGE_FORMAT='json',N2_USAGE_ORIGIN=self.fixture.identities['client'],N2_CODEX_USAGE_URL='')
         if extra:env.update(extra)
         result=subprocess.run([sys.executable,str(ROOT/'usage.py'),'codex','Work='+str(slot)],
                               env=env,capture_output=True,text=True,timeout=15)

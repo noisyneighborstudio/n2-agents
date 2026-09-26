@@ -811,3 +811,29 @@ new migration state. The native release/QA bundle builds. An offscreen render of
 the production details view with synthetic owner and migration failures was
 inspected at 340-point width; text wraps without clipping. This is visual fixture
 evidence, not the remaining live fleet GUI acceptance.
+
+
+### Shared owner-bound frontend bridge
+
+Ordinary fresh Codex TUI and app-server launches for owner-managed profiles now
+use the owner client through an account-bound relay. The terminal connects over
+a private Unix socket; token fetching and renewal stay on the existing private
+authentication path. Direct unsupported owner-profile subcommands refuse implicit
+unmanaged fallback. Fourteen bridge tests, five WebSocket framing tests, 31 RPC
+tests and the bound-loop launch/journal/cancellation regressions pass. The complete
+repository suite is running for this candidate. Successful renewal yields back
+to frontend input, and account verification preserves unrelated provider
+notifications and approvals before admitting another execution. Three regressions
+exercise these paths through the real RPC implementation. Independent correctness
+review verified both message-handling fixes. The QA app builds successfully,
+and its byte-matched helpers pass all 14 bridge and 5 WebSocket tests under a
+disposable home directory. No installation or deployment was performed.
+
+The first full-suite attempt found four owner-client fixture failures caused by
+an inherited legacy usage endpoint. The fixture now explicitly clears that
+endpoint except in its override-rejection test; all 15 owner-client tests pass.
+
+Persistent session resume/history, frontend usage receipts, concurrent turns,
+compatibility and process-lifetime acceptance, and live native TUI/provider tests
+remain open. The implementation is not yet ready for deployment or a complete
+interactive-route claim. PR #26 remains design-only.
