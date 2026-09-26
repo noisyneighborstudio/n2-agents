@@ -788,3 +788,26 @@ unfinished. No live migration or abandonment was performed.
 The ad-hoc QA bundle passes all eight migration tests with byte-matched helpers
 and disposable homes. Nineteen existing account-management tests also pass from
 source. Syntax and diff checks pass; nothing was installed or deployed.
+
+
+### Native summary coverage and authentication explanations
+
+The native summary previously omitted unreadable provider slots, so a healthy
+sibling could leave a positive summary gauge while another account was unknown.
+It now withholds positive overall/profile gauges when measurement coverage is
+incomplete and reports how many provider readings are unavailable. A known
+restriction still produces a zero-capacity warning, qualified as applying to at
+least one provider. Healthy measured accounts remain eligible for next-agent
+selection. Per-provider low-capacity notices remain available.
+
+The native parser recognizes `migration-pending` explicitly. Rows, provider
+badges and expanded details explain migration and owner-authentication failures;
+stale timestamps no longer hide the failure explanation. Icon tooltips refresh
+coverage text even when the icon image itself is unchanged.
+
+Production-model Swift tests cover partial coverage, healthy scheduling alongside
+an unavailable account, known restrictions alongside unknown readings, and the
+new migration state. The native release/QA bundle builds. An offscreen render of
+the production details view with synthetic owner and migration failures was
+inspected at 340-point width; text wraps without clipping. This is visual fixture
+evidence, not the remaining live fleet GUI acceptance.

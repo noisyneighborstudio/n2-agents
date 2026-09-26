@@ -15,7 +15,8 @@ struct UsageDetailsView: View {
                 .font(.system(size: 10)).foregroundStyle(.secondary)
             if !usage.isFresh {
                 Text("Stale measurement · refresh needed").foregroundStyle(.orange)
-            } else if usage.note == .restricted {
+            }
+            if usage.isFresh, usage.note == .restricted {
                 Text("Restricted for new work").foregroundStyle(.red)
                 ForEach(Array(usage.restrictionReasons.enumerated()), id: \.offset) { index, reason in
                     Text(reason).foregroundStyle(.secondary).lineLimit(2).help(reason)
@@ -27,8 +28,9 @@ struct UsageDetailsView: View {
                 Text(usage.maxedUntil.map { "All current limits reset by \($0.formatted(date: .abbreviated, time: .shortened))" }
                      ?? "Recovery time unknown")
                     .foregroundStyle(.secondary)
-            } else if usage.note != .ok {
-                Text("Current usage unavailable").foregroundStyle(.orange)
+            } else if usage.note != .ok && usage.note != .restricted {
+                Text(usage.statusLabel.prefix(1).uppercased() + String(usage.statusLabel.dropFirst())).foregroundStyle(.orange)
+                Text(usage.statusExplanation).foregroundStyle(.secondary)
             } else if usage.maxed {
                 Text("At N2's scheduling reserve").foregroundStyle(.orange)
             }

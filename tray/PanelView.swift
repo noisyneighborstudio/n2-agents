@@ -619,9 +619,9 @@ private struct SlotRow: View {
             flat(nil, usage?.isFresh == false ? "stale reading" : "usage unknown", Ink.amber)
         } else if let note = usage?.note {
             if note == .sharedLogin {
-                flat("link", label(for: note), Ink.secondary)
+                flat("link", usage?.statusLabel ?? "no reading", Ink.secondary)
             } else {
-                flat(note == .staleToken ? "exclamationmark.triangle" : "arrow.clockwise", label(for: note), Ink.amber)
+                flat(note == .staleToken ? "exclamationmark.triangle" : "arrow.clockwise", usage?.statusLabel ?? "no reading", Ink.amber)
             }
         } else if model.usageSweeping {
             Sweep().clipShape(Capsule())
@@ -660,20 +660,7 @@ private struct SlotRow: View {
         .lineLimit(1)
     }
 
-    private func label(for note: Usage.Note) -> String {
-        switch note {
-        case .noToken:     return "not signed in"
-        case .staleToken:  return "token expired"
-        case .rateLimited: return "rate-limited"
-        case .fetchError:  return "check failed"
-        case .restricted: return "provider restriction"
-        case .credentialOverride: return "credential override"
-        case .credentialStoreUnavailable: return "credential store locked"
-        case .ownerUnavailable: return "account owner unavailable"
-        case .sharedLogin: return "shared login"
-        default:           return "no reading"
-        }
-    }
+
 }
 
 // MARK: - Depth 3: everything for one slot
@@ -983,7 +970,7 @@ private struct CapacitySegment: View {
         else if signedOut { parts.append("not signed in") }
         else if maxed { parts.append(usage?.note == .restricted ? "provider restriction" : "at N2 scheduling reserve") }
         else if let u = used { parts.append("\(u)% used") }
-        else { parts.append("usage unavailable") }
+        else { parts.append(usage?.statusLabel ?? "usage unavailable") }
         return parts.joined(separator: " · ")
     }
 

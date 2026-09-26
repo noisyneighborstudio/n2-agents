@@ -41,6 +41,20 @@ import Foundation
         if case .usageUnavailable = model.nextBest {} else { fatalError("restricted plus unknown is not all exhausted") }
         model.usage["codex"] = [:]
         if case .usageUnavailable = model.nextBest {} else { fatalError("missing reading is unknown") }
+        let unavailable = Usage(fiveHour: nil, sevenDay: nil, resets: nil, note: .ownerUnavailable, sevenResets: nil)
+        model.usage = ["claude": ["Default": unavailable], "codex": ["Default": healthy]]
+        check(model.remaining == nil, "healthy sibling cannot make incomplete overall coverage look healthy")
+        check(model.reading(profile, data).used == nil, "incomplete profile must not draw a summary capacity gauge")
+        check(model.measurementCoverage.known == 1 && model.measurementCoverage.expected == 2,
+              "summary reports actual measurement coverage")
+        check(model.capacitySummary.contains("1 of 2"), "unknown summary names missing coverage")
+        if case .slot(_, let vendor, _) = model.nextBest { check(vendor == "codex", "healthy provider still selectable") }
+        else { fatalError("partial unknown must not disable healthy work") }
+        model.usage["codex"] = ["Default": restricted]
+        check(model.remaining == 0 && model.capacitySummary.contains("At least one"),
+              "unknown capacity must not hide a known restriction")
+        model.usage["claude"] = ["Default": healthy]
+        check(model.remaining == 0, "complete coverage retains known rejection")
         print("Native panel restriction, summary, and next-agent tests passed")
     }
 }

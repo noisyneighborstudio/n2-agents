@@ -18,6 +18,7 @@ struct Usage {
         case credentialOverride = "credential-override"
         case credentialStoreUnavailable = "credential-store-unavailable"
         case ownerUnavailable = "owner-unavailable"
+        case migrationPending = "migration-pending"
         case noUsageAPI = "no-usage-api"
         /// The lab has one login for the machine; Default's row carries it.
         case sharedLogin = "shared-login"
@@ -71,6 +72,40 @@ struct Usage {
             return "Account confirmed for this usage observation: \(accountHash). Match this identifier across machines."
         }
         return "Account identity: \(identityStatus). Matching profile names do not establish the same account."
+    }
+
+    var statusLabel: String {
+        switch note {
+        case .ok: return isFresh ? "usage unknown" : "stale reading"
+        case .noToken: return "not signed in"
+        case .staleToken: return "token expired"
+        case .rateLimited: return "rate-limited"
+        case .fetchError: return "check failed"
+        case .restricted: return "provider restriction"
+        case .credentialOverride: return "credential override"
+        case .credentialStoreUnavailable: return "credential store unavailable"
+        case .ownerUnavailable: return "account owner unavailable"
+        case .migrationPending: return "migration pending"
+        case .noUsageAPI: return "no usage API"
+        case .sharedLogin: return "shared login"
+        }
+    }
+
+    var statusExplanation: String {
+        switch note {
+        case .ownerUnavailable:
+            return "N2 could not authenticate through this account's owner. Check the owner's connection and account access. Capacity is unknown."
+        case .migrationPending:
+            return "This profile is paused for credential migration. Capacity stays unknown until the migration is resolved."
+        case .credentialStoreUnavailable:
+            return "N2 could not read the credential store. Capacity is unknown."
+        case .credentialOverride:
+            return "A credential override prevents N2 from verifying this profile's account and capacity."
+        case .staleToken, .noToken:
+            return "Authentication must be restored before N2 can measure capacity."
+        default:
+            return "Current usage is unavailable. No remaining capacity is inferred from this reading."
+        }
     }
 
     /// Expired observations cannot advertise capacity or select an account.
@@ -387,7 +422,7 @@ final class PanelModel: ObservableObject {
         let live = metered.filter(signedIn)
         let readable = live.compactMap { row($0) }.filter { $0.isFresh && ($0.note == .ok || $0.note == .restricted) }
         let values = readable.compactMap(\.used)
-        let used = values.max()
+        let used = readable.count == live.count && live.allSatisfy({ row($0)?.availableRemaining != nil }) ? values.max() : nil
 
         let out = readable.filter(\.maxed)
         let back = out.compactMap(\.maxedUntil).min()
@@ -427,13 +462,43 @@ final class PanelModel: ObservableObject {
     private var profilesLeft: [(name: String, left: Int, slots: Int)] {
         let byProfile = Dictionary(grouping: slotsLeft, by: \.profile)
         return (data?.profiles ?? []).compactMap { p in
-            byProfile[p.name].map { (p.name, $0.map(\.left).min() ?? 0, $0.count) }
+            guard let measured = byProfile[p.name], let minimum = measured.map(\.left).min() else { return nil }
+            let expected = data?.quotaVendors.filter {
+                p.slots[$0.id] != nil && data?.snapshot.signedIn[p.name]?[$0.id] != false
+            }.count ?? 0
+            guard minimum == 0 || measured.count == expected else { return nil }
+            return (p.name, minimum, measured.count)
         }
     }
 
     /// The icon warns about the most constrained measured slot. The next-agent
     /// action separately identifies a slot with capacity. Unknown is not zero.
-    var remaining: Int? { slotsLeft.map(\.left).min() }
+    var measurementCoverage: (known: Int, expected: Int) {
+        guard let data else { return (0, 0) }
+        let expected = data.profiles.reduce(0) { count, profile in
+            count + data.quotaVendors.filter {
+                profile.slots[$0.id] != nil && data.snapshot.signedIn[profile.name]?[$0.id] != false
+            }.count
+        }
+        return (slotsLeft.count, expected)
+    }
+
+    var remaining: Int? {
+        guard let minimum = slotsLeft.map(\.left).min() else { return nil }
+        let coverage = measurementCoverage
+        return minimum == 0 || coverage.known == coverage.expected ? minimum : nil
+    }
+
+    var capacitySummary: String {
+        let coverage = measurementCoverage
+        let unknown = coverage.expected - coverage.known
+        if unknown > 0 {
+            let warning = remaining == 0 ? "At least one provider has no schedulable headroom. " : "Overall headroom unknown. "
+            return warning + "\(unknown) of \(coverage.expected) provider readings unavailable. Open N2 for account details."
+        }
+        return remaining.map { "Lowest measured headroom: \($0)%. Open N2 for individual accounts." }
+            ?? "Usage unknown. Open N2 for account readings."
+    }
 
     /// Low is the icon's orange tier or worse: under 50% left.
     static let lowFrom = StatusIcon.Tier.orange

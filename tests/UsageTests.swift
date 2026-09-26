@@ -56,6 +56,14 @@ import Foundation
         let afterOwnerFailure = Usage.merge(["Default": fresh], ["Default": ownerUnavailable])["Default"]!
         check(afterOwnerFailure.note == .ownerUnavailable && afterOwnerFailure.used == nil && afterOwnerFailure.binding == nil,
               "owner failure cannot retain a healthy capacity gauge")
+        ownerFailure["status"] = "migration-pending"
+        let pendingMigration = read(ownerFailure, provider: "codex")
+        check(pendingMigration.note == .migrationPending && pendingMigration.used == nil && !pendingMigration.maxed,
+              "migration has its own unknown-capacity state, not quota exhaustion")
+        check(pendingMigration.statusLabel == "migration pending" && pendingMigration.statusExplanation.contains("paused"),
+              "migration explanation survives parsing")
+        check(ownerUnavailable.statusExplanation.contains("Capacity is unknown") && !ownerUnavailable.maxed,
+              "owner failure is distinguished from provider exhaustion")
         let structured = read(record)
         check(structured.windows?.count == 4 && structured.used == 98 && structured.maxed,
               "model-specific buckets must constrain capacity")
