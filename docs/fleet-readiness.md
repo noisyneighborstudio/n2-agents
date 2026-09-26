@@ -864,3 +864,31 @@ success clears the matching model-specific rejection. Rejected, unacknowledged
 turn requests preserve the previous selection and baseline; independent review
 verified both fixes. Live-provider acceptance
 and final security review remain open.
+
+
+### Durable unfinished frontend invocations
+
+The frontend commits an `execution-started` event before dispatching a turn. Its
+`execution-unconfirmed` state means no terminal outcome has been recorded; it
+does not claim that the process is still running or that execution failed. All
+token counts remain unknown. A final receipt uses the same task identifier and
+takes precedence in summaries, including equal timestamps and out-of-order peer
+exchange. Summary groups expose `unconfirmedTasks` separately. Start events
+cannot carry token totals or quota/recovery assertions and never clear durable
+restrictions.
+
+A subprocess SIGKILL test reopens the database and confirms that the unfinished
+invocation remains visible while the prior quota restriction remains active.
+Peer-import tests cover unfinished records, replay and final-receipt precedence.
+All 25 bridge and 28 journal tests pass from source and byte-matched QA
+packaging in disposable homes. Independent correctness review found no actionable
+gaps in the delta. The full repository suite is still running for this candidate. Persistent session resume and provider process
+cleanup after a killed frontend remain separate unfinished requirements. Fleet
+peers must run a journal version that understands the new event kind; an older
+peer rejects the unsupported batch rather than silently discarding these events.
+
+
+A native Codex 0.157.1 TUI probe reached the private owner bridge and attempted
+account bootstrap. It stopped because the synthetic provider account response
+lacks the required `planType` field. This is a fixture-contract gap; the probe
+does not establish native TUI acceptance or a production bridge defect.

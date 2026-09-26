@@ -131,7 +131,7 @@ class RealRPCMessageTests(unittest.TestCase):
 
 class ReceiptTests(unittest.TestCase):
     def setUp(self):
-        directory=tempfile.TemporaryDirectory();self.addCleanup(directory.cleanup)
+        directory=tempfile.TemporaryDirectory();self.addCleanup(directory.cleanup);self.directory=directory.name
         store=m.load('receipt_store_tests','usage-store.py')
         self.journal=store.Journal(directory.name)
         self.addCleanup(self.journal.db.close)
@@ -202,6 +202,36 @@ class ReceiptTests(unittest.TestCase):
         self.assertIsNone(success['data']['requestedModel'])
         self.assertEqual(success['data']['attribution']['totalTokens'],60)
 
+    def test_hard_kill_preserves_unconfirmed_invocation_without_clearing_quota(self):
+        self.journal.append('codex','Work','quota-rejected',{'status':'restricted',
+            'identity':{'status':'verified','accountHash':'a'*64},'model':'model-a'})
+        code="""import importlib.util,sys,time
+from pathlib import Path
+spec=importlib.util.spec_from_file_location('bridge',Path(sys.argv[1])/'fleet-auth-bridge.py')
+m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+journal=m.load('store','usage-store.py').Journal(sys.argv[2])
+receipts=m.Receipts(journal,'Work','a'*64)
+receipts.thread('killed-thread','model-a',True)
+receipts.begin('killed-thread')
+print('committed',flush=True)
+time.sleep(60)
+"""
+        process=subprocess.Popen(['python3','-c',code,str(ROOT),self.directory],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        try:
+            ready,_,_=select.select([process.stdout],[],[],10);self.assertTrue(ready)
+            self.assertEqual(process.stdout.readline(),b'committed\n')
+            process.kill();process.wait(timeout=5)
+        finally:
+            if process.poll() is None:process.kill();process.wait(timeout=5)
+            process.stdout.close();process.stderr.close()
+        reopened=m.load('reopened_store','usage-store.py').Journal(self.directory)
+        self.addCleanup(reopened.db.close)
+        event=next(event for event in reopened.events() if event['kind']=='execution-started')
+        self.assertEqual(event['data']['status'],'execution-unconfirmed')
+        self.assertIsNone(event['data']['attribution']['totalTokens'])
+        self.assertEqual(sum(g['unconfirmedTasks'] for g in reopened.token_summary()['groups']),1)
+        self.assertEqual(len(reopened.active_rejections()),1)
+
     def test_counter_reset_remains_unknown(self):
         self.start();self.usage(60);self.complete();self.receipts.finish()
         self.start('second');self.usage(30,'second');self.complete('second');self.receipts.finish()
@@ -218,7 +248,7 @@ class ReceiptTests(unittest.TestCase):
         bridge.backend({'id':key,'result':{'turn':{'id':'turn'}}})
         bridge.flush_receipts();bridge.flush_receipts()
         self.assertEqual(provider.verified,2);self.assertFalse(bridge.active)
-        self.assertEqual(len(self.journal.events()),1)
+        self.assertEqual(len(self.journal.events()),2)
         self.assertEqual(self.journal.token_summary()['groups'][0]['reportedTotalTokens'],60)
 
 class BridgeIntegrationTests(unittest.TestCase):

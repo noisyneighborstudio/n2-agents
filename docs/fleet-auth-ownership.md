@@ -635,3 +635,12 @@ not the latest model-call counter and not a sum of cumulative snapshots. Missing
 boundaries remain unknown. The journal identifies the machine, selected account,
 provider thread, model when known, and one invocation identifier per turn.
 Quota failures use the existing durable fleet restriction exchange.
+
+
+Before a frontend turn is sent, N2 durably journals its invocation ID and an
+explicitly unconfirmed outcome. This survives a killed bridge without claiming
+known token usage or successful recovery. Terminal receipts supersede the start
+record for summaries. Unconfirmed records remain subject to the journal's
+30-day diagnostic retention; quota restrictions have their separate durable
+retention. This accounting record does not itself terminate an orphan provider
+process or restore session history.

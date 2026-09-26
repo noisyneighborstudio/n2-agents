@@ -18,6 +18,27 @@ class JournalTests(unittest.TestCase):
         self.addCleanup(self.a.db.close)
         self.addCleanup(self.b.db.close)
 
+    def test_unconfirmed_start_survives_peer_exchange_and_terminal_wins_ties(self):
+        at=time.time()
+        data={'status':'execution-unconfirmed','startedAt':at,'attribution':{'task':'started-task','totalTokens':None}}
+        started=self.a.append('codex','Work','execution-started',data,at)
+        self.b.import_events([started],'peer-a')
+        group=self.b.token_summary()['groups'][0]
+        self.assertEqual(group['unconfirmedTasks'],1);self.assertEqual(group['unknownTokenTasks'],1)
+        terminal=self.a.append('codex','Work','execution-succeeded',
+            {'status':'ok','startedAt':at,'attribution':{'task':'started-task','totalTokens':60}},at)
+        self.b.import_events([terminal,started],'peer-a')
+        summary=self.b.token_summary();self.assertEqual(summary['uniqueTasks'],1)
+        self.assertEqual(summary['groups'][0]['unconfirmedTasks'],0)
+        self.assertEqual(summary['groups'][0]['reportedTotalTokens'],60)
+
+    def test_unconfirmed_start_cannot_claim_tokens_or_recovery(self):
+        base={'status':'execution-unconfirmed','startedAt':time.time(),'attribution':{'task':'started-task'}}
+        for changes in ({'status':'ok'},{'attribution':{'task':'started-task','totalTokens':1}},
+                        {'restrictions':[]},{'modelUsage':{}},{'attribution':{}},{'startedAt':None}):
+            with self.assertRaises(ValueError):
+                self.a.append('codex','Work','execution-started',dict(base,**changes))
+
     def test_signed_source_replay_and_age(self):
         at = time.time() - 600
         event = self.a.append('codex', 'Default', 'measurement', {'status': 'ok'}, at)

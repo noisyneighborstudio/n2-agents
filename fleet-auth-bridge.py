@@ -65,6 +65,14 @@ class Receipts:
         self.current={'thread':thread,'turn':None,'model':None if requested is not None else previous['model'],'requestedModel':requested,
                       'baseline':previous['total'],'total':None,'started':time.time(),
                       'task':str(uuid.uuid4()),'completion':None,'early':[]}
+        # Commit before dispatch. A killed bridge leaves an explicitly unknown
+        # outcome, and a later terminal receipt supersedes this same task.
+        current=self.current
+        self.journal.append('codex',self.profile,'execution-started',{
+            'status':'execution-unconfirmed','identity':{'status':'verified','accountHash':self.account},
+            'source':'codex-app-server','session':thread,'model':current['model'],
+            'requestedModel':requested,'usageScope':'provider-turn','startedAt':current['started'],
+            'attribution':dict(dict.fromkeys(self.COUNTS),task=current['task'])})
 
     def acknowledge(self,turn):
         current=self.current

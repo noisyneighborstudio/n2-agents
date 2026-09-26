@@ -15,7 +15,7 @@ import uuid
 MAX_BATCH = 1000
 MAX_BYTES = 2 * 1024 * 1024
 STATUSES = {'ok', 'restricted', 'no-token', 'stale-token', 'fetch-error', 'rate-limited',
-            'no-usage-api', 'shared-login', 'credential-override', 'credential-store-unavailable', 'owner-unavailable', 'migration-pending', 'execution-failed'}
+            'no-usage-api', 'shared-login', 'credential-override', 'credential-store-unavailable', 'owner-unavailable', 'migration-pending', 'execution-failed', 'execution-unconfirmed'}
 
 
 def canonical(value):
@@ -134,7 +134,7 @@ def validate(event):
         raise ValueError('unknown provider')
     if not isinstance(event['profile'], str) or not re.fullmatch(r'[A-Za-z0-9]+', event['profile']):
         raise ValueError('invalid profile')
-    if event['kind'] not in ('measurement', 'quota-rejected', 'execution-succeeded', 'execution-failed'):
+    if event['kind'] not in ('measurement', 'quota-rejected', 'execution-succeeded', 'execution-failed', 'execution-started'):
         raise ValueError('unknown event kind')
     if not isinstance(event['data'], dict) or len(canonical(event['data'])) > 16384:
         raise ValueError('invalid event data')
@@ -149,9 +149,17 @@ def validate(event):
         raise ValueError('invocation starts after observation')
     if 'status' in event['data'] and event['data']['status'] not in STATUSES:
         raise ValueError('unknown status')
-    required_status = {'quota-rejected': 'restricted', 'execution-succeeded': 'ok'}.get(event['kind'])
+    required_status = {'quota-rejected': 'restricted', 'execution-succeeded': 'ok', 'execution-started': 'execution-unconfirmed'}.get(event['kind'])
     if required_status and event['data'].get('status') != required_status:
         raise ValueError('execution status conflicts with event kind')
+    if event['kind'] == 'execution-started':
+        data = event['data']
+        attribution = data.get('attribution', {})
+        if not attribution.get('task') or data.get('startedAt') is None:
+            raise ValueError('unfinished execution requires invocation identity')
+        if (any(value is not None for key, value in attribution.items() if key != 'task')
+                or any(key in data for key in ('windows', 'restrictions', 'credits', 'modelUsage', 'recheckAt', 'resetKnown'))):
+            raise ValueError('unfinished execution cannot claim usage or recovery')
     expected = hashlib.sha256(canonical({k: v for k, v in event.items() if k != 'id'}).encode()).hexdigest()
     if event['id'] != expected:
         raise ValueError('event digest mismatch')
@@ -506,7 +514,7 @@ class Journal:
         # rather than counting that invocation twice. Imported replays already
         # deduplicate by event ID. Allowance percentages never enter this sum.
         tasks, groups = set(), {}
-        for row in self.db.execute('SELECT body FROM events WHERE at >= ? ORDER BY at DESC, id DESC', (time.time() - 30 * 86400,)):
+        for row in self.db.execute("SELECT body FROM events WHERE at >= ? ORDER BY CASE WHEN json_extract(body, '$.kind')='execution-started' THEN 1 ELSE 0 END, at DESC, id DESC", (time.time() - 30 * 86400,)):
             event = json.loads(row[0])
             if event['kind'] == 'measurement':
                 continue
@@ -528,7 +536,7 @@ class Journal:
                     groups[key] = {'provider': event['provider'], 'accountHash': account,
                                    'identityStatus': 'verified' if account else 'unverified',
                                    'model': model, 'usageScope': data.get('usageScope', 'unknown'), 'bindings': [], 'tasks': 0,
-                                   'knownTokenTasks': 0, 'unknownTokenTasks': 0,
+                                   'knownTokenTasks': 0, 'unknownTokenTasks': 0, 'unconfirmedTasks': 0,
                                    'reportedTotalTokens': 0}
                 group = groups[key]
                 route = {'origin': owner, 'profile': event['profile']}
@@ -537,6 +545,8 @@ class Journal:
                 if route not in group['bindings']:
                     group['bindings'].append(route)
                 group['tasks'] += 1
+                if event['kind'] == 'execution-started':
+                    group['unconfirmedTasks'] += 1
                 total = counts.get('totalTokens')
                 if total is None:
                     group['unknownTokenTasks'] += 1
