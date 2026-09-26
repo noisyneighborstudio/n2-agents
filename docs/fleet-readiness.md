@@ -931,3 +931,39 @@ The full repository regression suite passed after the descriptor fix, followed
 by a successful QA build. This acceptance covers a fresh native session against
 a synthetic provider. Persistent history/resume, hard-kill process cleanup,
 live-provider acceptance and final security review remain unfinished.
+
+
+### Durable local Codex sessions
+
+Owner-bound frontends now retain provider history in a private home keyed by the
+full owner binding and working directory. Immutable thread records are published
+before returning a successful thread response. Resume by a recorded thread ID
+checks its account binding; alternate history and path injection are refused.
+`agents run Work --vendor codex resume THREAD_ID` selects the original grant even
+if Work now names a replacement account. A revoked original grant fails instead
+of switching accounts. Put the command and ID before native options; unsupported
+argument ordering fails before requesting credentials.
+
+Acknowledged model choices survive restart. Successful explicit resume overrides
+replace the saved choice; rejected overrides preserve it. This prevents both
+stuck model-specific restrictions and recovery attributed to the wrong model.
+Unknown resumed counter baselines remain unknown rather than counting earlier
+turns again. Provider credentials remain ephemeral. Shared profile resources
+refresh on startup without deleting session history.
+
+All 33 bridge tests pass, including two separate CLI processes, original-grant
+selection after profile replacement, immutable binding collision, path rejection,
+configuration refresh and model-specific quota recovery. Independent correctness
+review found no remaining findings after the model fixes. Installed Codex 0.157.1
+passed `test-fleet-native-tui.py --resume-roundtrip` against the signed synthetic
+owner: both processes rendered a response and exited zero, with two journal tasks,
+60 known tokens from the fresh turn and an unknown resumed-turn count.
+
+The full repository regression suite passes with this change. The QA application
+builds with ad-hoc signing. Its byte-matched helpers pass all
+33 bridge tests and the installed native restart/resume acceptance under a private
+temporary HOME. The staging copy excludes the live QA-root selector.
+
+This establishes local explicit-ID resume, not cross-machine history transfer or
+live-provider acceptance. Legacy session discovery and `--start-from-session`
+integration, hard-kill process cleanup and final security review remain required.

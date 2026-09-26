@@ -681,7 +681,7 @@ exec_vendor() {  # vendor, profile, cfg, cli, args...
       exec /usr/bin/python3 "$scripts_dir/fleet-auth-bridge.py" --root "$root" --profile "$ev_profile" --config "$ev_cfg" --executable "$ev_cli"
     fi
     case ${1:-} in
-      login|logout|auth|exec|e|review|resume|fork|app-server|app|mcp|plugin|remote-control|exec-server|cloud|agents|queue|archive|delete|unarchive|migrate-rollouts|sandbox|debug|apply|a|completion|update|doctor|features|help)
+      login|logout|auth|exec|e|review|app-server|app|mcp|plugin|remote-control|exec-server|cloud|agents|queue|archive|delete|unarchive|migrate-rollouts|sandbox|debug|apply|a|completion|update|doctor|features|help)
         die "this owner-managed profile requires N2's bound runner or app-server route for that command" ;;
     esac
     exec /usr/bin/python3 "$scripts_dir/fleet-auth-bridge.py" --root "$root" --profile "$ev_profile" --config "$ev_cfg" --executable "$ev_cli" --tui -- "$@"

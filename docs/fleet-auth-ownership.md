@@ -618,13 +618,21 @@ correlation, approval replies, account-control refusal, route checks and bounded
 WebSocket framing. The frontend/provider integration fixture is synthetic; it
 is not live provider or native TUI end-to-end acceptance.
 
-The bridge is incomplete: persistent session history/resume, turn receipts and
-usage attribution, broader command compatibility, concurrent turns, final process
-lifetime checks and live-provider/native-TUI acceptance remain required. The
-private execution home is currently disposable, so this checkpoint must not be
-presented as durable interactive-session support. Independent security review
-remains outstanding. The same relay is intended for the later T3 adapter; PR #26
-has not yet been implemented.
+The bridge now journals turn receipts and retains local session history in private
+homes separated by owner binding and working directory. Thread IDs have immutable
+public owner records. Explicit native resume selects the original grant before
+requesting credentials, including after profile account replacement. Resumed
+work fails if that grant is unavailable; it never borrows the replacement account.
+The selected model persists at acknowledgement so quota recovery retains its scope.
+No credential file is copied into the session home.
+
+Installed Codex 0.157.1 passes fresh and restarted native-TUI acceptance against a
+disposable signed synthetic owner. Source and packaged tests cover saved history,
+account replacement, model changes and unknown resumed token boundaries. This does
+not establish live-provider acceptance. Session-browser integration, broader command
+compatibility, concurrent turns and final process lifetime checks remain required.
+Independent security review remains outstanding. The same relay is intended for
+the later T3 adapter; PR #26 has not yet been implemented.
 
 
 Frontend execution accounting uses the provider's `turn/completed`,

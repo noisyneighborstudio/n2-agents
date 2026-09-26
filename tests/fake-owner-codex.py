@@ -72,14 +72,18 @@ for line in sys.stdin:
                 continue
         result = {'requiresOpenaiAuth': True, 'account': {'type': 'chatgpt', 'planType': 'plus', 'email': 'other@example.invalid' if (token == 'rotated-secret' and mode == 'wrong-account') or mode == 'login-other-account' else 'fixture@example.invalid'},
                   'workspaceRouting': {'chatgptAccountId': 'workspace', 'backendOrigin': 'https://chatgpt.com', 'accountRoutingOverride': 'NO_CONSTRAINT'}}
-    elif method == 'thread/start':
+    elif method in ('thread/start','thread/resume','thread/read'):
+        history=home/'fixture-history.json'
+        if method in ('thread/resume','thread/read'):
+            assert json.loads(history.read_text())['thread']==request['params']['threadId']
+        else:history.write_text(json.dumps({'thread':thread_id}))
         thread={'id':thread_id,'sessionId':thread_id,'cliVersion':'0.157.1',
                 'createdAt':int(time.time()),'updatedAt':int(time.time()),'cwd':os.getcwd(),
                 'ephemeral':True,'modelProvider':'openai','preview':'fixture','projectId':None,
                 'source':'cli','status':{'type':'idle'},'turns':[]}
         result={'thread':thread,'modelProvider':'openai','cwd':os.getcwd(),'model':'fixture-model',
                 'approvalPolicy':'never','approvalsReviewer':'user','sandbox':{'type':'readOnly'}}
-        if native_frontend:
+        if native_frontend and method!='thread/read':
             print(json.dumps({'id':request['id'],'result':result}),flush=True)
             print(json.dumps({'method':'thread/started','params':{'thread':thread}}),flush=True)
             continue

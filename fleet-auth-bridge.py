@@ -6,6 +6,7 @@ Only that connection sees owner tokens and renewal requests. Frontend IDs occupy
 separate namespaces from N2's authentication/verification RPCs.
 """
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -36,6 +37,89 @@ METHODS={'account/read','account/rateLimits/read','config/read','configRequireme
          'plugin/list','app/list','hooks/list','mcpServerStatus/list','experimentalFeature/list','collaborationMode/list'}
 
 
+
+class Sessions:
+    """Private local history and immutable thread-to-owner bindings."""
+    def __init__(self,root):
+        self.base=Path(root).resolve(strict=True)/'codex-sessions'
+        self.owner=client.binding.owner
+        for path in (self.base,self.base/'threads',self.base/'homes'):
+            self.owner.private_directory(path,create=True)
+
+    def thread_path(self,thread):
+        if not isinstance(thread,str) or not 0<len(thread)<=256:
+            raise ValueError('invalid session identifier')
+        return self.base/'threads'/hashlib.sha256(thread.encode()).hexdigest()
+
+    def read(self,thread):
+        raw=self.owner.private_file(self.thread_path(thread),16384)
+        value=json.loads(raw,object_pairs_hook=self.owner.unique)
+        if (not isinstance(value,dict) or set(value)!={'schemaVersion','thread','record','cwd'}
+                or type(value['schemaVersion']) is not int or value['schemaVersion']!=1
+                or value['thread']!=thread or not isinstance(value['cwd'],str)
+                or not os.path.isabs(value['cwd'])):
+            raise ValueError('invalid session binding')
+        record=value['record']
+        client.binding.validate(record,record.get('profileId') if isinstance(record,dict) else None)
+        return value
+
+    def remember(self,thread,record,cwd):
+        value={'schemaVersion':1,'thread':thread,'record':record,'cwd':os.path.realpath(cwd)}
+        raw=json.dumps(value,sort_keys=True,separators=(',',':')).encode()
+        path=self.thread_path(thread)
+        # Publish only complete records; a collision can never rebind a thread.
+        fd,name=tempfile.mkstemp(prefix='.pending-',dir=path.parent)
+        try:
+            with os.fdopen(fd,'wb') as stream:
+                stream.write(raw);stream.flush();os.fsync(stream.fileno())
+            try:os.link(name,path)
+            except FileExistsError:
+                if self.read(thread)!=value:raise ValueError('session binding changed')
+            finally:os.unlink(name)
+            self.owner.sync_directory(path.parent)
+        finally:
+            if os.path.exists(name):os.unlink(name)
+
+    def matches(self,thread,record,cwd):
+        try:value=self.read(thread)
+        except FileNotFoundError:return False
+        return value['record']==record and value['cwd']==os.path.realpath(cwd)
+
+    def model(self,thread,value=...):
+        path=self.thread_path(thread).with_suffix('.model')
+        if value is ...:
+            try:raw=self.owner.private_file(path,4096)
+            except FileNotFoundError:return None
+            value=json.loads(raw)
+        else:
+            if value is not None and (not isinstance(value,str) or not 0<len(value)<=512):
+                raise ValueError('invalid saved model selection')
+            fd,name=tempfile.mkstemp(prefix='.model-',dir=path.parent)
+            try:
+                with os.fdopen(fd,'w') as stream:
+                    json.dump(value,stream);stream.flush();os.fsync(stream.fileno())
+                os.replace(name,path);self.owner.sync_directory(path.parent)
+            finally:
+                if os.path.exists(name):os.unlink(name)
+        if value is not None and (not isinstance(value,str) or not 0<len(value)<=512):
+            raise ValueError('invalid saved model selection')
+        return value
+
+    def home(self,record,cwd,config):
+        key=hashlib.sha256(json.dumps([record,os.path.realpath(cwd)],sort_keys=True).encode()).hexdigest()
+        home=self.base/'homes'/key
+        self.owner.private_directory(home,create=True)
+        # Prepare configuration independently, then replace only managed entries.
+        # Session files and provider databases survive each process restart.
+        with tempfile.TemporaryDirectory(prefix='.config-',dir=self.base) as directory:
+            staged=Path(directory);runner.prepare_home(Path(config).resolve(strict=True),staged)
+            for name in ('config.toml','AGENTS.md','AGENTS.override.md','managed_config.toml','rules','skills','plugins'):
+                source=staged/name;destination=home/name
+                if os.path.lexists(source):os.replace(source,destination)
+                elif os.path.lexists(destination):destination.unlink()
+        return str(home)
+
+
 def valid_id(value):
     return type(value) is int or (isinstance(value,str) and 0<len(value)<=256)
 
@@ -51,12 +135,13 @@ def decode(raw):
 class Receipts:
     """Sanitized per-turn accounting from cumulative provider thread counters."""
     COUNTS=('inputTokens','cachedInputTokens','outputTokens','totalTokens')
-    def __init__(self,journal,profile,account):
+    def __init__(self,journal,profile,account,sessions=None):
         self.journal=journal;self.profile=profile;self.account=account
-        self.threads={};self.current=None
+        self.threads={};self.current=None;self.sessions=sessions
 
     def thread(self,identifier,model,fresh):
-        self.threads[identifier]={'model':model,'requestedModel':None,'total':dict.fromkeys(self.COUNTS,0) if fresh else None}
+        requested=self.sessions.model(identifier) if self.sessions and not fresh else None
+        self.threads[identifier]={'model':model,'requestedModel':requested,'total':dict.fromkeys(self.COUNTS,0) if fresh else None}
 
     def begin(self,thread,model=None):
         if self.current is not None:raise ValueError('unfinished execution receipt')
@@ -79,6 +164,7 @@ class Receipts:
         if not current or not isinstance(turn,dict) or not valid_id(turn.get('id')) or not isinstance(turn['id'],str):
             raise ValueError('invalid execution acknowledgement')
         current['turn']=turn['id']
+        if self.sessions:self.sessions.model(current['thread'],current['requestedModel'])
         early=current.pop('early')
         for method,params in early:self.observe(method,params)
 
@@ -137,9 +223,10 @@ class Receipts:
 
 
 class Bridge:
-    def __init__(self,provider,emit,receipts=None):
+    def __init__(self,provider,emit,receipts=None,sessions=None,record=None):
         self.provider=provider;self.emit=emit;self.initialized=False;self.receipts=receipts
-        self.sequence=0;self.pending={};self.approvals={};self.threads=set();self.active=False
+        self.sessions=sessions;self.record=record
+        self.sequence=0;self.pending={};self.thread_requests={};self.approvals={};self.threads=set();self.active=False
 
     def key(self):
         self.sequence+=1;return 'n2-frontend-'+str(self.sequence)
@@ -178,7 +265,11 @@ class Bridge:
                     or os.path.realpath(os.path.join(self.provider.cwd,requested_cwd))!=os.path.realpath(self.provider.cwd)):
                 self.error(message,'Start a separate account-bound session for another working directory');return
             params=dict(params,cwd=self.provider.cwd)
-        if 'threadId' in params and params['threadId'] not in self.threads:
+        saved_thread=('threadId' in params and self.sessions
+                      and self.sessions.matches(params['threadId'],self.record,self.provider.cwd))
+        if method in ('thread/resume','thread/fork') and any(params.get(key) is not None for key in ('path','history')):
+            self.error(message,'Resume requires a recorded N2 thread binding');return
+        if 'threadId' in params and params['threadId'] not in self.threads and not saved_thread:
             self.error(message,'Thread has no account binding in this session');return
         if method.startswith(('thread/','turn/','review/')):
             overrides=params.get('config')
@@ -187,7 +278,7 @@ class Bridge:
                 for key,value in overrides.items())))
             if params.get('modelProvider') not in (None,'openai') or not safe_overrides:
                 self.error(message,'This session must keep its selected account route');return
-        if method in ('thread/resume','thread/fork','turn/start','turn/steer','review/start'):
+        if method in ('turn/start','turn/steer','review/start'):
             if params.get('threadId') not in self.threads:
                 self.error(message,'Thread has no account binding in this session');return
         if method=='review/start' and params.get('delivery')=='detached':
@@ -202,6 +293,7 @@ class Bridge:
             if self.active or self.approvals:
                 self.error(message,'Finish the current turn and approvals before starting another');return
         key=self.key();self.pending[key]=(message['id'],method)
+        if method in ('thread/start','thread/resume','thread/fork'):self.thread_requests[key]=params
         if method in ('turn/start','review/start'):
             self.active=True
             if self.receipts:self.receipts.begin(params['threadId'],params.get('model'))
@@ -218,6 +310,7 @@ class Bridge:
             if not isinstance(identifier,str) or identifier not in self.pending:
                 raise ValueError('unknown provider response')
             frontend_id,request_method=self.pending.pop(identifier)
+            thread_params=self.thread_requests.pop(identifier,{})
             if request_method in ('turn/start','review/start'):
                 if 'error' in message:
                     self.active=False
@@ -228,8 +321,15 @@ class Bridge:
                 if (not isinstance(thread,dict) or not isinstance(thread.get('id'),str) or not thread['id']
                         or result.get('modelProvider')!='openai' or result.get('cwd')!=self.provider.cwd):
                     raise RuntimeError('thread route does not match selected account')
+                requested=thread_params.get('model')
+                if self.sessions:
+                    self.sessions.remember(thread['id'],self.record,self.provider.cwd)
+                    if requested is None and request_method=='thread/fork':requested=self.sessions.model(thread_params['threadId'])
+                    if requested is not None:self.sessions.model(thread['id'],requested)
                 self.threads.add(thread['id'])
-                if self.receipts:self.receipts.thread(thread['id'],result.get('model'),request_method=='thread/start')
+                if self.receipts:
+                    self.receipts.thread(thread['id'],result.get('model'),request_method=='thread/start')
+                    if requested is not None:self.receipts.threads[thread['id']]['requestedModel']=requested
             self.emit(dict(message,id=frontend_id));return
         if not isinstance(method,str):raise ValueError('invalid provider method')
         if self.receipts:self.receipts.observe(method,message.get('params'))
@@ -250,7 +350,7 @@ class Bridge:
         self.active=False
 
 
-def serve(provider,source,sink,receipts=None):
+def serve(provider,source,sink,receipts=None,sessions=None,record=None):
     ingress=queue.Queue(maxsize=128);stopped=threading.Event()
     def read():
         try:
@@ -270,7 +370,7 @@ def serve(provider,source,sink,receipts=None):
         if len(raw)>MAX_BYTES:raise ValueError('response too large')
         sink.write(raw);sink.flush()
     reader=threading.Thread(target=read,daemon=True);reader.start()
-    bridge=Bridge(provider,emit,receipts);waiting=[];eof=False;last_progress=time.monotonic()
+    bridge=Bridge(provider,emit,receipts,sessions,record);waiting=[];eof=False;last_progress=time.monotonic()
     try:
         while True:
             if not provider.messages.empty():
@@ -297,7 +397,7 @@ def serve(provider,source,sink,receipts=None):
         if receipts and receipts.current:receipts.finish(verified=False)
 
 
-def terminal(provider,home,executable,arguments,receipts=None):
+def terminal(provider,home,executable,arguments,receipts=None,sessions=None,record=None):
     # The directory restricts access to this user; there is no TCP listener or
     # bearer credential in command arguments, socket names or filesystem data.
     if any(arg=='--remote' or arg.startswith('--remote=') or arg.startswith('--remote-auth-token-env') for arg in arguments):
@@ -320,7 +420,7 @@ def terminal(provider,home,executable,arguments,receipts=None):
                 except socket.timeout:continue
             listener.close()
             stream=load('n2_private_websocket','fleet-auth-websocket.py').Stream(connection)
-            serve(provider,stream,stream,receipts)
+            serve(provider,stream,stream,receipts,sessions,record)
             stream.close();return process.wait(timeout=5)
         finally:
             signal.signal(signal.SIGINT,previous);listener.close()
@@ -342,16 +442,32 @@ def main():
     signal.signal(signal.SIGTERM,interrupted)
     try:
         broker=client.for_profile(args.root,args.config,args.profile)
+        sessions=Sessions(args.root)
+        arguments=args.frontend_args[1:] if args.frontend_args[:1]==['--'] else args.frontend_args
+        cwd=os.getcwd()
+        if args.tui and any(arg in ('resume','fork') for arg in arguments):
+            if arguments[0] not in ('resume','fork') or (len(arguments)>1 and arguments[1].startswith('-')):
+                raise ValueError('put resume or fork and the session ID before native options')
+        # An explicit native resume selects the original grant before any token
+        # request. It may fail if that grant was revoked, never use a replacement.
+        if args.tui and len(arguments)>=2 and arguments[0] in ('resume','fork') and not arguments[1].startswith('-'):
+            saved=sessions.read(arguments[1])
+            if saved['record']['profileId']!=broker.record['profileId']:
+                raise ValueError('session belongs to another profile')
+            broker=client.OwnerClient(args.root,saved['record'],saved['record']['profileId'],saved['record']['accountHash'])
+            cwd=saved['cwd']
+            if not os.path.isdir(cwd):raise ValueError('session working directory unavailable')
+            os.chdir(cwd)
         journal=runner.load('n2_bridge_journal','usage-store.py').Journal(args.root,broker.recipient)
-        receipts=Receipts(journal,args.profile,broker.record['accountHash'])
-        with tempfile.TemporaryDirectory(prefix='n2-owner-session-') as directory:
-            runner.prepare_home(Path(args.config).resolve(strict=True),Path(directory))
-            with broker.connection(directory,os.getcwd(),time.monotonic()+20,executable=args.executable) as (provider,_):
+        receipts=Receipts(journal,args.profile,broker.record['accountHash'],sessions)
+        try:
+            directory=sessions.home(broker.record,cwd,args.config)
+            with broker.connection(directory,cwd,time.monotonic()+20,executable=args.executable) as (provider,_):
                 if args.tui:
-                    arguments=args.frontend_args[1:] if args.frontend_args[:1]==['--'] else args.frontend_args
-                    return terminal(provider,directory,args.executable,arguments,receipts)
+                    return terminal(provider,directory,args.executable,arguments,receipts,sessions,broker.record)
                 if args.frontend_args:raise ValueError('unexpected app-server arguments')
-                serve(provider,sys.stdin.buffer,sys.stdout.buffer,receipts)
+                serve(provider,sys.stdin.buffer,sys.stdout.buffer,receipts,sessions,broker.record)
+        finally:journal.db.close()
         return 0
     except (Exception,KeyboardInterrupt):
         print('agents: account-bound app-server unavailable',file=sys.stderr);return 1

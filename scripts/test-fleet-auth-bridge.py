@@ -206,6 +206,17 @@ class ReceiptTests(unittest.TestCase):
         self.assertEqual({event['data']['requestedModel'] for event in events},{'model-b'})
         self.assertTrue(all(event['data']['model'] is None for event in events))
 
+    def test_restart_preserves_requested_model_for_quota_recovery(self):
+        sessions=m.Sessions(self.directory);self.receipts.sessions=sessions
+        self.receipts.begin('thread','model-b');self.receipts.acknowledge({'id':'turn'})
+        self.complete(status='failed',error={'codexErrorInfo':'usageLimitExceeded'})
+        self.receipts.finish();self.assertEqual(len(self.journal.active_rejections()),1)
+        self.receipts=m.Receipts(self.journal,'Work','a'*64,m.Sessions(self.directory))
+        self.receipts.thread('thread','model-b',False)
+        self.start('resumed');self.complete('resumed');self.receipts.finish()
+        self.assertEqual(self.journal.active_rejections(),[])
+        self.assertEqual(self.receipts.threads['thread']['requestedModel'],'model-b')
+
     def test_rejected_turn_request_does_not_change_effective_model(self):
         provider=Provider();bridge=m.Bridge(provider,lambda _:None,self.receipts)
         bridge.frontend({'id':1,'method':'initialize'});bridge.threads.add('thread')
@@ -285,6 +296,79 @@ class BridgeIntegrationTests(unittest.TestCase):
         return subprocess.run([str(ROOT/'agents'),'run','Work','--vendor','codex',*args],
             env=dict(os.environ,N2_AGENTS_ROOT=str(self.root)),input=''.join(json.dumps(r)+'\n' for r in requests),
             text=True,capture_output=True,timeout=20)
+    def test_restart_resumes_persisted_history_without_credentials(self):
+        first=self.run_cli([{'id':1,'method':'initialize'},{'id':2,'method':'thread/start'}])
+        self.assertEqual(first.returncode,0,first.stderr)
+        second=self.run_cli([{'id':1,'method':'initialize'},{'id':2,'method':'thread/resume','params':{'threadId':'fixture-thread'}}])
+        self.assertEqual(second.returncode,0,second.stderr)
+        rows=[json.loads(line) for line in second.stdout.splitlines()]
+        self.assertEqual(rows[-1]['result']['thread']['id'],'fixture-thread')
+        trace=[json.loads(line) for line in (self.wire.bin/'trace.jsonl').read_text().splitlines()]
+        homes={r['home'] for r in trace if r['method'] in ('thread/start','thread/resume')}
+        self.assertEqual(len(homes),1)
+        self.assertTrue((Path(next(iter(homes)))/'fixture-history.json').exists())
+        self.assertFalse(list((self.root/'codex-sessions').rglob('auth.json')))
+
+    def test_persisted_binding_rejects_other_account_directory_and_history_override(self):
+        store=m.Sessions(self.root)
+        record=json.loads((self.root/'Work/codex/.n2-owner.json').read_text())
+        store.remember('saved',record,'/project')
+        provider=Provider();out=[];bridge=m.Bridge(provider,out.append,sessions=store,record=record)
+        bridge.frontend({'id':1,'method':'initialize'})
+        bridge.frontend({'id':2,'method':'thread/resume','params':{'threadId':'saved'}})
+        self.assertEqual(provider.sent[-1]['method'],'thread/resume')
+        for changed in (dict(record,accountHash='f'*64),dict(record,ownershipGeneration='00000000-0000-4000-8000-000000000001')):
+            self.assertFalse(store.matches('saved',changed,'/project'))
+            with self.assertRaises(ValueError):store.remember('saved',changed,'/project')
+        self.assertFalse(store.matches('saved',record,'/another'))
+        before=len(provider.sent)
+        for params in ({'threadId':'saved','history':[]},{'threadId':'saved','path':'/other/history'}):
+            bridge.frontend({'id':3,'method':'thread/resume','params':params})
+            self.assertIn('error',out[-1])
+        self.assertEqual(len(provider.sent),before)
+        path=store.thread_path('saved');path.unlink();path.symlink_to(self.root/'Work/codex/.n2-owner.json')
+        with self.assertRaises(OSError):store.read('saved')
+
+    def test_explicit_native_resume_uses_original_grant_after_profile_replacement(self):
+        path=self.root/'Work/codex/.n2-owner.json';record=json.loads(path.read_text())
+        m.Sessions(self.root).remember('saved',record,os.getcwd())
+        path.write_text(json.dumps(dict(record,accountHash='f'*64)))
+        executable=self.wire.bin/'codex';executable.rename(self.wire.bin/'provider')
+        executable.write_bytes((ROOT/'tests/fake-owner-terminal.py').read_bytes());executable.chmod(0o700)
+        result=self.run_cli([],args=('resume','saved','--no-alt-screen'))
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(result.stdout.strip(),'terminal-connected')
+        for args in (('--no-alt-screen','resume','saved'),('resume','--no-alt-screen','saved')):
+            trace=self.wire.bin/'trace.jsonl';before=trace.read_bytes()
+            result=self.run_cli([],args=args)
+            self.assertNotEqual(result.returncode,0)
+            self.assertEqual(trace.read_bytes(),before)
+
+    def test_resume_model_override_replaces_saved_selection_only_after_success(self):
+        sessions=m.Sessions(self.root);record=json.loads((self.root/'Work/codex/.n2-owner.json').read_text())
+        sessions.remember('saved',record,'/project');sessions.model('saved','model-b')
+        for success in (False,True):
+            provider=Provider();bridge=m.Bridge(provider,lambda _:None,sessions=sessions,record=record)
+            bridge.frontend({'id':1,'method':'initialize'})
+            bridge.frontend({'id':2,'method':'thread/resume','params':{'threadId':'saved','model':'model-c'}})
+            self.assertEqual(sessions.model('saved'),'model-b')
+            response={'result':{'thread':{'id':'saved'},'modelProvider':'openai','cwd':'/project','model':'model-c'}} if success else {'error':{'code':-1}}
+            bridge.backend(dict(response,id=provider.sent[-1]['id']))
+            self.assertEqual(sessions.model('saved'),'model-c' if success else 'model-b')
+
+    def test_persistent_home_preserves_history_and_refreshes_selected_configuration(self):
+        store=m.Sessions(self.root);config=self.root/'Work/codex'
+        record=json.loads((config/'.n2-owner.json').read_text())
+        (config/'config.toml').write_text('model="first"')
+        home=Path(store.home(record,'/project',config));(home/'history').write_text('keep')
+        (config/'config.toml').write_text('model="second"')
+        self.assertEqual(store.home(record,'/project',config),str(home))
+        self.assertEqual((home/'history').read_text(),'keep')
+        self.assertEqual((home/'config.toml').read_text(),'model="second"')
+        other=store.home(dict(record,accountHash='f'*64),'/project',config)
+        self.assertNotEqual(str(home),other)
+        self.assertFalse((Path(other)/'history').exists())
+
     def test_actual_frontend_turns_record_tokens_and_share_quota_rejection(self):
         (self.wire.bin/'settings.json').write_text(json.dumps({'allowExternalHome':True,'quotaTurn':3}))
         process=subprocess.Popen([str(ROOT/'agents'),'run','Work','--vendor','codex','app-server'],
