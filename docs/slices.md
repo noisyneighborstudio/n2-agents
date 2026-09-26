@@ -25,5 +25,3 @@ A slice is complete only after these commands pass locally and CI passes on its 
 - Security review and live-provider acceptance remain outstanding in `docs/fleet-readiness.md`.
 
 - Provider lifetime smoke cleanup raised `PermissionError` once at `os.killpg` after the lifetime assertions; the immediate isolated rerun passed. Investigate cleanup process-group lifetime if it recurs; do not suppress permission errors without evidence.
-
-- CI run 36265842431 failed at `scripts/test.sh:724`, the exact eight-quota-turn assertion. The paired PR run 36265845571 passed on the same commit. The failure logs retain no actual count or scenario state. The two-slot fixture may permit a recovered slot to finish both chunks before the other consumes all four rejections; establish that from retained evidence before changing the assertion.

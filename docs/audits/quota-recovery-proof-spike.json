@@ -1,0 +1,23 @@
+{
+  "baseline": {
+    "provenance": "Unmodified loop executable and quota fixture, disposable roots; diagnostic capture, not a relaxed test",
+    "status": "DONE",
+    "quotaCount": 8,
+    "exactEightAssertion": true,
+    "capacityRetryAssertion": true,
+    "remainingCounters": {"worker-quota-Work":"0","worker-quota-Home":"0"},
+    "quotaTurns": [{"slot":"codex|Home","startedAt":"2026-09-26T20:01:29Z","endedAt":"2026-09-26T20:01:29Z"},{"slot":"codex|Work","startedAt":"2026-09-26T20:01:29Z","endedAt":"2026-09-26T20:01:29Z"},{"slot":"codex|Home","startedAt":"2026-09-26T20:01:33Z","endedAt":"2026-09-26T20:01:33Z"},{"slot":"codex|Work","startedAt":"2026-09-26T20:01:33Z","endedAt":"2026-09-26T20:01:33Z"},{"slot":"codex|Home","startedAt":"2026-09-26T20:01:36Z","endedAt":"2026-09-26T20:01:37Z"},{"slot":"codex|Work","startedAt":"2026-09-26T20:01:36Z","endedAt":"2026-09-26T20:01:37Z"},{"slot":"codex|Home","startedAt":"2026-09-26T20:01:40Z","endedAt":"2026-09-26T20:01:41Z"},{"slot":"codex|Work","startedAt":"2026-09-26T20:01:40Z","endedAt":"2026-09-26T20:01:41Z"}],
+    "capacityEvents": [{"at":"2026-09-26T20:01:30Z","detail":"every usable slot is out of quota or cooling down; retrying at 2026-09-26T20:01:31Z","kind":"capacity"},{"at":"2026-09-26T20:01:32Z","detail":"retrying now","kind":"capacity"},{"at":"2026-09-26T20:01:34Z","detail":"every usable slot is out of quota or cooling down; retrying at 2026-09-26T20:01:35Z","kind":"capacity"},{"at":"2026-09-26T20:01:35Z","detail":"retrying now","kind":"capacity"},{"at":"2026-09-26T20:01:38Z","detail":"every usable slot is out of quota or cooling down; retrying at 2026-09-26T20:01:39Z","kind":"capacity"},{"at":"2026-09-26T20:01:39Z","detail":"retrying now","kind":"capacity"},{"at":"2026-09-26T20:01:41Z","detail":"every usable slot is out of quota or cooling down; retrying at 2026-09-26T20:01:43Z","kind":"capacity"},{"at":"2026-09-26T20:01:43Z","detail":"retrying now","kind":"capacity"}]
+  },
+  "slow_journal": {
+    "provenance": "Same loop executable and quota response, disposable roots; CLI usage branch adds 24 million PBKDF2 iterations and records actual journal latency; diagnostic timeout guard extended, no quota changes",
+    "status": "DONE",
+    "quotaCount": 8,
+    "exactEightAssertion": true,
+    "capacityRetryAssertion": false,
+    "remainingCounters": {"worker-quota-Work":"0","worker-quota-Home":"0"},
+    "quotaTurns": [{"slot":"codex|Home","startedAt":"2026-09-26T20:05:52Z","endedAt":"2026-09-26T20:05:53Z"},{"slot":"codex|Work","startedAt":"2026-09-26T20:05:53Z","endedAt":"2026-09-26T20:05:59Z"},{"slot":"codex|Home","startedAt":"2026-09-26T20:06:06Z","endedAt":"2026-09-26T20:06:06Z"},{"slot":"codex|Work","startedAt":"2026-09-26T20:06:06Z","endedAt":"2026-09-26T20:06:13Z"},{"slot":"codex|Home","startedAt":"2026-09-26T20:06:19Z","endedAt":"2026-09-26T20:06:26Z"},{"slot":"codex|Work","startedAt":"2026-09-26T20:06:19Z","endedAt":"2026-09-26T20:06:19Z"},{"slot":"codex|Home","startedAt":"2026-09-26T20:06:32Z","endedAt":"2026-09-26T20:06:39Z"},{"slot":"codex|Work","startedAt":"2026-09-26T20:06:32Z","endedAt":"2026-09-26T20:06:32Z"}],
+    "capacityEvents": [],
+    "journalLatencySeconds": [6.205960875000001,6.238099458,6.127944125,6.126395125,6.117969375,6.159719292,6.117354,6.101097542,6.135881625,6.119116917,6.1122025419999995,6.141441875000001,6.136417958,6.186823334,6.149350458,6.1428625,6.146832208]
+  }
+}

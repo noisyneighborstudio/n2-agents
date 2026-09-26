@@ -642,8 +642,7 @@ done
 loop() { env $loop_env LOOP_FAKE="$loop_fake" "$n2_root/agents" loop "$@" }
 field() { python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$loop_root/runs/$run/state.json" "$1" }
 wait_for() {  # status
-  for _ in {1..300}; do [ "$(field 's["status"]')" = "$1" ] && return 0; sleep 0.2; done
-  echo "loop never reached $1:" >&2; loop status "$run" >&2; cat "$loop_root/runs/$run/controller.log" >&2; return 1
+  python3 scripts/wait-loop-state.py "$loop_root/runs/$run/state.json" "$1"
 }
 # A fresh repository and scenario, planned and approved the way a person would.
 new_loop() {  # scenario files…
@@ -717,13 +716,37 @@ PYTEST
 [ "$(field '{c["lastSlot"] for c in s["plan"]["chunks"]}')" = "{'codex|Work'}" ]
 [ "$(field 'max(c["revisions"] for c in s["plan"]["chunks"])')" = 0 ]
 
-# Every slot running dry waits for the stated reset and carries on by itself —
-# however many quota failures that takes, it never turns into a pause.
-new_loop worker-quota-Home=4 worker-quota-Work=4
+# Repeated recovery has an exact global budget, independent of slot allocation.
+# A short cooldown can expire during journal I/O, so prove WAITING separately.
+quota_proof() {
+  python3 - "$loop_root/runs/$run/state.json" "$loop_fake/worker-quota-total" "$1" "$2" <<'QUOTA'
+import json,sys
+s=json.load(open(sys.argv[1]));remaining=int(open(sys.argv[2]).read())
+quota=[t for t in s['turns'] if t['outcome']=='quota']
+capacity=[e['detail'] for e in s['events'] if e['kind']=='capacity']
+try:
+    assert s['status']=='DONE' and remaining==0
+    assert len(quota)==int(sys.argv[3])
+    assert not any(e['kind']=='paused' for e in s['events'])
+    if sys.argv[4]=='waiting':
+        assert any('out of quota or cooling down; retrying at' in e for e in capacity)
+        assert 'retrying now' in capacity
+    print('quota recovery verified:', len(quota), 'rejections, exhausted budget, DONE,', sys.argv[4])
+except AssertionError:
+    print(json.dumps({'remainingBudget':remaining,'state':s}),file=sys.stderr)
+    raise
+QUOTA
+}
+new_loop worker-quota-total=8
 wait_for DONE
-[ "$(field 'len([t for t in s["turns"] if t["outcome"] == "quota"])')" = 8 ]
-field '[e["detail"] for e in s["events"] if e["kind"] == "capacity"]' | grep -q "out of quota or cooling down; retrying at"
-[ "$(field 'len([e for e in s["events"] if e["kind"] == "paused"])')" = 0 ]
+quota_proof 8 recovery
+
+# Hold both slots long enough to observe WAITING, then let the real controller
+# retry at the stated reset and finish without a user resume or changed clock.
+new_loop worker-quota-total=2 worker-retry-seconds=30
+wait_for WAITING
+wait_for DONE
+quota_proof 2 waiting
 
 # Pause stops running agents at once and keeps their work; resume finishes.
 new_loop slow
