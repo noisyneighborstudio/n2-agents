@@ -225,6 +225,55 @@ sync_write "$1" "$2"
         finally:
             if process.poll() is None:process.kill();process.communicate()
 
+    def uncertain_renewal(self):
+        self.register();first=self.fixture.exchange()
+        (self.fixture.bin/'settings.json').write_text(json.dumps({'mode':'error-after-save'}))
+        self.fixture.context['rejectedTokenGeneration']=first['tokenGeneration']
+        with self.assertRaises(ValueError):self.fixture.exchange(timeout=5)
+        self.assertEqual(self.command('status')['status'],'renewing')
+        return first
+    def test_cli_reconciles_saved_renewal_without_refreshing_again(self):
+        first=self.uncertain_renewal();before=(self.slot/'.n2-owner.json').read_bytes()
+        (self.fixture.bin/'settings.json').write_text('{}')
+        self.assertEqual(self.command('reconcile')['status'],'active')
+        self.assertEqual((self.slot/'.n2-owner.json').read_bytes(),before)
+        replacement=self.fixture.exchange()
+        self.assertEqual(replacement['accessToken'],'rotated-secret')
+        self.assertNotEqual(replacement['tokenGeneration'],first['tokenGeneration'])
+        trace=[json.loads(line) for line in (self.fixture.bin/'trace.jsonl').read_text().splitlines()]
+        self.assertEqual(len([row for row in trace if row['refresh'] is True]),1)
+        self.command('reconcile',success=False)
+    def test_cli_reconciliation_rejects_changed_account(self):
+        self.uncertain_renewal()
+        (self.fixture.bin/'settings.json').write_text(json.dumps({'mode':'wrong-account'}))
+        self.command('reconcile',success=False)
+        self.assertEqual(self.command('status')['status'],'reauth-required')
+        with self.assertRaises(ValueError):self.fixture.exchange()
+    def test_retirement_keeps_public_fence_and_revokes_grant(self):
+        self.register();before=(self.slot/'.n2-owner.json').read_bytes()
+        self.assertEqual(self.command('retire','--grant',self.fixture.grant)['status'],'retired')
+        self.assertEqual(self.command('status')['status'],'retired')
+        self.assertEqual((self.slot/'.n2-owner.json').read_bytes(),before)
+        with self.assertRaises(ValueError):self.fixture.exchange()
+        self.command('retire','--grant',self.fixture.grant)
+        self.command('reconcile',success=False)
+    def test_inventory_reports_pending_grants_without_waiting_or_credentials(self):
+        pending=self.fixture.store.create(self.profile)
+        (self.root/'fleet/auth-owners/.DS_Store').write_text('unrelated local file')
+        with self.fixture.store.locked(pending['grantId'],time.monotonic()+5):
+            rows=self.command('grants')['grants']
+        states={row['grantId']:row['state'] for row in rows}
+        self.assertEqual(states[pending['grantId']],'pending-login')
+        self.assertEqual(states[self.fixture.grant],'active')
+        for row in rows:
+            self.assertEqual(set(row),{'grantId','profileId','owner','accountHash','state'})
+        self.command('retire','--grant',pending['grantId'])
+        import uuid
+        other=self.fixture.store.create(str(uuid.uuid4()))
+        self.command('retire','--grant',other['grantId'],success=False)
+        with self.fixture.store.locked(other['grantId'],time.monotonic()+2) as grant:
+            self.assertEqual(grant.public()['state'],'pending-login')
+
     def test_register_status_and_explicit_revision(self):
         first=self.register()
         self.assertEqual(self.command('status')['status'],'active')

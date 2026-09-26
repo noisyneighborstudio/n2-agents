@@ -473,3 +473,28 @@ required. The device flow follows the official app-server documentation at
 https://learn.chatgpt.com/docs/app-server and was checked against the installed
 Codex-generated LoginAccountParams, LoginAccountResponse and completion schemas.
 The synthetic tests do not establish real account device-code availability.
+
+
+## Owner recovery commands
+
+`agents fleet auth reconcile Profile` is for a designated local grant left in
+`renewing` after an interrupted refresh. It verifies the already-persisted
+credential against the original account and completes that generation. It never
+asks the provider to refresh again. An unchanged or wrong-account credential
+cannot become active through reconciliation. The public profile binding stays
+unchanged, and the command refuses ownership conflicts or a different owner.
+
+`agents fleet auth grants Profile` lists local grant IDs, account hashes and
+states, including pending and abandoned login grants. It reads atomic state
+snapshots without taking the human-login lock and never emits credentials,
+credential digests or token generations. Invalid grant state is reported as
+invalid rather than treated as usable.
+
+`agents fleet auth retire Profile --grant ID` explicitly disables that local
+grant and clears its peer consent. A current profile record remains in place and
+status reports `retired`, so measurement/execution fail rather than fall back to
+legacy credentials. It can also retire an abandoned grant belonging to the same
+profile. This is broker retirement, not provider-side revocation; credentials
+already held by an unmanaged process may remain usable until provider expiry or
+revocation. The command does not delete credential files or claim migration is
+complete.

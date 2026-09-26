@@ -83,8 +83,56 @@ def status(root,name,config):
         with store.locked(record['grantId'],time.monotonic()+2) as grant:
             public=grant.public()
             matches=all(public[k]==record[k] for k in ('profileId','accountHash','ownershipGeneration'))
-            result['status']=public['state'] if matches else 'binding-mismatch'
+            retired=(public['state']=='retired' and all(public[k]==record[k] for k in ('profileId','accountHash')))
+            result['status']=public['state'] if matches or retired else 'binding-mismatch'
     return result
+
+
+def reconcile(root,name,config):
+    root=Path(root).resolve(strict=True)
+    if binding.conflicted(root,name):raise ValueError('resolve ownership conflict first')
+    record,revision=binding.read(config,profile(root,name));me=identity(root)
+    if record['owner']!=me:raise ValueError('reconciliation belongs to the designated owner')
+    store=binding.owner.OwnerStore(root/'fleet/auth-owners',me)
+    with store.locked(record['grantId'],time.monotonic()+20) as grant:
+        public=grant.public()
+        if any(public[key]!=record[key] for key in ('profileId','accountHash','ownershipGeneration')):
+            raise ValueError('owner binding changed')
+        if public['state']!='renewing':raise ValueError('grant has no uncertain renewal to reconcile')
+        server.native.NativeOwner().reconcile(grant)
+    return {'status':'active','binding':record,'revision':revision}
+
+
+def retire(root,name,grant_id):
+    root=Path(root).resolve(strict=True);profile_id=profile(root,name);me=identity(root)
+    store=binding.owner.OwnerStore(root/'fleet/auth-owners',me)
+    with store.locked(grant_id,time.monotonic()+5) as grant:
+        if grant.public()['profileId']!=profile_id:raise ValueError('grant belongs to another profile')
+        grant.retire()
+    return {'status':'retired','grantId':grant_id}
+
+
+def inventory(root,name):
+    root=Path(root).resolve(strict=True);profile_id=profile(root,name);me=identity(root)
+    directory=root/'fleet/auth-owners';rows=[]
+    if not directory.exists():return {'grants':rows}
+    binding.owner.private_directory(directory)
+    # Atomic private state snapshots are sufficient for diagnostics. Acquiring
+    # the grant lock here would hide pending logins until human sign-in ends.
+    for entry in sorted(directory.iterdir()):
+        try:
+            if not binding.owner.uuid_value(entry.name):continue
+        except (ValueError,TypeError,AttributeError):continue
+        try:
+            binding.owner.private_directory(entry)
+            state=json.loads(binding.owner.private_file(entry/'state.json',128*1024),object_pairs_hook=binding.owner.unique)
+            binding.owner.validate(state)
+            if state['grantId']!=entry.name or state['owner']!=me:raise ValueError('invalid owner state')
+            if state['profileId']!=profile_id:continue
+            rows.append({key:state[key] for key in ('grantId','profileId','owner','accountHash','state')})
+        except (OSError,ValueError,TypeError):
+            rows.append({'grantId':entry.name,'state':'invalid'})
+    return {'grants':rows}
 
 
 def login(root,name,config,expected_revision=None,replace_account=False,timeout=600):
@@ -153,7 +201,7 @@ def validate_incoming(root,name,config,payload):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action',choices=('register','status','allow','deny','login','validate-incoming'))
+    parser.add_argument('action',choices=('register','status','allow','deny','login','reconcile','retire','grants','validate-incoming'))
     parser.add_argument('root');parser.add_argument('profile');parser.add_argument('config')
     parser.add_argument('--replace-account',action='store_true');parser.add_argument('--timeout',type=float,default=600)
     parser.add_argument('--expected-config');parser.add_argument('--payload');parser.add_argument('--grant');parser.add_argument('--peer');parser.add_argument('--expected-revision')
@@ -174,6 +222,12 @@ def main():
         elif args.action=='register':
             if not args.grant or args.peer:raise ValueError('register requires grant')
             result=register(args.root,args.profile,args.config,args.grant,args.expected_revision)
+        elif args.action in ('reconcile','grants'):
+            if args.grant or args.peer or args.expected_revision:raise ValueError('invalid recovery options')
+            result=reconcile(args.root,args.profile,args.config) if args.action=='reconcile' else inventory(args.root,args.profile)
+        elif args.action=='retire':
+            if not args.grant or args.peer or args.expected_revision:raise ValueError('retire requires grant ID')
+            result=retire(args.root,args.profile,args.grant)
         elif args.action=='status':
             if args.grant or args.peer or args.expected_revision:raise ValueError('invalid status options')
             result=status(args.root,args.profile,args.config)

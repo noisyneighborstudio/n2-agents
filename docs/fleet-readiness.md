@@ -695,3 +695,21 @@ The final ad-hoc QA package passes all 42 native-owner, registration/login and
 client tests against staged packaged resources with private fixture HOME roots.
 The QA selector is omitted from staging; helper byte parity is verified. The app
 is not installed, and the tests use synthetic providers rather than live grants.
+
+
+### Local owner recovery and retirement
+
+`agents fleet auth reconcile Profile` verifies a saved uncertain renewal without
+issuing another refresh. `grants Profile` reports pending/abandoned local grants
+without waiting for an active login lock or exposing credentials. `retire Profile
+--grant ID` disables an explicit grant belonging to that profile, clears consent,
+and preserves the public owner fence. Status recognizes broker retirement.
+Retirement does not claim provider revocation or removal of historical copies.
+
+All 19 registration/login/recovery tests pass from source and staged packaged
+helpers, including saved-result recovery, wrong-account rejection, retired token
+refusal, pending inventory, unrelated-file tolerance and wrong-profile refusal.
+The ad-hoc QA package and helper parity pass; no app is installed. Correctness
+review is clear. The independent security-review gate remains outstanding from
+the prior automatic approval rejection. Remote orchestration, migration, broader
+execution routing and full fleet/provider acceptance remain required.
