@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "cfdc596a05ec55f3d8f08ce3c47d47f328bd5910",
+  "nativeVersion": "codex-cli 0.157.1",
+  "networkIsolation": "denied by sandbox-exec",
+  "realCredentialsUsed": false,
+  "providerRequestsDelivered": 0,
+  "emptyDestination": {
+    "resume": "rejected",
+    "errorCode": -32600,
+    "reason": "no rollout found"
+  },
+  "rolloutOnlyTransfer": {
+    "copiedArtifacts": [
+      "sessions/2026/09/26/rollout-2026-09-26T17-39-29-01a0dfa8-b01e-7982-904d-dee6d5d1f434.jsonl"
+    ],
+    "sourceContainsUserTurn": true,
+    "resumeSucceeded": true,
+    "sameThread": true,
+    "runtimeCwdRemapped": true,
+    "resumedHistoryContainsUserTurn": true,
+    "readHistoryContainsUserTurn": true,
+    "authFileCreated": false
+  },
+  "sourceTurn": "aborted by experiment teardown after 20-second observation timeout",
+  "recordTypes": [
+    [
+      "session_meta",
+      null
+    ],
+    [
+      "event_msg",
+      "task_started"
+    ],
+    [
+      "response_item",
+      "message"
+    ],
+    [
+      "response_item",
+      "message"
+    ],
+    [
+      "world_state",
+      null
+    ],
+    [
+      "turn_context",
+      null
+    ],
+    [
+      "response_item",
+      "message"
+    ],
+    [
+      "event_msg",
+      "item_completed"
+    ],
+    [
+      "response_item",
+      "message"
+    ],
+    [
+      "event_msg",
+      "turn_aborted"
+    ]
+  ],
+  "excludedFromTransfer": [
+    "auth.json",
+    "provider databases and WAL files",
+    "installation identity",
+    "logs",
+    "skills",
+    "configuration"
+  ],
+  "limits": [
+    "one interrupted synthetic user turn",
+    "same installed version on both homes",
+    "no live model continuation",
+    "no N2 transport or destination binding implementation"
+  ]
+}
