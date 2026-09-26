@@ -1581,12 +1581,16 @@ fleet_route() {  # fleet_route <peerid> <transport> <address> <port> <user> <hom
 fleet_auth_manage() (
   set +e
   action=${1:-}; name=${2:-}
-  case $action in register|status|allow|deny) ;; *) fleet_die "usage: agents fleet auth <register|status|allow|deny> Profile [--grant ID|--peer ID]" ;; esac
+  case $action in register|status|allow|deny|login) ;; *) fleet_die "usage: agents fleet auth <register|status|allow|deny|login> Profile [--grant ID|--peer ID]" ;; esac
   [ -n "$name" ] || fleet_die "an auth profile is required"
   shift 2
   name=$(resolve_profile "$name") || fleet_die "unknown profile"
   cfg=$(config_dir "$name" codex) || return 1
   [ -d "$cfg" ] || fleet_die "profile has no Codex slot"
+  if [ "$action" = login ]; then
+    /usr/bin/python3 "$scripts_dir/fleet-auth-manage.py" login "$root" "$name" "$cfg" "$@"
+    return $?
+  fi
   sync_need
   metadata_address=$(sync_addr profile "$name" '-' "$SYNC_PROFILE_REL")
   binding_address=$(sync_addr settings "$name" codex .n2-owner.json)
@@ -1629,7 +1633,7 @@ agents fleet <verb>
   tools <verb>                             fleet-managed utilities (tools help)
   task <verb>                              dispatch, handoff and task lifecycle (task help)
   send <peerid> --verb <v> [--payload-file <f>]   raw signed request
-  auth <register|status|allow|deny> Profile  owner binding and explicit peer consent
+  auth <register|status|allow|deny|login> Profile  owner binding and explicit peer consent
   serve                                    stdio responder (the remote end)
   help                                     this list
 EOF

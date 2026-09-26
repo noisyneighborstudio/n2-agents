@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import signal
 import time
 import unittest
 
@@ -136,6 +137,93 @@ sync_write "$1" "$2"
         finally:
             if process.poll() is None:process.kill();process.communicate()
             if lock.exists():(lock/'pid').unlink();lock.rmdir()
+
+    def login_command(self,*args):
+        return subprocess.run([str(ROOT/'agents'),'fleet','auth','login','Work',*args],
+            env=dict(os.environ,N2_AGENTS_ROOT=str(self.root)),capture_output=True,text=True,timeout=20)
+    def test_cli_fresh_login_publishes_verified_grant(self):
+        result=self.login_command('--timeout','5')
+        self.assertEqual(result.returncode,0,result.stderr)
+        challenge,registered=[json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual(challenge['status'],'login-required')
+        self.assertEqual(registered['status'],'registered')
+        self.assertEqual(challenge['grantId'],registered['binding']['grantId'])
+        self.assertEqual(self.command('status')['status'],'active')
+        self.assertFalse((self.slot/'auth.json').exists())
+        self.assertNotIn('original-secret',result.stdout+result.stderr)
+    def test_cli_login_replacement_preserves_old_grant_and_requires_explicit_account_change(self):
+        old=self.register();old_bytes=(self.slot/'.n2-owner.json').read_bytes()
+        self.assertNotEqual(self.login_command('--timeout','5').returncode,0)
+        (self.fixture.bin/'settings.json').write_text(json.dumps({'mode':'login-other-account'}))
+        failed=self.login_command('--timeout','5','--expected-revision',old['revision'])
+        self.assertNotEqual(failed.returncode,0)
+        self.assertEqual((self.slot/'.n2-owner.json').read_bytes(),old_bytes)
+        replaced=self.login_command('--timeout','5','--expected-revision',old['revision'],'--replace-account')
+        self.assertEqual(replaced.returncode,0,replaced.stderr)
+        new=json.loads(replaced.stdout.splitlines()[-1])['binding']
+        self.assertNotEqual(new['accountHash'],old['binding']['accountHash'])
+        self.assertNotEqual(new['grantId'],old['binding']['grantId'])
+        with self.fixture.store.locked(self.fixture.grant,time.monotonic()+2) as grant:
+            self.assertEqual(grant.public()['state'],'active')
+            self.assertEqual(grant.public()['accountHash'],old['binding']['accountHash'])
+    def test_login_does_not_take_over_a_remote_owner(self):
+        old=self.register();record=old['binding']
+        record['owner']=self.fixture.identities['client']
+        marker=self.slot/'.n2-owner.json';marker.write_text(json.dumps(record));marker.chmod(0o600)
+        revision=hashlib.sha256(marker.read_bytes()).hexdigest()
+        result=self.login_command('--expected-revision',revision,'--timeout','5')
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual(result.stdout,'')
+        self.assertEqual(json.loads(marker.read_text()),record)
+
+    def cancel_waiting_publication(self,cancel_signal):
+        gate='settings|Work|codex|.n2-owner-gate'
+        lock=self.root/'fleet/sync/res.lock'/hashlib.sha256(gate.encode()).hexdigest()
+        lock.mkdir(parents=True);(lock/'pid').write_text(str(os.getpid()))
+        process=subprocess.Popen(
+            [os.sys.executable,str(ROOT/'fleet-auth-manage.py'),'login',str(self.root),'Work',str(self.slot),'--timeout','5'],
+            env=dict(os.environ,N2_AGENTS_ROOT=str(self.root)),stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+            event=json.loads(process.stdout.readline());grant_id=event['grantId']
+            deadline=time.monotonic()+5
+            state=self.root/'fleet/auth-owners'/grant_id/'state.json'
+            while time.monotonic()<deadline:
+                if json.loads(state.read_text())['state']=='active':break
+                time.sleep(.02)
+            self.assertEqual(json.loads(state.read_text())['state'],'active')
+            # Registration holds its record lock before waiting on the gate.
+            record_lock=self.root/'fleet/sync/res.lock'/hashlib.sha256(b'settings|Work|codex|.n2-owner.json').hexdigest()
+            while not record_lock.exists() and time.monotonic()<deadline:time.sleep(.02)
+            self.assertTrue(record_lock.exists())
+            process.send_signal(cancel_signal);process.communicate(timeout=5)
+            self.assertEqual(process.returncode,130)
+            (lock/'pid').unlink();lock.rmdir()
+            time.sleep(.3)
+            self.assertFalse((self.slot/'.n2-owner.json').exists())
+        finally:
+            if process.poll() is None:process.kill();process.communicate()
+            if lock.exists():(lock/'pid').unlink();lock.rmdir()
+
+    def test_cancelling_waiting_publication_leaves_no_orphan_writer(self):
+        self.cancel_waiting_publication(signal.SIGINT)
+
+    def test_terminating_waiting_publication_leaves_no_orphan_writer(self):
+        self.cancel_waiting_publication(signal.SIGTERM)
+
+    def test_late_login_cannot_overwrite_changed_profile_identity(self):
+        (self.fixture.bin/'settings.json').write_text(json.dumps({'loginDelay':.5}))
+        process=subprocess.Popen([str(ROOT/'agents'),'fleet','auth','login','Work','--timeout','5'],
+            env=dict(os.environ,N2_AGENTS_ROOT=str(self.root)),stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+            event=json.loads(process.stdout.readline())
+            self.assertEqual(event['status'],'login-required')
+            import uuid
+            (self.slot.parent/'.n2-profile').write_text(json.dumps({'schemaVersion':1,'profileId':str(uuid.uuid4())}))
+            process.communicate(timeout=10)
+            self.assertNotEqual(process.returncode,0)
+            self.assertFalse((self.slot/'.n2-owner.json').exists())
+        finally:
+            if process.poll() is None:process.kill();process.communicate()
 
     def test_register_status_and_explicit_revision(self):
         first=self.register()

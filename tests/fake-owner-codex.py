@@ -25,6 +25,27 @@ for line in sys.stdin:
     result = {}
     if method == 'config/read':
         result = {'config': {'model_provider': 'other'} if managed and mode == 'wrong-provider' else {}}
+    elif method == 'account/login/cancel':
+        assert managed
+        result={'status':'canceled'}
+    elif method == 'account/login/start' and managed:
+        assert request['params']=={'type':'chatgptDeviceCode'}
+        assert not (home/'auth.json').exists()
+        login_id='00000000-0000-4000-8000-000000000001'
+        result={'type':'chatgptDeviceCode','loginId':login_id,
+                'verificationUrl':'https://auth.openai.com/codex/device','userCode':'TEST-1234'}
+        if mode=='login-bad-url':result['verificationUrl']='https://other.invalid/device'
+        print(json.dumps({'id':request['id'],'result':result}),flush=True)
+        if mode in ('login-cancel','login-timeout','login-bad-url'):continue
+        if settings.get('loginDelay'):time.sleep(settings['loginDelay'])
+        path=home/'auth.json'
+        path.write_text(json.dumps({'tokens':{'access_token':'original-secret','account_id':'workspace'}}))
+        path.chmod(0o600)
+        params={'loginId':login_id,'success':True,'error':None}
+        if mode=='login-wrong-id':params['loginId']='00000000-0000-4000-8000-000000000002'
+        if mode=='login-error':params.update(success=False,error='sensitive-provider-diagnostic')
+        print(json.dumps({'method':'account/login/completed','params':params}),flush=True)
+        continue
     elif method == 'account/login/start':
         assert not managed
         token = request['params']['accessToken']
@@ -46,7 +67,7 @@ for line in sys.stdin:
             if mode == 'error-after-save':
                 print(json.dumps({'id': request['id'], 'error': {'message': 'sensitive-provider-diagnostic'}}), flush=True)
                 continue
-        result = {'account': {'type': 'chatgpt', 'email': 'other@example.invalid' if token == 'rotated-secret' and mode == 'wrong-account' else 'fixture@example.invalid'},
+        result = {'account': {'type': 'chatgpt', 'email': 'other@example.invalid' if (token == 'rotated-secret' and mode == 'wrong-account') or mode == 'login-other-account' else 'fixture@example.invalid'},
                   'workspaceRouting': {'chatgptAccountId': 'workspace', 'backendOrigin': 'https://chatgpt.com'}}
     elif method == 'account/rateLimits/read':
         if settings.get('rejectInitial') and (token == 'original-secret' or settings.get('rejectEveryToken')):

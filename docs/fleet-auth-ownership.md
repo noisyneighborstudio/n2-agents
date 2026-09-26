@@ -448,3 +448,28 @@ Configuration revisions now cover the public record under
 This registration path expects an already-verified grant. Fresh login/reset,
 historical credential inventory, offline-peer migration, keychain capture,
 retirement/recovery and general CLI integration remain unfinished.
+
+
+## Fresh login on the owner
+
+`agents fleet auth login Profile` starts a new Codex device-code login in a new
+private owner grant. The JSON challenge contains the provider verification URL,
+user code and login ID. Complete that challenge in a browser; the command waits
+up to ten minutes by default, with `--timeout SECONDS` bounded to 1–900 seconds.
+Provider completion must match the login ID. The persisted credential is then
+independently authenticated before publication.
+
+An existing owner record requires its current `--expected-revision`. Replacement
+preserves the expected account unless `--replace-account` explicitly permits a
+different account. The old grant remains separate for already-bound sessions;
+new grants initially permit only the owner, so peers need explicit consent.
+Profile/route changes during login cause publication to fail instead of replacing
+newer intent. The verified private grant is retained for recovery if publication
+fails. Pending or failed logins are not usable grants.
+
+The command currently runs on the designated owner and refuses an implicit
+remote-owner takeover. Non-owner initiation and status/cancel transport remain
+required. The device flow follows the official app-server documentation at
+https://learn.chatgpt.com/docs/app-server and was checked against the installed
+Codex-generated LoginAccountParams, LoginAccountResponse and completion schemas.
+The synthetic tests do not establish real account device-code availability.

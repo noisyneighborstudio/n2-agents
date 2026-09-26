@@ -665,3 +665,33 @@ conflict gaps; both are fixed and regression-tested.
 The broad sync regression completed with 639 passing checks across all 75
 sections. That run began before the final staged-conflict guard was added;
 focused source and packaged tests verify that final guard and its consumers.
+
+
+### Fresh local owner login
+
+The local `agents fleet auth login` path now creates an empty private grant,
+shows the native device-code challenge, correlates completion, independently
+verifies the saved account, and publishes through normal registration locks and
+revision checks. Replacement requires the old revision and retains the old
+account unless `--replace-account` explicitly permits changing it. Existing
+grants remain separate for bound sessions. A remote-owner binding is refused
+rather than taken over locally. No shared profile credential file is imported.
+
+Twelve native-owner tests and fifteen registration/login tests cover successful
+login, bad challenge/completion, timeout/cancellation, changed-account refusal,
+explicit replacement, profile changes during login and remote-owner refusal.
+Fifteen client regressions still pass. A correctness review found orphan
+publication after cancellation; process-group cleanup and SIGINT/SIGTERM
+regressions fix it, and the reviewer independently reproduced the successful fix.
+The separate security review remains outstanding: automatic approval review
+rejected that reviewer's read-only checkout access as outside its recognized
+scope, even after the active goal and PR checkout mapping were supplied.
+
+Non-owner challenge/status/cancel transport, lifecycle repair, migration and live
+provider acceptance remain required. Failed publication retains the verified
+private grant for explicit recovery; it does not overwrite newer profile intent.
+
+The final ad-hoc QA package passes all 42 native-owner, registration/login and
+client tests against staged packaged resources with private fixture HOME roots.
+The QA selector is omitted from staging; helper byte parity is verified. The app
+is not installed, and the tests use synthetic providers rather than live grants.

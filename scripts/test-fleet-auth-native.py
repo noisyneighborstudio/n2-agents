@@ -45,6 +45,44 @@ class NativeTests(unittest.TestCase):
     def trace(self): return [json.loads(line) for line in (self.base/'trace.jsonl').read_text().splitlines()]
     def refreshes(self): return [r for r in self.trace() if r['refresh'] is True]
 
+    def test_fresh_device_login_verifies_persisted_account(self):
+        with self.lock() as grant:(grant.provider_home/'auth.json').unlink()
+        challenges=[]
+        with self.lock() as grant:
+            result=self.native.login(grant,challenges.append)
+            self.assertEqual(result['state'],'active')
+            self.assertEqual(result['accountHash'],ACCOUNT)
+        self.assertEqual(challenges[0]['userCode'],'TEST-1234')
+        self.assertNotIn('secret',json.dumps(challenges))
+    def test_device_login_rejects_wrong_completion_url_and_error(self):
+        for mode in ('login-wrong-id','login-error','login-bad-url'):
+            with self.subTest(mode=mode):
+                self.record=self.store.create(str(uuid.uuid4()),ACCOUNT);self.mode(mode)
+                with self.lock() as grant:
+                    with self.assertRaisesRegex(RuntimeError,'^owner login failed$'):
+                        self.native.login(grant,lambda challenge:None)
+                    self.assertEqual(grant.public()['state'],'pending-login')
+    def test_device_login_timeout_leaves_no_usable_grant(self):
+        with self.lock() as grant:(grant.provider_home/'auth.json').unlink()
+        self.mode('login-timeout')
+        started=time.monotonic()
+        with self.lock(.3) as grant:
+            with self.assertRaisesRegex(RuntimeError,'^owner login failed$'):
+                self.native.login(grant,lambda challenge:None)
+        self.assertLess(time.monotonic()-started,2)
+        with self.lock() as grant:
+            self.assertEqual(grant.public()['state'],'pending-login')
+            with self.assertRaises(ValueError):grant.token()
+
+    def test_device_login_callback_cancellation_cancels_provider(self):
+        with self.lock() as grant:(grant.provider_home/'auth.json').unlink()
+        self.mode('login-cancel')
+        def cancel(challenge):raise KeyboardInterrupt()
+        with self.lock() as grant:
+            with self.assertRaises(KeyboardInterrupt):self.native.login(grant,cancel)
+            self.assertEqual(grant.public()['state'],'pending-login')
+        self.assertEqual(len([r for r in self.trace() if r['method']=='account/login/cancel']),1)
+
     def test_activation_renewal_and_stale_request_use_native_verified_account(self):
         with patch.dict(os.environ,{key:'must-not-inherit' for key in ('OPENAI_API_KEY','CODEX_API_KEY','CODEX_ACCESS_TOKEN','OPENAI_BASE_URL','HTTPS_PROXY')}):
             self.activate()

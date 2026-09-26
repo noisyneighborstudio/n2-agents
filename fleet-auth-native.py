@@ -8,6 +8,9 @@ import importlib.util
 import os
 from pathlib import Path
 import tempfile
+import re
+import time
+import uuid
 
 ROOT = Path(__file__).resolve().parent
 
@@ -75,6 +78,58 @@ class NativeOwner:
             return grant.activate(*self._verify(grant))
         except Exception:
             raise RuntimeError('owner activation failed') from None
+
+    def login(self, grant, on_challenge):
+        """Fresh managed device login; the caller owns cancellation and publishing."""
+        login_id=None
+        try:
+            if grant.public()['state']!='pending-login' or os.path.lexists(grant.provider_home/'auth.json'):
+                raise ValueError('login requires an empty pending grant')
+            home=str(grant.provider_home)
+            with rpc.CodexRPC(home,home,executable=self.executable,managed_file_auth=True,
+                              environment=environment(home),lifetime_lock_fd=grant.lifetime_lock_fd,
+                              lifetime_deadline=grant.deadline) as client:
+                try:
+                    client.initialize(deadline=grant.deadline)
+                    if client._subscription_provider(grant.deadline)!='openai':
+                        raise ValueError('unsupported login provider')
+                    early=[]
+                    def remember(message):
+                        if message.get('method')=='account/login/completed':
+                            if len(early)>=4:raise ValueError('unexpected login completions')
+                            early.append(message)
+                    challenge=client.call('account/login/start',{'type':'chatgptDeviceCode'},
+                                          deadline=grant.deadline,on_notification=remember)
+                    candidate=challenge.get('loginId')
+                    if isinstance(candidate,str) and str(uuid.UUID(candidate))==candidate:
+                        login_id=candidate
+                    if (login_id is None or challenge.get('type')!='chatgptDeviceCode'
+                            or challenge.get('verificationUrl')!='https://auth.openai.com/codex/device'
+                            or not isinstance(challenge.get('userCode'),str)
+                            or not re.fullmatch('[A-Z0-9-]{4,32}',challenge['userCode'])):
+                        raise ValueError('invalid device challenge')
+                    # Emit only documented user-facing fields. Never forward
+                    # provider diagnostics or arbitrary extra response fields.
+                    on_challenge({key:challenge[key] for key in ('type','loginId','verificationUrl','userCode')})
+                    while True:
+                        message=early.pop(0) if early else client.receive(grant.deadline)
+                        if 'id' in message:raise ValueError('unexpected login request')
+                        if message.get('method')!='account/login/completed':continue
+                        params=message.get('params')
+                        if (not isinstance(params,dict) or params.get('loginId')!=login_id
+                                or params.get('success') is not True or params.get('error') is not None):
+                            raise ValueError('login did not complete successfully')
+                        login_id=None
+                        break
+                finally:
+                    if login_id is not None:
+                        try:
+                            client.call('account/login/cancel',{'loginId':login_id},
+                                        deadline=min(grant.deadline,time.monotonic()+1))
+                        except Exception:pass
+            return self.activate(grant)
+        except Exception:
+            raise RuntimeError('owner login failed') from None
 
     def reconcile(self, grant):
         """Verify already-persisted results only. Never repeat native refresh."""

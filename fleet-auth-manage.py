@@ -3,6 +3,10 @@
 import argparse
 import importlib.util
 import json
+import os
+import math
+import subprocess
+import signal
 from pathlib import Path
 import sys
 import time
@@ -83,6 +87,53 @@ def status(root,name,config):
     return result
 
 
+def login(root,name,config,expected_revision=None,replace_account=False,timeout=600):
+    root=Path(root).resolve(strict=True);config=Path(config).resolve(strict=True)
+    profile_id=profile(root,name)
+    if binding.conflicted(root,name):raise ValueError('resolve ownership conflict first')
+    binding.controlled_directory(config)
+    for file in ('auth.json','.credentials.json','oauth_creds.json','credentials.json'):
+        if os.path.lexists(config/file):raise ValueError('legacy credentials require migration')
+    if type(timeout) not in (int,float) or not math.isfinite(timeout) or not 1<=timeout<=900:
+        raise ValueError('invalid login deadline')
+    me=identity(root);expected_account=None
+    if os.path.lexists(config/binding.MARKER):
+        previous,revision=binding.read(config,profile_id)
+        if previous['owner']!=me:raise ValueError('login must run at the existing owner')
+        if expected_revision!=revision:raise ValueError('replacement requires current revision')
+        if not replace_account:expected_account=previous['accountHash']
+    elif expected_revision is not None or replace_account:
+        raise ValueError('replacement requires existing binding')
+    store=binding.owner.OwnerStore(root/'fleet/auth-owners',me)
+    created=store.create(profile_id,expected_account);grant_id=created['grantId']
+    def challenge(value):
+        print(json.dumps({'status':'login-required','grantId':grant_id,'owner':me,'challenge':value},
+                         sort_keys=True,separators=(',',':')),flush=True)
+    with store.locked(grant_id,time.monotonic()+timeout) as grant:
+        server.native.NativeOwner().login(grant,challenge)
+    # Human interaction holds only the fresh grant lock. Publication acquires
+    # the normal metadata/resource/slot locks and compares the original intent.
+    command=[str(ROOT/'agents'),'fleet','auth','register',name,'--grant',grant_id,
+             '--expected-config',str(config)]
+    if expected_revision is not None:command.extend(['--expected-revision',expected_revision])
+    process=subprocess.Popen(command,env=dict(os.environ,N2_AGENTS_ROOT=str(root)),
+                             stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,start_new_session=True)
+    try:
+        output,_=process.communicate(timeout=75)
+        if process.returncode!=0:raise ValueError('login verified but binding changed before publication')
+    finally:
+        # The shell may be waiting on a slot gate through descendants. Cancel
+        # the entire group before acknowledging interruption; no delayed write
+        # may survive the command. A completed publication is not rolled back.
+        try:os.killpg(process.pid,signal.SIGKILL)
+        except ProcessLookupError:pass
+        process.wait(timeout=3)
+        if process.stdout is not None:process.stdout.close()
+    value=json.loads(output)
+    if value.get('binding',{}).get('grantId')!=grant_id:raise ValueError('unexpected registration response')
+    return value
+
+
 def validate_incoming(root,name,config,payload):
     """Called under the resource and slot locks; no grant or credential import."""
     profile_id=profile(Path(root),name)
@@ -102,12 +153,21 @@ def validate_incoming(root,name,config,payload):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action',choices=('register','status','allow','deny','validate-incoming'))
+    parser.add_argument('action',choices=('register','status','allow','deny','login','validate-incoming'))
     parser.add_argument('root');parser.add_argument('profile');parser.add_argument('config')
-    parser.add_argument('--payload');parser.add_argument('--grant');parser.add_argument('--peer');parser.add_argument('--expected-revision')
+    parser.add_argument('--replace-account',action='store_true');parser.add_argument('--timeout',type=float,default=600)
+    parser.add_argument('--expected-config');parser.add_argument('--payload');parser.add_argument('--grant');parser.add_argument('--peer');parser.add_argument('--expected-revision')
     args=parser.parse_args()
     try:
-        if args.action=='validate-incoming':
+        if args.expected_config is not None and (args.action!='register' or str(Path(args.config).resolve(strict=True))!=args.expected_config):
+            raise ValueError('profile route changed')
+        if args.action!='login' and (args.replace_account or args.timeout!=600):raise ValueError('invalid login options')
+        if args.action=='login':
+            def interrupted(signum,frame):raise KeyboardInterrupt()
+            signal.signal(signal.SIGTERM,interrupted)
+            if args.grant or args.peer or args.payload:raise ValueError('invalid login options')
+            result=login(args.root,args.profile,args.config,args.expected_revision,args.replace_account,args.timeout)
+        elif args.action=='validate-incoming':
             if not args.payload or args.grant or args.peer or args.expected_revision:raise ValueError('invalid payload options')
             result=validate_incoming(args.root,args.profile,args.config,args.payload)
         elif args.payload:raise ValueError('unexpected payload')
@@ -122,6 +182,9 @@ def main():
             result=consent(args.root,args.profile,args.config,args.peer,args.action=='allow')
         print(json.dumps(result,sort_keys=True,separators=(',',':')))
         return 0
+    except KeyboardInterrupt:
+        print('agents: owner login interrupted; inspect profile status before retrying',file=sys.stderr)
+        return 130
     except Exception:
         print('agents: owner registration unavailable; check profile identity, grant state, migration and conflicts',file=sys.stderr)
         return 1
