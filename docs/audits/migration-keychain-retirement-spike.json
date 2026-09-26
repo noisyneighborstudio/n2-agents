@@ -1,0 +1,145 @@
+{
+  "observedAt": "2026-09-26",
+  "providerVersion": "codex-cli 0.157.1",
+  "sourceRepository": "https://github.com/openai/codex",
+  "sourceRevision": "36650394c5b38c2990ccf2a3457165ca3e9d9726",
+  "scope": "Pinned upstream method bodies executed in a disposable Rust crate, not the full CLI. In-memory fake keyring; injected revocation failure; no OS Keychain backend or provider HTTP client.",
+  "substitutions": [
+    "AuthDotJson represented by serde_json::Value; auth schema/validation not tested",
+    "storage enums reproduced without configuration loading",
+    "KeyringStore interface implemented by in-memory fake",
+    "revocation function replaced by immediate synthetic failure",
+    "Secrets backend replaced by a panic guard; no Secrets case executed"
+  ],
+  "unverified": [
+    "real OS Keychain access and persistence",
+    "encrypted Secrets backend",
+    "effective config and administrator policy resolution",
+    "provider token revocation and validity of copied grants",
+    "other running processes holding credentials",
+    "installed binary provenance beyond matching reported release version"
+  ],
+  "sources": [
+    {
+      "path": "codex-rs/login/src/auth/storage.rs",
+      "sha256": "2e95a8998687e926675d41b5d941c3c3546a652c03d9680e6c7385e59bf459af"
+    },
+    {
+      "path": "codex-rs/login/src/auth/manager.rs",
+      "sha256": "01cb49b1cca566dddc47def60b52848da0717c7de6a33d8b7160b6fc4cafd881"
+    },
+    {
+      "path": "codex-rs/login/src/auth/revoke.rs",
+      "sha256": "db4490daaeb89bf781d05ceeeb53f2291e4729caea2b62a635d61c98e305223e"
+    },
+    {
+      "path": "codex-rs/config/src/types.rs",
+      "sha256": "6950ac6af54f2efb8572610c9caf674b8a5865d3d66e0c53387615318e81a57f"
+    },
+    {
+      "path": "codex-rs/cli/src/login.rs",
+      "sha256": "34f8a089a6907d9791e4bb858f44fdee56350b9898daad45c2065325f9e6bef7"
+    },
+    {
+      "path": "codex-rs/core/src/config/auth_keyring.rs",
+      "sha256": "520a3f2232207ece119fdc296640030a7acfd3909ba14f40d938b6d9fb4180f4"
+    }
+  ],
+  "extractedMethodGroups": [
+    {
+      "sha256": "88decbe1daeeb9e7527982ce6435c01d584cb8ceaaf64dab59d28c490203b35e",
+      "lines": 76,
+      "label": "file-storage methods"
+    },
+    {
+      "sha256": "45bad8202c360ea2dd3cad0efc00dd1703b4503a9e318c8d58001d57e8d44774",
+      "lines": 90,
+      "label": "direct-keyring methods and home-key derivation"
+    },
+    {
+      "sha256": "19056b94809b542a5abdb917b3262a701819ed1b71dcd591880348c6dab8fad4",
+      "lines": 138,
+      "label": "auto/ephemeral storage and factories"
+    },
+    {
+      "sha256": "23e47d7ae325635a21676a822f113809692caf4c1d3a1775ea21cc9ee34a39c0",
+      "lines": 12,
+      "label": "logout"
+    },
+    {
+      "sha256": "5016fa467c291d0710e847441294a4e7c95499e955874d3c77f40b2c434dd8fc",
+      "lines": 26,
+      "label": "logout_with_revoke"
+    },
+    {
+      "sha256": "1a5886f58810a7b62b1811ad25c74d4527be64daf47cfba630566caedf5b43ee",
+      "lines": 12,
+      "label": "load_auth_dot_json"
+    },
+    {
+      "sha256": "519d6a6835c26478b68b9fe08c2a4a26188e140344fdeee60d7ade80e5ebf23f",
+      "lines": 24,
+      "label": "logout_all_stores"
+    }
+  ],
+  "observations": [
+    {
+      "case": "logout-File",
+      "fileRemaining": false,
+      "keyringRemaining": true,
+      "memoryRemaining": false,
+      "otherHomeCopyRemaining": true
+    },
+    {
+      "case": "logout-Keyring",
+      "fileRemaining": false,
+      "keyringRemaining": false,
+      "memoryRemaining": false,
+      "otherHomeCopyRemaining": true
+    },
+    {
+      "case": "logout-Auto",
+      "fileRemaining": false,
+      "keyringRemaining": false,
+      "memoryRemaining": false,
+      "otherHomeCopyRemaining": true
+    },
+    {
+      "case": "logout-Ephemeral",
+      "fileRemaining": true,
+      "keyringRemaining": true,
+      "memoryRemaining": false,
+      "otherHomeCopyRemaining": true
+    },
+    {
+      "case": "auto-fallback",
+      "explicitKeyringLoadFails": true,
+      "keyringPreferred": true,
+      "loadFailureUsesFile": true,
+      "saveFailureUsesFile": true
+    },
+    {
+      "case": "delete-error-3",
+      "fileRemainsAfterError": true,
+      "keyringRemainsAfterError": true,
+      "retryClearsBoth": true
+    },
+    {
+      "case": "delete-error-4",
+      "fileRemainsAfterError": true,
+      "keyringRemainsAfterError": false,
+      "retryClearsBoth": true
+    },
+    {
+      "case": "home-identity",
+      "renamedDirectoryDifferentKey": true,
+      "symlinkSameKey": true
+    },
+    {
+      "case": "revocation-failure",
+      "localFileRemoved": true,
+      "logoutReturnsSuccess": true,
+      "providerRevocationProven": false
+    }
+  ]
+}
