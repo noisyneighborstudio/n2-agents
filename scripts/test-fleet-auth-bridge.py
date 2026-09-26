@@ -313,6 +313,45 @@ class BridgeIntegrationTests(unittest.TestCase):
         self.assertTrue((Path(next(iter(homes)))/'fixture-history.json').exists())
         self.assertFalse(list((self.root/'codex-sessions').rglob('auth.json')))
 
+    def test_killed_record_publisher_recovers_in_discovery_and_resume(self):
+        first=self.run_cli([{'id':1,'method':'initialize'},{'id':2,'method':'thread/start'}])
+        self.assertEqual(first.returncode,0,first.stderr)
+        sessions=m.Sessions(self.root);saved=sessions.read('fixture-thread')
+        path=sessions.thread_path('fixture-thread');path.unlink()
+        code="""
+import importlib.util,json,os,signal,sys
+spec=importlib.util.spec_from_file_location('bridge',sys.argv[1])
+m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+saved=json.loads(sys.argv[3]);link=m.os.link
+def die_after_link(source,target):
+    link(source,target)
+    os.kill(os.getpid(),signal.SIGKILL)
+m.os.link=die_after_link
+m.Sessions(sys.argv[2]).remember(saved['thread'],saved['record'],saved['cwd'])
+"""
+        killed=subprocess.run([sys.executable,'-c',code,str(ROOT/'fleet-auth-bridge.py'),str(self.root),json.dumps(saved)],timeout=10)
+        self.assertEqual(killed.returncode,-signal.SIGKILL);self.assertEqual(path.stat().st_nlink,2)
+        result=subprocess.run([str(ROOT/'agents'),'sessions','Work'],env=dict(os.environ,N2_AGENTS_ROOT=str(self.root)),
+                              text=True,capture_output=True,timeout=10)
+        self.assertEqual(result.returncode,0,result.stderr);self.assertIn('fixture-thread',result.stdout)
+        self.assertEqual(path.stat().st_nlink,1)
+        self.assertFalse(list(path.parent.glob('.pending-*')))
+        resumed=self.run_cli([{'id':1,'method':'initialize'},{'id':2,'method':'thread/resume','params':{'threadId':'fixture-thread'}}])
+        self.assertEqual(resumed.returncode,0,resumed.stderr)
+        self.assertEqual(json.loads(resumed.stdout.splitlines()[-1])['result']['thread']['id'],'fixture-thread')
+        sessions.remember(saved['thread'],saved['record'],saved['cwd'])
+        with self.assertRaises(ValueError):
+            sessions.remember(saved['thread'],dict(saved['record'],accountHash='f'*64),saved['cwd'])
+        self.assertEqual(sessions.read(saved['thread']),saved)
+
+    def test_record_recovery_refuses_unrecognized_hardlinks(self):
+        sessions=m.Sessions(self.root)
+        record=json.loads((self.root/'Work/codex/.n2-owner.json').read_text())
+        sessions.remember('saved',record,os.getcwd());path=sessions.thread_path('saved')
+        outside=self.wire.base/'unrecognized-link';os.link(path,outside)
+        with self.assertRaises(ValueError):sessions.read('saved')
+        self.assertTrue(outside.exists());self.assertEqual(path.stat().st_nlink,2)
+
     def test_persisted_binding_rejects_other_account_directory_and_history_override(self):
         store=m.Sessions(self.root)
         record=json.loads((self.root/'Work/codex/.n2-owner.json').read_text())

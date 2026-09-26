@@ -50,8 +50,9 @@ No model turn was attempted. The recorded local result is
 That native check proves saved-history compatibility for the installed version.
 It does not establish live-provider continuation or two-physical-machine acceptance.
 Independent correctness review found and verified the hardlink interruption repair.
-The normal local `Sessions.remember` publisher has the same pre-existing interruption
-boundary and is the next queued slice; this importer uses its own recoverable publisher.
+The normal local `Sessions.remember` publisher had the same interruption boundary.
+Its subsequent repair is recorded in [session-record recovery](session-record-recovery.md);
+this importer retains its separate recoverable publisher.
 
 Formatting, lint, the full repository suite and expanded smoke pass locally. An
 ad-hoc QA package builds and passes signature verification. Its byte-matched CLI

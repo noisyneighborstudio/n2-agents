@@ -6,6 +6,8 @@ Only that connection sees owner tokens and renewal requests. Frontend IDs occupy
 separate namespaces from N2's authentication/verification RPCs.
 """
 import argparse
+import contextlib
+import fcntl
 import hashlib
 import importlib.util
 import json
@@ -16,6 +18,7 @@ import re
 import select
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -55,7 +58,7 @@ class Sessions:
         return self.base/'threads'/hashlib.sha256(thread.encode()).hexdigest()
 
     def read(self,thread):
-        raw=self.owner.private_file(self.thread_path(thread),16384)
+        raw=self.record_bytes(self.thread_path(thread))
         value=json.loads(raw,object_pairs_hook=self.owner.unique)
         if (not isinstance(value,dict) or set(value)!={'schemaVersion','thread','record','cwd'}
                 or type(value['schemaVersion']) is not int or value['schemaVersion']!=1
@@ -66,22 +69,62 @@ class Sessions:
         client.binding.validate(record,record.get('profileId') if isinstance(record,dict) else None)
         return value
 
+    @contextlib.contextmanager
+    def record_lock(self,path):
+        lock=path.with_name('.lock-'+path.name)
+        fd=os.open(lock,os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW|os.O_NONBLOCK,0o600)
+        try:
+            info=os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid() or info.st_nlink!=1 or info.st_mode&0o077:
+                raise ValueError('unsafe session record lock')
+            # Only local immutable-file publication happens while held. A killed
+            # writer releases the kernel lock; distinct threads do not contend.
+            fcntl.flock(fd,fcntl.LOCK_EX)
+            yield
+        finally:os.close(fd)
+
+    def _record_bytes(self,path):
+        info=path.lstat()
+        if (stat.S_ISREG(info.st_mode) and info.st_uid==os.getuid()
+                and not info.st_mode&0o077 and info.st_nlink==2):
+            pending=[]
+            for candidate in path.parent.glob('.pending-*'):
+                try:other=candidate.lstat()
+                except FileNotFoundError:continue
+                if (other.st_dev,other.st_ino)==(info.st_dev,info.st_ino):pending.append(candidate)
+            if len(pending)==1:
+                # The complete immutable record was linked before interruption.
+                # Remove only its known temporary alias, never an outside link.
+                pending[0].unlink();self.owner.sync_directory(path.parent)
+        raw=self.owner.private_file(path,16384)
+        self.owner.sync_directory(path.parent)
+        return raw
+
+    def record_bytes(self,path):
+        with self.record_lock(path):return self._record_bytes(path)
+
     def remember(self,thread,record,cwd):
         value={'schemaVersion':1,'thread':thread,'record':record,'cwd':os.path.realpath(cwd)}
         raw=json.dumps(value,sort_keys=True,separators=(',',':')).encode()
         path=self.thread_path(thread)
-        # Publish only complete records; a collision can never rebind a thread.
-        fd,name=tempfile.mkstemp(prefix='.pending-',dir=path.parent)
-        try:
-            with os.fdopen(fd,'wb') as stream:
-                stream.write(raw);stream.flush();os.fsync(stream.fileno())
-            try:os.link(name,path)
-            except FileExistsError:
-                if self.read(thread)!=value:raise ValueError('session binding changed')
-            finally:os.unlink(name)
+        with self.record_lock(path):
+            if os.path.lexists(path):
+                if json.loads(self._record_bytes(path),object_pairs_hook=self.owner.unique)!=value:
+                    raise ValueError('session binding changed')
+                return
+            # Publish only complete records; a collision can never rebind a thread.
+            fd,name=tempfile.mkstemp(prefix='.pending-',dir=path.parent)
+            try:
+                with os.fdopen(fd,'wb') as stream:
+                    stream.write(raw);stream.flush();os.fsync(stream.fileno())
+                try:os.link(name,path)
+                except FileExistsError:
+                    if json.loads(self._record_bytes(path),object_pairs_hook=self.owner.unique)!=value:
+                        raise ValueError('session binding changed')
+                self.owner.sync_directory(path.parent)
+            finally:
+                if os.path.exists(name):os.unlink(name)
             self.owner.sync_directory(path.parent)
-        finally:
-            if os.path.exists(name):os.unlink(name)
 
     def matches(self,thread,record,cwd):
         try:value=self.read(thread)
@@ -132,7 +175,7 @@ def session_rows(root,profile=None,identifier=None):
     rows=[]
     for path in paths:
         if identifier is None and not re.fullmatch('[0-9a-f]{64}',path.name):continue
-        try:raw=sessions.owner.private_file(path,16384)
+        try:raw=sessions.record_bytes(path)
         except FileNotFoundError:continue
         saved=json.loads(raw,object_pairs_hook=sessions.owner.unique)
         thread=saved.get('thread') if isinstance(saved,dict) else None
