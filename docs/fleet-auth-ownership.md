@@ -183,3 +183,31 @@ a fresh timeout to a request that was already waiting. The source runs in a
 bounded wait. It may complete after the caller times out, but its result is not
 sent to the execution server. The broker must own cancellation and reconciliation
 of any provider operation it has already started.
+
+
+## Owner response codec
+
+`fleet-auth-response.py` signs token replies through `ssh-keygen` stdin and
+verifies them in memory. The signature namespace is
+`n2-agents-auth-response-v1`. The exact request context includes schema version,
+owner and recipient fleet fingerprints, a 32-byte random nonce encoded as hex,
+grant UUID, ownership-generation UUID, expected account hash and a wall-clock
+expiry no more than 30 seconds away. A separate monotonic deadline bounds local
+operations. Replies also carry an opaque token-generation UUID.
+
+Each outstanding request has one verifier. Success and failure both consume it,
+including concurrent delivery attempts. Callers must generate a fresh nonce for
+every request and cannot recreate a verifier to retry a consumed response. The
+codec freezes request context so later caller mutation cannot redirect it.
+
+Secret payloads use memory and subprocess pipes. SSH signature verification
+requires temporary files for public signer and signature material; the codec
+validates and rebuilds the signature structure before writing those files. It
+never sends tokens in process arguments or propagates subprocess diagnostics.
+
+This module authenticates replies and request correlation. It does not encrypt
+them, check fleet consent, or prove provider account identity. It must be used
+only over an authenticated encrypted carrier, followed by the bound runner's
+provider verification. Existing `fleet_call` writes reply files and must not be
+used for these messages. The replacement carrier and owner service remain to be
+implemented.

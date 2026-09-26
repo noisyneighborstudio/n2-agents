@@ -749,5 +749,6 @@ sh scripts/test-usage.sh
 python3 scripts/test-bound-planner.py
 python3 scripts/test-profile-metadata.py
 python3 scripts/test-profile-routing.py
+python3 scripts/test-fleet-auth-response.py
 
 echo "All tests passed"

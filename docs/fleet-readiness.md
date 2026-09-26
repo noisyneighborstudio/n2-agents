@@ -443,3 +443,17 @@ renewal or complete fleet authentication evidence. The full regression suite
 passes, and independent correctness/security review is clear after both
 backpressure deadline fixes. The short-stall regression also fails against the
 previous implementation, confirming that it detects the reported defect.
+
+
+### Owner response authentication
+
+A private response codec now signs and verifies owner token replies without
+spooling secret payloads. It binds the owner, recipient, nonce, grant, ownership
+generation, expected account and expiry; concurrent replay accepts at most one
+response. Ten tests use real disposable Ed25519 keys and synthetic tokens to
+cover tampering, wrong bindings, deadlines, replay and secret-file/argument
+exclusion. Scoped correctness and security reviews are clear. The encrypted
+carrier, consent enforcement and owner service remain required; the ordinary
+fleet reply path still uses temporary files and is unsuitable for tokens.
+The QA build passes; its packaged codec matches source bytes and passes all ten
+real-key tests. No live credentials were used or changed.
