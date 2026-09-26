@@ -241,10 +241,13 @@ vendor_authed() {  # vendor, slot dir, profile
       [ -s "$2/.credentials.json" ] ;;
     codex|grok) [ -s "$2/auth.json" ] ;;
     muse)
-      # A profile's login is the token in its auth.json (the file backend, see
-      # vendor_env_extra); Default's auth.json points at the keychain item.
-      if [ "$3" = Default ]; then [ -s "$2/auth.json" ]
-      else grep -q '"access_token"' "$2/auth.json" 2>/dev/null; fi ;;
+      # Default can sign in through the keychain without a local auth.json.
+      # Check only the item's presence: polling must not read the secret.
+      # Other profiles use their file backend and must not inherit this login.
+      if [ "$3" = Default ]; then
+        security find-generic-password -s "ai.meta.dev.credentials" -a meta >/dev/null 2>&1 && return 0
+      fi
+      grep -q '"access_token"[[:space:]]*:[[:space:]]*"[^"[:space:]][^"]*"' "$2/auth.json" 2>/dev/null || return 1 ;;
     *)          return 2 ;;
   esac
 }
