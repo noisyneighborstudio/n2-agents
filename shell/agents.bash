@@ -33,6 +33,8 @@ _n2agents_complete() {
         tools) words="list add rm approve status apply install deferred" ;;
       esac
     fi
+  elif [ "${COMP_WORDS[1]}" = "profiles" ]; then
+    words="--json --ensure-ids"
   elif [ "$prev" = "--vendor" ] || [ "$prev" = "--vendors" ]; then
     words="$(_n2agents_vendors)"
   else

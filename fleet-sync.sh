@@ -57,15 +57,10 @@ SYNC_TOMBSTONE='-'
 # copy — a machine-local exception must never destroy the shared setup.
 SYNC_EXCEPTED='!'
 
-# A profile is a directory, and the manifest can only speak about files, so a
-# profile with no in-scope files had no existence record at all: creating one
-# replicated nothing, and deleting one read as "no files changed" instead of
-# "this profile is gone". This marker is that record -- one byte-identical file
-# per profile, so it can never itself conflict, carried under the reserved '-'
-# vendor. Its arrival creates the profile directory on a peer; its tombstone
-# removes it.
+# The profile existence record also carries an opaque stable ID. It follows
+# the profile through replication and directory renames. Same-name profiles
+# created independently have distinct IDs and use ordinary conflict resolution.
 SYNC_PROFILE_REL='.n2-profile'
-SYNC_PROFILE_BODY='n2-agents profile'
 
 sync_digest_file() {  # sync_digest_file <path> -> digest, or the tombstone
   [ -f "$1" ] || { echo "$SYNC_TOMBSTONE"; return 0; }
@@ -680,17 +675,20 @@ sync_profile_addressable() {  # sync_profile_addressable <profile>
   return 0
 }
 
-# Make sure a profile that exists locally has its existence record. Writing it
-# here rather than at profile-creation time keeps the marker an implementation
-# detail of sync: a profile made before the fleet existed, or by any other
-# path, still gets one the first time a manifest is built.
-sync_profile_marker() {  # sync_profile_marker <profile>
+# Assign metadata to a new local profile under the same lock used by sync.
+# Existing legacy markers remain unchanged unless initialization is explicit:
+# independently migrating each peer would give a shared profile different IDs.
+sync_profile_marker() {  # sync_profile_marker <profile> [migrate]
   [ -d "$root/$1" ] || return 1
-  spm_f="$root/$1/$SYNC_PROFILE_REL"
-  [ -f "$spm_f" ] && return 0
-  [ -L "$spm_f" ] && return 1
-  printf '%s\n' "$SYNC_PROFILE_BODY" > "$spm_f" 2>/dev/null || return 1
-  return 0
+  spm_addr=$(sync_addr profile "$1" '-' "$SYNC_PROFILE_REL")
+  sync_res_lock "$spm_addr" || return 1
+  if [ "${2:-}" = migrate ]; then
+    /usr/bin/python3 "$scripts_dir/profile-metadata.py" ensure "$root/$1" --migrate-legacy; spm_rc=$?
+  else
+    /usr/bin/python3 "$scripts_dir/profile-metadata.py" ensure "$root/$1"; spm_rc=$?
+  fi
+  sync_res_unlock "$spm_addr"
+  return "$spm_rc"
 }
 
 sync_manifest() {
@@ -889,10 +887,8 @@ sync_conflict_pinned() {  # sync_conflict_pinned <addr>
 sync_conflict_drop() {  # sync_conflict_drop <addr>
   scd_d="$(sync_conflict_dir)/$(sync_conflict_id "$1")"
   [ -d "$scd_d" ] || return 0
-  # A pin that cannot be cleared must stay whole. The caller's next test
-  # (sync_conflict_pinned, just below) then sees it and keeps refusing the
-  # write, which is the safe direction: nothing lands over a candidate the
-  # operator was asked about.
+  # A pin that cannot be retired must stay whole. The owning peer's write
+  # already succeeded; preserving the candidates keeps cleanup recoverable.
   scd_s=$(sync_conflict_stage "$scd_d") || return 1
   rm -rf "$scd_s"
   fleet_event sync-resolved "id=$(sync_conflict_id "$1") choice=peer addr=$(sync_addr_class "$1")|$(sync_addr_profile "$1")|$(sync_addr_vendor "$1")"
@@ -1228,6 +1224,9 @@ sync_write() {  # sync_write <addr> <srcfile|''=delete> [expected-digest] [peer]
     rm -f "$sw_path" 2>/dev/null || return 1
     return 0
   fi
+  if [ "$sw_c" = profile ]; then
+    /usr/bin/python3 "$scripts_dir/profile-metadata.py" validate "$2" || return 1
+  fi
   # Last gate before the bytes land. sync_scope_ok inspects the *local* copy,
   # which may not exist yet on a first pull, so the arriving payload is checked
   # too: a peer cannot deliver a credential this machine never opted into by
@@ -1238,6 +1237,12 @@ sync_write() {  # sync_write <addr> <srcfile|''=delete> [expected-digest] [peer]
          sync_secret_shareable "$sw_v" || return 1
        fi ;;
   esac
+  # A child arriving before its profile marker must not create a directory
+  # which a later manifest mistakes for a new local profile. Older senders can
+  # retry this child after their marker arrives; Default remains machine-local.
+  if [ "$sw_v" != '-' ] && [ "$sw_p" != Default ]; then
+    /usr/bin/python3 "$scripts_dir/profile-metadata.py" validate "$root/$sw_p/$SYNC_PROFILE_REL" || return 1
+  fi
   mkdir -p "$sw_slot" 2>/dev/null || return 1
   sync_ancestors_contained "$sw_slot" "$sw_path" || return 1
   mkdir -p "$(dirname "$sw_path")" 2>/dev/null || return 1
@@ -1294,6 +1299,7 @@ sync_absorb_locked() {
   # have that it had not already seen. An edit made here after the sender
   # looked moves sa_l off the declared base, and then none of this applies:
   # the conflict stands and is pinned as before.
+  sa_retire=0
   sa_sb=${5:-}  # optional: absent under `set -u` must read as empty
   if [ -n "$sa_sb" ] && [ "$sa_sb" = "$sa_l" ] && [ "$sa_l" != "$3" ]; then
     # ...and only for the pin this sender itself raised. A pin names the peer
@@ -1309,7 +1315,7 @@ sync_absorb_locked() {
       case $sa_w in
         push|conflict)
           sa_w=pull
-          [ -z "$sa_own" ] || sync_conflict_drop "$1" ;;
+          [ -z "$sa_own" ] || sa_retire=1 ;;
       esac
     fi
   fi
@@ -1318,7 +1324,7 @@ sync_absorb_locked() {
   # pushes straight through an unresolved conflict and overwrites the very
   # candidate the operator was asked to choose between. The pin outranks the
   # decision table: nothing lands until the operator resolves it.
-  if [ "$sa_w" = pull ] && sync_conflict_pinned "$1"; then
+  if [ "$sa_w" = pull ] && [ "$sa_retire" != 1 ] && sync_conflict_pinned "$1"; then
     if sync_conflict_stale "$1" "$sa_l" "$3"; then
       sa_lp=$(sync_path "$(sync_addr_class "$1")" "$(sync_addr_profile "$1")" \
                         "$(sync_addr_vendor "$1")" "$(sync_addr_relpath "$1")" 2>/dev/null)
@@ -1354,6 +1360,9 @@ sync_absorb_locked() {
         echo conflict; return 0
       fi
       [ "$sa_rc" = 0 ] || return 1
+      # Retire only after the write succeeds. Validation or filesystem failure
+      # must leave the operator's pending candidates available for recovery.
+      [ "$sa_retire" != 1 ] || sync_conflict_drop "$1"
       sync_base_set "$4" "$1" "$3"
       fleet_event sync-apply "addr=$(sync_addr_class "$1")|$(sync_addr_profile "$1")|$(sync_addr_vendor "$1") peer=$4" ;;
     conflict)
@@ -1525,7 +1534,11 @@ sync_pass_peer() {  # sync_pass_peer <peer> [dryrun]
     printf 'unreachable\t%s\n' "$spp_peer"; rm -rf "$spp_t"; return 2
   fi
   sync_manifest > "$spp_t/local" 2>/dev/null
-  cut -f1 "$spp_t/local" "$spp_t/remote" | sort -u > "$spp_t/addrs"
+  # Establish live profile identity before any child resource. Profile
+  # tombstones follow child removals so existing deletion blockers still apply.
+  awk -F'\t' '{seen[$1]=1; if($2=="-") deleted[$1]=1}
+    END {for(a in seen) print (a ~ /^profile[|]/ ? (deleted[a] ? 2 : 0) : 1) "\t" a}' \
+    "$spp_t/local" "$spp_t/remote" | sort | cut -f2- > "$spp_t/addrs"
   while IFS= read -r a; do
     [ -n "$a" ] || continue
     sync_scope_ok "$a" || { printf 'skipped\t%s\n' "$a"; continue; }

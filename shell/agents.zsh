@@ -37,6 +37,8 @@ _n2agents_cli() {
         tools) _values 'tools verb' list add rm approve status apply install deferred ;;
       esac
     fi
+  elif [[ ${words[2]} == profiles ]]; then
+    _values 'profile metadata option' --json --ensure-ids
   elif [[ ${words[CURRENT-1]} == (--vendor|--vendors) ]]; then
     local -a vendors
     vendors=(${(f)"$(agents porcelain 2>/dev/null | awk -F'\t' '$1=="V" && $3=="1" {print $2}')"})

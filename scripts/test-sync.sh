@@ -1292,6 +1292,7 @@ mark "44. concurrent absorbs of one resource"
 rc="$base/race-concurrent"; mkdir -p "$rc/home/Work/claude"
 cat > "$rc/worker" <<'WORKER'
 root=$rcroot
+scripts_dir=$repo
 . "$repo/fleet.sh"
 . "$repo/fleet-sync.sh"
 config_dir() { echo "$root/$1/$2"; }
@@ -1302,6 +1303,7 @@ sync_absorb "$a" "$barrier/$worker" "$(sync_digest_file "$barrier/$worker")" "$w
 WORKER
 race_concurrent() {
   rm -rf "$rc/run"; mkdir -p "$rc/run/profiles/Work/claude" "$rc/run/home"
+  /usr/bin/python3 "$repo/profile-metadata.py" ensure "$rc/run/profiles/Work"
   printf ORIGINAL > "$rc/run/profiles/Work/claude/settings.json"
   printf EDIT-A > "$rc/run/A"; printf EDIT-B > "$rc/run/B"
   env HOME="$rc/run/home" repo="$repo" rcroot="$rc/run/profiles" barrier="$rc/run" sh -c '
@@ -1967,6 +1969,8 @@ mkdir -p "$base/xi/adopted/Kept/claude"
 printf 'adopted bytes' > "$base/xi/adopted/Kept/claude/settings.json"
 mkdir -p "$base/nu/.n2-agents/Kept/claude"
 peer nu fleet sync now --peer "$X" >/dev/null 2>&1
+# Relocating the same profile preserves its identity as well as its data.
+cp "$base/xi/.n2-agents/Kept/.n2-profile" "$base/xi/adopted/Kept/.n2-profile"
 rm -rf "$base/xi/.n2-agents/Kept"
 ln -sfn "$base/xi/adopted/Kept" "$base/xi/.n2-agents/Kept"
 rm -rf "$base/nu/.n2-agents/Kept"
@@ -3221,6 +3225,8 @@ cbase_run() {  # cbase_run <sender-of-the-fast-forward>
   cb="$base/cbase-$1"; rm -rf "$cb"; mkdir -p "$cb/home" "$cb/profiles/Work/claude"
   env HOME="$cb/home" repo="$repo" cbroot="$cb/profiles" cb="$cb" ff="$1" sh -c '
     root=$cbroot
+    scripts_dir=$repo
+    /usr/bin/python3 "$repo/profile-metadata.py" ensure "$root/Work"
     . "$repo/fleet.sh"; . "$repo/fleet-sync.sh"
     config_dir() { echo "$root/$1/$2"; }
     a="settings|Work|claude|settings.json"

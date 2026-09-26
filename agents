@@ -3,6 +3,7 @@
 # the tray app shells out to this for anything with side effects.
 #
 #   agents list                           profiles × vendors (✓ active, 🟢 running)
+#   agents profiles [--json|--ensure-ids] stable fleet profile metadata
 #   agents vendors                        labs found on this machine, and how each isolates
 #   agents active [--vendor <v>]          print the active profile
 #   agents use <Profile|Default> [--vendor <v>]
@@ -1427,7 +1428,23 @@ cmd_version() {
 }
 
 
-cmd_profiles() { all_profiles; }
+cmd_profiles() {
+  case ${1:-} in
+    '') all_profiles ;;
+    --json)
+      [ "$#" = 1 ] || die "usage: agents profiles [--json|--ensure-ids]"
+      /usr/bin/python3 "$scripts_dir/profile-metadata.py" report "$root" --machine "$(fleet_self_id 2>/dev/null || true)" ;;
+    --ensure-ids)
+      [ "$#" = 1 ] || die "usage: agents profiles [--json|--ensure-ids]"
+      sync_need
+      # Default's ID is local. Its marker is never included in a fleet manifest.
+      mkdir -p "$root/Default"
+      all_profiles | while IFS= read -r n; do
+        sync_profile_marker "$n" migrate || exit 1
+      done ;;
+    *) die "usage: agents profiles [--json|--ensure-ids]" ;;
+  esac
+}
 
 authed_word() {  # vendor, slot dir, profile
   if vendor_authed "$1" "$2" "$3"; then echo yes; elif [ $? = 1 ]; then echo no; else echo unknown; fi
@@ -1513,7 +1530,7 @@ case $cmd in
   shims)    cmd_shims "$@" ;;
   fleet)    cmd_fleet "$@" ;;
   loop)     cmd_loop "$@" ;;
-  profiles) cmd_profiles ;;
+  profiles) cmd_profiles "$@" ;;
   porcelain) cmd_porcelain ;;
   version)  cmd_version ;;
   help|-h|--help) cmd_help ;;

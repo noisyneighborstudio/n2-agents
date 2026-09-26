@@ -363,3 +363,28 @@ The final full regression suite and ad-hoc QA build pass. The packaged helper
 passes the reset fixture and matches the source. Scoped correctness and security
 reviews are clear after fixing malformed timezone normalization and model-text
 reset precedence. No credentials were changed and no app was installed.
+
+
+### Stable profile identity
+
+The [profile identity contract](profile-bindings.md) adds persistent opaque IDs
+and `agents profiles --json`. Named profiles carry their IDs through the signed
+sync protocol; Default remains machine-local. Missing, legacy, invalid,
+conflicting and duplicate metadata remain explicit. These IDs are not provider
+account verification, and configuration revisions and adapter binding remain
+open.
+
+Initialization is explicit for existing legacy markers. Ordinary upgrade/sync
+preserves legacy bytes until one machine initializes and propagates the agreed
+replacement. Live markers precede child resources, and the receiver rejects
+child-first transfers until metadata exists. Deletion markers follow child
+removals. Disposable signed-peer tests cover clean replication, legacy upgrade,
+interrupted child-first recovery, distinct Default identities, duplicate IDs,
+concurrent initialization, malformed payloads and same-name identity conflicts.
+
+The six metadata tests pass, including retention of a pending conflict when a
+validated child write fails. All 639 sync checks across 75 sections pass after
+updating adopted-storage fixtures to retain identity and direct responder
+fixtures to provide metadata. The CLI regression suite, ad-hoc QA build and
+packaged signed-peer/recovery probes pass. Scoped correctness/security reviews
+are clear. No live profile metadata was migrated and no app was installed.
