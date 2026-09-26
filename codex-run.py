@@ -73,9 +73,8 @@ def run(config, expected_account, effort, prompt, timeout=3600, executable='code
         raise ValueError('invalid expected account')
     source = Path(config).resolve(strict=True)
     owner_client = None
-    marker = source / '.n2-owner.json'
-    if marker.exists() or marker.is_symlink():
-        broker = load('n2_owner_client', 'fleet-auth-client.py')
+    broker = load('n2_owner_client', 'fleet-auth-client.py')
+    if broker.binding.has_intent(owner_root, profile_name, source):
         owner_client = broker.for_profile(owner_root, source, profile_name, expected_account)
     else:
         credential = source / 'auth.json'

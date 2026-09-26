@@ -56,10 +56,11 @@ remain supported by N2's existing containment rules.
 
 The JSON response has `schemaVersion: 1`. Each profile also exposes `routes`,
 `routingStatus`, `revisionScope` and `configurationRevision`. The revision scope
-`n2-profile-routing-v1` covers the profile ID, display name, machine, scope and
+`n2-profile-routing-v2` covers the profile ID, display name, machine, scope and
 N2's selected provider homes, launch environment, executable paths and resolved
-symlink destinations. A rename, route change or symlink retarget changes the
-revision. Missing provider homes and executables have explicit route statuses.
+symlink destinations, plus the validated public Codex owner binding when present.
+A rename, route change, symlink retarget or owner-binding replacement changes the
+revision. Invalid or conflicting owner records withhold the revision. Missing provider homes and executables have explicit route statuses.
 
 Environment values and configured paths retain their literal spelling. For a
 relative binding, `workingDirectory` records the directory needed to interpret

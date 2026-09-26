@@ -52,6 +52,47 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(initial['configurationRevision'], self.snapshot()['configurationRevision'])
         self.assertNotIn('synthetic-secret', str(self.snapshot()))
 
+    def test_owner_binding_changes_revision_and_invalid_binding_prevents_admission(self):
+        import uuid
+        original = self.snapshot()
+        spec = importlib.util.spec_from_file_location('binding', ROOT / 'fleet-auth-binding.py')
+        binding = importlib.util.module_from_spec(spec); spec.loader.exec_module(binding)
+        record = {'schemaVersion': 1, 'provider': 'codex', 'credentialStore': 'owner-file',
+                  'profileId': original['profileId'], 'grantId': str(uuid.uuid4()),
+                  'ownershipGeneration': str(uuid.uuid4()), 'accountHash': 'a' * 64,
+                  'owner': self.machine}
+        slot = self.profile / 'codex'
+        revision = binding.publish(slot, record, original['profileId'])
+        registered = self.snapshot()
+        self.assertNotEqual(original['configurationRevision'], registered['configurationRevision'])
+        self.assertEqual(self.route(registered)['ownerBinding']['binding'], record)
+        self.assertEqual(self.route(registered)['accountIdentity'], {'status': 'unknown'})
+        record['ownershipGeneration'] = str(uuid.uuid4())
+        binding.publish(slot, record, original['profileId'], revision)
+        self.assertNotEqual(registered['configurationRevision'], self.snapshot()['configurationRevision'])
+        import hashlib
+        address = 'settings|Work|codex|.n2-owner.json'
+        conflict = self.root / 'fleet/sync/conflicts' / hashlib.sha256(address.encode()).hexdigest()[:12]
+        conflict.mkdir(parents=True)
+        self.assertIsNone(self.snapshot()['configurationRevision'])
+        self.assertEqual(self.route(self.snapshot())['ownerBinding']['status'], 'conflicting')
+        saved = (slot / '.n2-owner.json').read_bytes()
+        (slot / '.n2-owner.json').unlink()
+        self.assertIsNone(self.snapshot()['configurationRevision'])
+        self.assertEqual(self.route(self.snapshot())['ownerBinding']['status'], 'conflicting')
+        stage = conflict.with_name('.resolving-' + conflict.name + '.999999')
+        conflict.rename(stage)
+        self.assertIsNone(self.snapshot()['configurationRevision'])
+        stage.rename(conflict)
+        (slot / '.n2-owner.json').write_bytes(saved); (slot / '.n2-owner.json').chmod(0o600)
+        conflict.rmdir()
+        marker = slot / '.n2-owner.json'
+        marker.write_text('{}')
+        self.assertIsNone(self.snapshot()['configurationRevision'])
+        marker.unlink(); marker.symlink_to(slot / 'missing')
+        self.assertIsNone(self.snapshot()['configurationRevision'])
+        self.assertFalse(self.sentinel.exists())
+
     def test_relative_environment_matches_actual_launch(self):
         executable = self.bin / 'codex'
         executable.write_text('#!/bin/sh\nprintf "%s" "$CODEX_HOME"\n')

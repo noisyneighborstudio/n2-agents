@@ -1577,6 +1577,29 @@ fleet_route() {  # fleet_route <peerid> <transport> <address> <port> <user> <hom
 
 # --- CLI -------------------------------------------------------------------
 
+# Registration shares the exact record/metadata locks with sync writers.
+fleet_auth_manage() (
+  set +e
+  action=${1:-}; name=${2:-}
+  case $action in register|status|allow|deny) ;; *) fleet_die "usage: agents fleet auth <register|status|allow|deny> Profile [--grant ID|--peer ID]" ;; esac
+  [ -n "$name" ] || fleet_die "an auth profile is required"
+  shift 2
+  name=$(resolve_profile "$name") || fleet_die "unknown profile"
+  cfg=$(config_dir "$name" codex) || return 1
+  [ -d "$cfg" ] || fleet_die "profile has no Codex slot"
+  sync_need
+  metadata_address=$(sync_addr profile "$name" '-' "$SYNC_PROFILE_REL")
+  binding_address=$(sync_addr settings "$name" codex .n2-owner.json)
+  sync_res_lock "$metadata_address" || return 1
+  trap 'sync_res_unlock "$metadata_address"' EXIT
+  sync_res_lock "$binding_address" || return 1
+  trap 'sync_res_unlock "$binding_address"; sync_res_unlock "$metadata_address"' EXIT
+  owner_gate=$(sync_addr settings "$name" codex .n2-owner-gate)
+  sync_res_lock "$owner_gate" || return 1
+  trap 'sync_res_unlock "$owner_gate"; sync_res_unlock "$binding_address"; sync_res_unlock "$metadata_address"' EXIT
+  /usr/bin/python3 "$scripts_dir/fleet-auth-manage.py" "$action" "$root" "$name" "$cfg" "$@"
+)
+
 # The verb table, printed by `agents fleet help` and by any unknown verb. Kept
 # in step with the "CLI surface" section of docs/fleet-design.md.
 fleet_usage() {
@@ -1606,6 +1629,7 @@ agents fleet <verb>
   tools <verb>                             fleet-managed utilities (tools help)
   task <verb>                              dispatch, handoff and task lifecycle (task help)
   send <peerid> --verb <v> [--payload-file <f>]   raw signed request
+  auth <register|status|allow|deny> Profile  owner binding and explicit peer consent
   serve                                    stdio responder (the remote end)
   help                                     this list
 EOF
@@ -1623,6 +1647,7 @@ cmd_fleet() {
   set +e
   verb=${1:-status}; [ $# -ge 1 ] && shift
   case $verb in
+    auth) fleet_auth_manage "$@" ;;
     init)
       machine=$(hostname -s 2>/dev/null || echo unknown)
       while [ $# -gt 0 ]; do case $1 in --machine) machine=$2; shift 2 ;; *) fleet_die "unknown option: $1" ;; esac; done

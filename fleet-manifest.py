@@ -34,6 +34,8 @@ def classify(rel):
         return 'auth'
     if name in ('.mcp.json', 'mcp.json', 'mcp_servers.json') or parts[0] == 'mcp' and len(parts) > 1:
         return 'mcp'
+    if vendor == 'codex' and str(rel) == '.n2-owner.json':
+        return 'settings'
     if str(rel) in ('settings.json', 'settings.local.json', 'config.toml', 'config.json', 'config.yaml', 'CLAUDE.md', 'AGENTS.md', 'GEMINI.md'):
         return 'settings'
     if parts[0] in ('agents', 'commands', 'rules', 'prompts', 'hooks') and len(parts) > 1:

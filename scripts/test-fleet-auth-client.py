@@ -87,6 +87,23 @@ class ClientTests(unittest.TestCase):
         self.assertEqual((slot/'auth.json').read_text(),'invalid legacy credential bytes')
         methods=[json.loads(line)['method'] for line in trace.read_text().splitlines()]
         self.assertEqual(methods.count('turn/start'),1)
+    def test_conflicted_missing_record_never_falls_back_to_legacy_usage_or_execution(self):
+        import hashlib
+        root,slot,binary=self.prepare_profile()
+        (slot/'.n2-owner.json').unlink()
+        key=hashlib.sha256(b'settings|Work|codex|.n2-owner.json').hexdigest()[:12]
+        conflict=root/'fleet/sync/conflicts'/('.resolving-'+key+'.999999')
+        conflict.mkdir(parents=True)
+        with self.assertRaisesRegex(ValueError,'conflict'):
+            bound.run(str(slot),self.account,'medium','No turn',executable=str(binary),
+                      owner_root=str(root),profile_name='Work',timeout=2)
+        usage=load('conflict_usage',ROOT/'usage.py')
+        with patch.dict(os.environ,{'N2_USAGE_ROOT':str(root),'N2_CODEX_USAGE_URL':''}):
+            status,fetch=usage.codex('Work',str(slot))
+            self.assertEqual(status,'ok')
+            with self.assertRaises(usage.OwnerUnavailable):fetch()
+        self.assertEqual((slot/'auth.json').read_text(),'invalid legacy credential bytes')
+
     def test_agents_bound_launch_forwards_profile_context(self):
         root,slot,binary=self.prepare_profile()
         native_binary=self.fixture.bin/'native-codex'

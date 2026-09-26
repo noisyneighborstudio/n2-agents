@@ -272,6 +272,7 @@ sync_classify() {  # sync_classify <vendor> <relpath>
     [ "$2" = "$SYNC_PROFILE_REL" ] && { echo profile; return 0; }
     return 0
   fi
+  [ "$1" = codex ] && [ "$2" = .n2-owner.json ] && { echo settings; return 0; }
   sync_excluded_relpath "$2" && return 0
   case $2 in
     skills/*) echo skills; return 0 ;;
@@ -527,6 +528,23 @@ sync_file_carries_secret() {  # sync_file_carries_secret <file>
 }
 
 # The opt-in a vendor's credential material requires, whatever file it sits in.
+sync_owner_managed() {  # profile vendor; malformed records still fence credentials
+  [ "$2" = codex ] || return 1
+  som_conflict="$(sync_conflict_dir)/$(printf '%s' "settings|$1|codex|.n2-owner.json" | shasum -a 256 | cut -c1-12)"
+  [ -e "$som_conflict" ] || [ -L "$som_conflict" ] && return 0
+  for som_stage in "$(dirname "$som_conflict")/.resolving-${som_conflict##*/}."*; do
+    [ -e "$som_stage" ] || [ -L "$som_stage" ] && return 0
+  done
+  som_slot=$(sync_slot "$1" "$2") || return 1
+  [ -e "$som_slot/.n2-owner.json" ] || [ -L "$som_slot/.n2-owner.json" ]
+}
+
+sync_owner_payload_ok() {  # profile vendor class payload
+  sync_owner_managed "$1" "$2" || return 0
+  case $3 in auth|mcp) return 1 ;; esac
+  [ -z "$4" ] || ! sync_file_carries_secret "$4"
+}
+
 sync_secret_shareable() {  # sync_secret_shareable <vendor>
   sync_category_enabled auth || return 1
   sync_auth_optin "$1" || return 1
@@ -700,7 +718,7 @@ sync_manifest() {
       [ -d "$slot" ] || continue
       # With credential sharing allowed, no content-based secret scan is needed.
       # Hashing a large skills tree in one process avoids thousands of forks.
-      if [ -f "${scripts_dir:-.}/fleet-manifest.py" ] && sync_secret_shareable "$v"; then
+      if [ -f "${scripts_dir:-.}/fleet-manifest.py" ] && sync_secret_shareable "$v" && ! sync_owner_managed "$p" "$v"; then
         /usr/bin/python3 "${scripts_dir:-.}/fleet-manifest.py" "$slot" "$p" "$v"
         continue
       fi
@@ -716,6 +734,7 @@ sync_manifest() {
         sync_link_contained "$slot" "$f" || continue
         cls=$(sync_classify "$v" "$rel")
         [ -n "$cls" ] || continue
+        sync_owner_payload_ok "$p" "$v" "$cls" "$f" || continue
         # Withheld here means silent here: a resource this machine will not
         # share is not advertised, not even as an exception, because naming it
         # would disclose that the credential exists. What a *peer* must not do
@@ -1056,6 +1075,8 @@ sync_scope_ok() {  # sync_scope_ok <addr>
     sync_profile_addressable "$sgo_p" || return 1
   fi
   sync_excepted "$1" && return 1
+  sgo_payload=$(sync_path "$sgo_c" "$sgo_p" "$sgo_v" "$sgo_r" 2>/dev/null) || return 1
+  sync_owner_payload_ok "$sgo_p" "$sgo_v" "$sgo_c" "$sgo_payload" || return 1
   # `auth` is credential material by definition, and so is the whole `mcp`
   # class. An MCP server record carries its secrets in shapes the key-name
   # scanner cannot see: `"args": ["--api-key", "SYNTHETIC"]` is a positional
@@ -1190,7 +1211,18 @@ sync_profile_remove() {  # sync_profile_remove <profile> [peer] [force]
   return 0
 }
 
-sync_write() {  # sync_write <addr> <srcfile|''=delete> [expected-digest] [peer] [force]
+# Resource locks are acquired by callers before this per-slot gate. Registration
+# takes metadata, binding, then this gate, so no holder waits for a resource lock.
+sync_write() (
+  if [ "$(sync_addr_vendor "$1")" = codex ]; then
+    owner_gate=$(sync_addr settings "$(sync_addr_profile "$1")" codex .n2-owner-gate)
+    sync_res_lock "$owner_gate" || return 1
+    trap 'sync_res_unlock "$owner_gate"' EXIT
+  fi
+  sync_write_locked "$@"
+)
+
+sync_write_locked() {  # sync_write <addr> <srcfile|''=delete> [expected-digest] [peer] [force]
   sw_c=$(sync_addr_class "$1") sw_p=$(sync_addr_profile "$1")
   sw_v=$(sync_addr_vendor "$1") sw_r=$(sync_addr_relpath "$1")
   sw_slot=$(sync_slot "$sw_p" "$sw_v") || return 1
@@ -1198,6 +1230,13 @@ sync_write() {  # sync_write <addr> <srcfile|''=delete> [expected-digest] [peer]
   # ${3:-} not $3: the expected digest is optional and the shell runs under
   # `set -u`, so an absent third argument must read as empty, not abort.
   sw_exp=${3:-}
+  sync_owner_payload_ok "$sw_p" "$sw_v" "$sw_c" "$2" || return 1
+  if [ "$sw_v" = codex ] && [ "$sw_r" = .n2-owner.json ]; then
+    # Dropping a record would silently restore legacy routing. Retirement is a
+    # lifecycle operation, not an ordinary synchronized file deletion.
+    [ -n "$2" ] || return 1
+    /usr/bin/python3 "$scripts_dir/fleet-auth-manage.py" validate-incoming "$root" "$sw_p" "$sw_slot" --payload "$2" >/dev/null || return 1
+  fi
   if [ -n "$sw_exp" ]; then
     sw_now=$(sync_local_digest "$1" 2>/dev/null)
     [ -n "$sw_now" ] || sw_now=$SYNC_TOMBSTONE
@@ -1266,6 +1305,9 @@ sync_write() {  # sync_write <addr> <srcfile|''=delete> [expected-digest] [peer]
     chmod +x "$sw_tmp" 2>/dev/null || true
   fi
   case $sw_c in auth) chmod 600 "$sw_tmp" 2>/dev/null || true ;; esac
+  if [ "$sw_v" = codex ] && [ "$sw_r" = .n2-owner.json ]; then
+    chmod 600 "$sw_tmp" || { rm -f "$sw_tmp"; return 1; }
+  fi
   mv "$sw_tmp" "$sw_path" 2>/dev/null || { rm -f "$sw_tmp"; return 1; }
   return 0
 }

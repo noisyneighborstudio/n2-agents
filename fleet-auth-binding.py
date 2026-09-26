@@ -20,6 +20,18 @@ FIELDS={'schemaVersion','provider','profileId','grantId','owner','ownershipGener
 MAX_BYTES=4096
 
 
+def conflicted(root, name):
+    if root is None or name is None:
+        return False
+    address='settings|'+name+'|codex|'+MARKER
+    path=Path(root)/'fleet/sync/conflicts'/hashlib.sha256(address.encode()).hexdigest()[:12]
+    return os.path.lexists(path) or any(path.parent.glob('.resolving-'+path.name+'.*'))
+
+
+def has_intent(root, name, directory):
+    return os.path.lexists(Path(directory)/MARKER) or conflicted(root,name)
+
+
 def validate(record, profile_id):
     if not isinstance(record,dict) or set(record)!=FIELDS or type(record['schemaVersion']) is not int or record['schemaVersion']!=1:
         raise ValueError('invalid ownership schema')

@@ -620,3 +620,48 @@ reader tests, 26 journal tests, signed paginated exchange of 8,106 restrictions,
 enrollment identity continuity and task/slot parsing. The QA build passes.
 Independent correctness/security reviews are clear after the initial-expiry fix.
 No app was installed and no live provider renewal was performed.
+
+
+### Local registration and owner-aware routing revisions
+
+`agents fleet auth register Profile --grant ID` publishes an already-active,
+verified local grant under the profile metadata and binding resource locks.
+Existing records require `--expected-revision`; unresolved binding conflicts,
+duplicate profile IDs and known legacy credential files refuse registration.
+`status`, `allow --peer ID` and `deny --peer ID` expose public state and explicit
+consent. Allowing a peer requires current fleet approval; denying a revoked peer
+remains possible. This command does not create a login or perform migration.
+
+Routing inventory now includes the validated public owner binding and its
+revision under `n2-profile-routing-v2`. Changing the grant or ownership generation
+changes the configuration revision. Invalid, conflicting and dangling owner
+records suppress the configuration revision. A binding is routing intent, so the
+inventory still reports account identity as unknown until provider verification.
+Neither credentials nor a provider process are needed to read this inventory.
+
+Nine registration/sync tests cover publication, revision checks, credential and
+conflict refusal, consent enforcement, serialization against a pending slot
+writer, and real signed replication followed by authenticated owner fetch.
+Nine routing tests cover owner changes alongside existing route/path stability.
+Public records replicate as settings and arrive private with validated profile
+identity. Registration and incoming Codex writes share a per-slot gate; managed
+slots reject auth/MCP and credential-bearing payloads even with auth sharing on.
+Ordinary record tombstones are refused. Pending ownership conflicts block
+routing, measurement, execution and credential sync even without a local record.
+
+These gates do not establish that historical credential copies have been
+removed. Migration inventory, offline peer handling, fresh login/reset, explicit
+retirement and general CLI routing remain required before readiness.
+
+
+The registration increment also passes 15 owner-client tests, 27 usage-reader
+and 12 legacy runner regressions. Registration, routing and client tests pass
+against staged packaged resources. The staging omits the QA-root selector and
+uses private fixture HOME directories; the actual packaged helper bytes match
+source. No app is installed and no live login grant is changed by these tests.
+Scoped correctness and security reviews found canonical and staged ownership
+conflict gaps; both are fixed and regression-tested.
+
+The broad sync regression completed with 639 passing checks across all 75
+sections. That run began before the final staged-conflict guard was added;
+focused source and packaged tests verify that final guard and its consumers.

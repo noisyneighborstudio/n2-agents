@@ -43,7 +43,7 @@ cmp "$slot/config.toml" "$other/config.toml"
 cmp "$slot/skills/demo/SKILL.md" "$other/skills/demo/SKILL.md"
 if peer a profiles | grep -qx fleet; then echo 'fleet state exposed as profile'; exit 1; fi
 mkdir -p "$base/bundle" "$base/qa/.n2-agents/Primary/codex"
-cp "$repo/agents" "$repo/workspace-pack.py" "$repo/usage.py" "$repo/codex-rpc.py" "$repo/codex-run.py" "$repo/usage-store.py" "$repo/vendors.sh" "$repo/fleet.sh" "$repo/fleet-sync.sh" "$repo/fleet-exec.sh" "$repo/fleet-qa-import.py" "$repo/profile-metadata.py" "$repo/fleet-auth-response.py" "$repo/fleet-auth-transport.py" "$repo/fleet-auth-owner.py" "$repo/fleet-auth-native.py" "$repo/fleet-auth-server.py" "$repo/fleet-auth-binding.py" "$repo/fleet-auth-client.py" "$base/bundle/"
+cp "$repo/agents" "$repo/workspace-pack.py" "$repo/usage.py" "$repo/codex-rpc.py" "$repo/codex-run.py" "$repo/usage-store.py" "$repo/vendors.sh" "$repo/fleet.sh" "$repo/fleet-sync.sh" "$repo/fleet-exec.sh" "$repo/fleet-qa-import.py" "$repo/profile-metadata.py" "$repo/fleet-auth-response.py" "$repo/fleet-auth-transport.py" "$repo/fleet-auth-owner.py" "$repo/fleet-auth-native.py" "$repo/fleet-auth-server.py" "$repo/fleet-auth-binding.py" "$repo/fleet-auth-client.py" "$repo/fleet-auth-manage.py" "$base/bundle/"
 touch "$base/bundle/fleet-qa"
 printf 'original' > "$base/qa/.n2-agents/Primary/codex/config.toml"
 HOME="$base/qa" "$base/bundle/agents" fleet sync import-local >/dev/null

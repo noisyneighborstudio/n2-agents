@@ -138,6 +138,8 @@ class OwnerClient:
 def for_profile(root, config, profile_name, expected_account=None):
     if root is None or profile_name is None:
         raise ValueError('owner profile context unavailable')
+    if binding.conflicted(root,profile_name):
+        raise ValueError('owner binding conflict requires resolution')
     metadata=load('n2_client_metadata','profile-metadata.py')
     candidates=[row for row in metadata.report(root,None)['profiles'] if row['name']==profile_name]
     if len(candidates)!=1 or candidates[0]['metadataStatus']!='ready':

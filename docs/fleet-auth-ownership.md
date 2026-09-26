@@ -397,8 +397,8 @@ When the slot contains an ownership record, `codex-run.py` requires ready,
 nonduplicate profile metadata, validates the record, fetches from the pinned
 owner and supplies the renewal callback to its ephemeral execution process.
 It never reads legacy `auth.json` on that path. Malformed or dangling ownership
-records fail instead of falling back. Slots with no ownership record retain
-the existing legacy execution path until explicit migration.
+records fail instead of falling back. Slots with neither a record nor an unresolved
+ownership conflict retain the legacy execution path until explicit migration.
 
 Synthetic integration tests cover local and remote renewal, record pinning,
 wrong-account rejection, timeout races and malformed records. A complete bound
@@ -422,3 +422,29 @@ fresh ephemeral process. The expected account hash must verify before any usage
 or executable connection is returned. The inbound request's age and original
 deadline bound renewal. An invalid request, unusable replacement or second
 initial rejection fails; it never loops refresh attempts or starts a turn first.
+
+
+## Registration and replication
+
+`agents fleet auth register Profile --grant ID` binds a verified active local
+grant. It requires ready, unique profile metadata and refuses legacy credential
+files and unresolved ownership conflicts. Replacing a record requires its current
+`--expected-revision`. `status` reports public state. `allow --peer ID` requires a
+currently approved peer; `deny --peer ID` revokes grant consent. An ownership
+conflict blocks consent changes until the operator resolves the intended grant.
+
+The public record replicates as a settings resource, with exact profile-ID and
+schema validation and private destination permissions. The existing sync
+exceptions and conflict rules apply. A slot gate serializes publication with
+incoming Codex writes. Managed slots cannot receive or advertise auth/MCP or
+credential-bearing payloads through ordinary sync. Removing the record through
+a synchronized tombstone is refused; retirement needs explicit lifecycle logic.
+Both canonical conflicts and staged resolution records preserve the fence,
+including when the local ownership record is absent. Measurement and execution
+also refuse those conflicts instead of falling back to legacy credentials.
+
+Configuration revisions now cover the public record under
+`n2-profile-routing-v2`; the record does not itself prove authenticated identity.
+This registration path expects an already-verified grant. Fresh login/reset,
+historical credential inventory, offline-peer migration, keychain capture,
+retirement/recovery and general CLI integration remain unfinished.

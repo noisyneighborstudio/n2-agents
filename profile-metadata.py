@@ -2,6 +2,7 @@
 """Stable N2 profile metadata. Profile IDs are not provider account identities."""
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -16,7 +17,7 @@ MARKER = '.n2-profile'
 LEGACY = b'n2-agents profile\n'
 MAX_BYTES = 4096
 MAX_ROUTE_BYTES = 2 * 1024 * 1024
-REVISION_SCOPE = 'n2-profile-routing-v1'
+REVISION_SCOPE = 'n2-profile-routing-v2'
 ROOT = Path(__file__).resolve().parent
 
 
@@ -102,6 +103,27 @@ def report(root, machine):
 
 
 
+def owner_route(root, name, directory):
+    """Capture public owner intent, without reading credentials or contacting it."""
+    marker = Path(directory) / '.n2-owner.json'
+    address = 'settings|' + name + '|codex|.n2-owner.json'
+    conflict = Path(root) / 'fleet/sync/conflicts' / hashlib.sha256(address.encode()).hexdigest()[:12]
+    if os.path.lexists(conflict) or any(conflict.parent.glob('.resolving-'+conflict.name+'.*')):
+        return {'status': 'conflicting'}
+    if not os.path.lexists(marker):
+        return {'status': 'unmanaged'}
+    try:
+        spec = importlib.util.spec_from_file_location('n2_routing_binding', ROOT / 'fleet-auth-binding.py')
+        binding = importlib.util.module_from_spec(spec); spec.loader.exec_module(binding)
+        profile = read_marker(Path(root) / name / MARKER)
+        if profile is None:
+            raise ValueError('legacy profile')
+        record, revision = binding.read(directory, profile['profileId'])
+        return {'status': 'registered', 'revision': revision, 'binding': record}
+    except (OSError, ValueError, TypeError, RuntimeError):
+        return {'status': 'invalid'}
+
+
 def routing_inventory(root):
     result = subprocess.run([str(ROOT / 'agents'), '_profile-routes'],
                             env=dict(os.environ, N2_AGENTS_ROOT=str(root)),
@@ -156,6 +178,10 @@ def routing_inventory(root):
             route['status'] = 'missing-config' if route['resolvedConfigDir'] is None else 'missing-executable'
         except (OSError, ValueError, RuntimeError):
             route['status'] = 'invalid'
+        if vendor == 'codex':
+            route['ownerBinding'] = owner_route(root, name, home)
+            if route['ownerBinding']['status'] in ('invalid', 'conflicting'):
+                route['status'] = 'invalid-owner-binding'
         key = (name, vendor)
         if key in routes:
             raise ValueError('duplicate routing record')
@@ -177,7 +203,8 @@ def routing_report(root, machine):
         row['revisionScope'] = REVISION_SCOPE
         row['configurationRevision'] = None
         row['routes'] = [second[(row['name'], v)] for v in sorted(later_vendors) if (row['name'], v) in second]
-        if stable and machine and row['metadataStatus'] == 'ready':
+        if (stable and machine and row['metadataStatus'] == 'ready'
+                and all(route['status'] != 'invalid-owner-binding' for route in row['routes'])):
             # This revision is for N2's binding inputs, not a digest of provider
             # credentials or every project/user setting the provider may load.
             payload = {k: row[k] for k in ('name', 'profileId', 'scope', 'machineId', 'revisionScope', 'routes')}
