@@ -411,3 +411,15 @@ reviews are clear. The ad-hoc QA build and packaged CLI snapshot/symlink checks
 pass, with packaged helper bytes matching the source. The contract explicitly
 excludes credential and provider-config contents from this routing revision.
 The full regression suite passes with both metadata and routing tests included.
+
+
+### Renewal ownership plan
+
+The CLI now states the canonical constraint on concurrent managed-auth copies
+instead of describing file conflict detection as refresh coordination. The
+[renewal ownership plan](fleet-auth-ownership.md) separates fleet account identity
+from refreshable grants and specifies one owner, secret-response transport,
+same-account execution renewal, migration and provider acceptance evidence.
+These remain implementation requirements. No live grant has been migrated or
+renewed by this work. A disposable enrolled CLI check confirms the new
+provider-concurrency diagnostic; shell syntax and diff checks pass.

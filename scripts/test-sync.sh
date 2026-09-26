@@ -583,7 +583,7 @@ refute "auth matrix: a refused opt-in is not recorded" "opencode" "$(peer alpha 
 # Keep refresh/revocation gaps and unsupported credential stores explicit.
 refute "auth matrix: no provider claims the unearned word" "	supported	" "$am"
 check  "auth matrix: codex is reported partial"            "codex	partial" "$am"
-check  "auth matrix: codex names its conflict behaviour"   "refresh-conflict aware" "$am"
+check  "auth matrix: codex names the provider concurrency constraint" "OpenAI advises against sharing one managed auth.json" "$am"
 check  "auth matrix: codex states what was not verified"   "NOT verified" "$am"
 check  "auth matrix: live acceptance is scoped and dated" "2026-09-25" "$am"
 check  "auth matrix: credential store limits remain explicit" "keyring/ephemeral" "$am"

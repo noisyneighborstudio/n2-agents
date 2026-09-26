@@ -14,7 +14,7 @@ for the evidence attached to quota reads.
 | Provider | N2 support | Verified behavior and limits |
 | --- | --- | --- |
 | Claude | Partial | Profile-scoped Keychain credentials can be explicitly exported to an isolated file snapshot. In-scope file credentials replicate. The September 25 trial recorded receiving-Mac usage acceptance for five copied profiles. N2 does not continuously watch or update Keychain entries. Native refresh, logout revocation and account changes across live copies are not verified. |
-| Codex | Partial | File-backed `auth.json` replicates; the September 25 trial recorded receiving-Mac usage acceptance for five copied profiles. Concurrent file edits become conflicts. Keyring and ephemeral authentication are not exported. Provider refresh coordination and revocation of copied credentials are not verified. |
+| Codex | Partial | File-backed `auth.json` replicates; the September 25 trial recorded receiving-Mac usage acceptance for five copied profiles. Concurrent file edits become conflicts. Keyring and ephemeral authentication are not exported. OpenAI advises against sharing one managed auth file across concurrent jobs or machines. N2 has no renewal owner; file conflicts cannot coordinate provider refresh. Revocation of copied credentials is unverified. |
 | Grok | Partial | Profile `auth.json` replicates. There is no live receiving-machine authentication or refresh evidence in this review. |
 | Muse | Partial | Non-Default profiles use the file backend. Default's machine Keychain credential is not exported. There is no live receiving-machine authentication or refresh evidence in this review. |
 | Cursor | Partial settings sharing; login export unsupported | Credential-bearing settings and MCP configuration can replicate with explicit opt-in. The CLI uses a machine-wide Keychain login that changing its configuration directory does not isolate. N2 does not export or replace that login. |
@@ -40,6 +40,14 @@ use, and copying the file cache to a headless machine. A copied file does not
 replace a selected keyring or process-memory credential. Forced login/workspace
 restrictions can log out mismatched credentials, so N2 must not apply them as a
 read-only identity probe. [Codex authentication](https://learn.chatgpt.com/docs/auth).
+
+The managed-auth automation guide advises against sharing one `auth.json` across
+concurrent jobs or machines. Another machine rotating a token can invalidate the
+refresh grant. The guide excludes external-token host integrations from its
+workflow. [Codex managed-auth automation](https://learn.chatgpt.com/docs/auth/ci-cd-auth).
+
+The [renewal ownership plan](fleet-auth-ownership.md) describes the required host
+integration. It is not implemented or a claim of supported concurrent renewal.
 
 N2's merge protocol detects independent credential-file edits and asks for a
 resolution. That is a file-level guarantee. It does not establish that a
