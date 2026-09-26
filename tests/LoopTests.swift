@@ -72,6 +72,11 @@ import Foundation
         expect(pick([slot("claude", "A", used: 10), slot("claude", "B", used: 10)], effort: .standard, cooldowns: [:], busy: ["claude|A": 1])?.key == "claude|B",
                "work spreads across equal slots")
 
+        let reserved = slot("claude", "Reserve", used: 96, quota: "local-reserve")
+        expect(pick([reserved], effort: .deep, cooldowns: [:], busy: [:]) == nil,
+               "N2 reserve stays excluded without a provider-rejection label")
+        expect(unusable(reserved, cooldowns: [:]) == "at N2 scheduling reserve", "name local scheduling policy")
+
         // Plans: every problem is named, so the planner can fix exactly that.
         let bad: [String: Any] = ["plan": ["criteria": [["id": "c1", "description": "d", "verification": "v"], ["id": "c2", "description": "d", "verification": "v"]],
                                            "chunks": [["id": "x", "title": "t", "instructions": "i", "paths": [], "criteria": ["c1", "nope"], "dependsOn": ["y"], "effort": "light"],

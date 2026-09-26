@@ -70,14 +70,15 @@ struct SlotMeasurement {
             }
         }
         let full = readings.filter { $0.0 >= 95 }
-        let restricted = status == "restricted" || !restrictions.isEmpty || !full.isEmpty
+        let restricted = status == "restricted" || !restrictions.isEmpty
         // A missing reset must not turn another bucket's reset into a promise
         // that the entire account will be available at that time.
         let resetEvidence = full.map { $0.1 } + restrictions.map { date($0["resetsAt"]) }
+            + (status == "restricted" && restrictions.isEmpty ? [nil] : [])
         let resets = !resetEvidence.isEmpty && resetEvidence.allSatisfy { $0 != nil } && !incomplete
             ? resetEvidence.compactMap { $0 }.max() : nil
         return SlotMeasurement(provider: provider, profile: profile,
-                               status: restricted ? "restricted" : (incomplete || readings.isEmpty ? "fetch-error" : "ok"),
+                               status: restricted ? "restricted" : (incomplete || readings.isEmpty ? "fetch-error" : (!full.isEmpty ? "local-reserve" : "ok")),
                                used: readings.map { $0.0 }.max(), resets: resets)
     }
 }

@@ -59,6 +59,80 @@ class ReaderTests(unittest.TestCase):
             database.symlink_to(database.with_suffix('.saved'))
             self.assertEqual(read()['status'], 'fetch-error', 'unreadable rejection state cannot advertise capacity')
 
+    def test_reserve_is_policy_not_provider_rejection(self):
+        fixtures = [
+            ('claude', {'five_hour': {'utilization': 20}, 'seven_day_opus': {'utilization': 96}}),
+            ('codex', {'_native': True, 'rateLimitsByLimitId': {
+                'custom': {'primary': {'usedPercent': 96, 'windowDurationMins': 15}}}}),
+        ]
+        for vendor, data in fixtures:
+            with self.subTest(vendor=vendor), tempfile.TemporaryDirectory() as root:
+                def read(fmt):
+                    output = io.StringIO()
+                    with patch.dict(os.environ, {'N2_USAGE_ROOT': root, 'N2_USAGE_ORIGIN': 'fixture-peer', 'N2_USAGE_FORMAT': fmt}), \
+                         patch.object(u.sys, 'argv', ['usage.py', vendor, 'Default=/fixture']), \
+                         patch.object(u, vendor, return_value=('ok', lambda: data)), contextlib.redirect_stdout(output):
+                        u.main()
+                    return output.getvalue()
+                measured = json.loads(read('json'))
+                self.assertEqual(measured['status'], 'ok')
+                self.assertEqual(measured['restrictions'], [])
+                self.assertEqual(max(w['usedPercent'] for w in measured['windows']), 96)
+                self.assertEqual(read('tsv').strip().split('\t')[4], 'local-reserve')
+                with sqlite3.connect(Path(root) / '.usage/events.sqlite') as db:
+                    events = [json.loads(row[0]) for row in db.execute('SELECT body FROM events')]
+                self.assertTrue(all(event['data']['status'] == 'ok' for event in events))
+                self.assertTrue(all(event['data']['restrictions'] == [] for event in events))
+
+    def test_incomplete_model_bucket_cannot_hide_behind_healthy_general_window(self):
+        for fmt in ('json', 'tsv'):
+            output = io.StringIO()
+            with tempfile.TemporaryDirectory() as root, \
+                 patch.dict(os.environ, {'N2_USAGE_ROOT': root, 'N2_USAGE_FORMAT': fmt}), \
+                 patch.object(u.sys, 'argv', ['usage.py', 'claude', 'Default=/fixture']), \
+                 patch.object(u, 'claude', return_value=('ok', lambda: {
+                     'five_hour': {'utilization': 20}, 'seven_day_opus': {'utilization': 'unreadable'}})), \
+                 contextlib.redirect_stdout(output):
+                u.main()
+            status = json.loads(output.getvalue())['status'] if fmt == 'json' else output.getvalue().strip().split('\t')[4]
+            self.assertEqual(status, 'fetch-error')
+
+    def test_malformed_limit_containers_are_not_silently_dropped(self):
+        fixtures = [
+            ('claude', {'five_hour': {'utilization': 20}, 'seven_day_opus': 'malformed'}),
+            ('codex', {'_native': True, 'rateLimitsByLimitId': {
+                'normal': {'primary': {'usedPercent': 20, 'windowDurationMins': 300}}, 'model': 'malformed'}}),
+            ('codex', {'_native': True, 'rateLimitsByLimitId': 'malformed',
+                       'rateLimits': {'primary': {'usedPercent': 20}}}),
+            ('codex', {'rate_limit': {'primary_window': {'used_percent': 20}}, 'additional_rate_limits': ['malformed']}),
+        ]
+        for malformed in (False, 0, "", {}):
+            fixtures.append(('codex', {'rate_limit': {'primary_window': {'used_percent': 20}},
+                                      'additional_rate_limits': malformed}))
+        for malformed in (False, 0, ""):
+            fixtures.append(('codex', {'rate_limit': malformed, 'additional_rate_limits': [
+                {'limit_name': 'healthy', 'primary_window': {'used_percent': 20}}]}))
+            fixtures.append(('codex', {'rate_limit': {'primary_window': {'used_percent': 20}},
+                'additional_rate_limits': [{'limit_name': 'model', 'rate_limit': malformed}]}))
+            fixtures.append(('codex', {'_native': True, 'rateLimits': malformed}))
+        for vendor, data in fixtures:
+            for fmt in ('json', 'tsv'):
+                output = io.StringIO()
+                with tempfile.TemporaryDirectory() as root, \
+                     patch.dict(os.environ, {'N2_USAGE_ROOT': root, 'N2_USAGE_FORMAT': fmt}), \
+                     patch.object(u.sys, 'argv', ['usage.py', vendor, 'Default=/fixture']), \
+                     patch.object(u, vendor, return_value=('ok', lambda: data)), contextlib.redirect_stdout(output):
+                    u.main()
+                status = json.loads(output.getvalue())['status'] if fmt == 'json' else output.getvalue().strip().split('\t')[4]
+                self.assertEqual(status, 'fetch-error', (vendor, fmt))
+        self.assertEqual(len(u.details('claude', {'five_hour': {'utilization': 20}, 'seven_day_opus': None})['windows']), 1)
+
+    def test_provider_rejection_does_not_fabricate_full_utilization(self):
+        data = {'rate_limit': {'limit_reached': True, 'primary_window': {
+            'used_percent': 20, 'limit_window_seconds': 604800}}}
+        self.assertEqual(u.codex_row(data)[1], 20)
+        self.assertTrue(u.details('codex', data)['restrictions'])
+
     def test_native_workspace_identity_separates_users_and_workspaces(self):
         response = {'_native': True, 'account': {'email': 'one@example.invalid'},
                     'workspaceRouting': {'chatgptAccountId': 'workspace-one', 'backendOrigin': 'https://chatgpt.com'}}

@@ -1,0 +1,54 @@
+{
+  "scope": "local implementation host, not M4/M5 fleet comparison",
+  "machine": "seth-agent",
+  "providerCLI": "codex-cli 0.157.1",
+  "command": "agents best --json --vendor codex",
+  "modelTurnsStarted": 0,
+  "observations": [
+    {
+      "provider": "codex",
+      "profile": "Default",
+      "observedAt": "2026-09-26T08:47:48.470518+00:00",
+      "source": "codex-app-server",
+      "status": "ok",
+      "windows": [
+        {
+          "scope": "codex:primary",
+          "usedPercent": 1,
+          "durationSeconds": 604800,
+          "resetsAt": 1791015916
+        }
+      ],
+      "restrictions": [],
+      "identity": {
+        "status": "verified",
+        "accountHash": "2ddea33d1f4be9e891cdb1032ff57c19840d359bd5aaf1e21f9d8a48b5ea87af"
+      }
+    },
+    {
+      "provider": "codex",
+      "profile": "ExpoIO",
+      "observedAt": "2026-09-26T08:47:49.637920+00:00",
+      "source": "codex-app-server",
+      "status": "restricted",
+      "windows": [
+        {
+          "scope": "codex:primary",
+          "usedPercent": 100,
+          "durationSeconds": 604800,
+          "resetsAt": 1790436012
+        }
+      ],
+      "restrictions": [
+        {
+          "scope": "codex",
+          "reason": "rate_limit_reached"
+        }
+      ],
+      "identity": {
+        "status": "verified",
+        "accountHash": "0051c0af88fc3b46277fe3fd783c613a1eb9f018188e384d12b88ca2d028150a"
+      }
+    }
+  ]
+}

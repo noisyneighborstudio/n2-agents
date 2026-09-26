@@ -162,3 +162,32 @@ The actual SwiftUI detail component was rendered at 360 points and visually
 inspected with synthetic evidence. The QA app package builds and validates with
 ad-hoc signing; it was not installed. This component check does not complete the
 remaining native fleet notification and end-to-end GUI acceptance checks.
+
+Numeric usage at N2's 95% reserve now stays distinct from a provider rejection.
+The structured feed and journal retain the measured percentage and no invented
+restriction; legacy TSV emits `local-reserve` so all CLI selectors still exclude
+that slot. Loop selection names the reserve separately. A provider rejection no
+longer fabricates 100% utilization in legacy columns. Present but unreadable
+limit buckets make the reading unavailable, including malformed falsey container
+values. All 27 reader tests, focused slot tests and the full regression suite
+pass; independent follow-up reviews are clear. The QA app package builds and
+validates with ad-hoc signing, without installation.
+
+A fresh local Codex 0.157.1 read on September 26 at 08:47 UTC returned verified,
+distinct measurement identities: Default at 1% weekly usage, ExpoIO at 100% with
+an explicit provider restriction. The sanitized observations are in
+[the local Codex audit](audits/usage-2026-09-26-local-codex.json). No model turn was
+started. This is local measurement evidence, not a new M4/M5 account comparison
+or proof of the identity used by an execution process.
+
+The installed Codex CLI's generated experimental schema includes
+`GetAccountResponse.workspaceRouting`, thread/turn `approvalsReviewer`, and
+external-token authentication. The ordinary schema omits the experimental
+routing field. The [official app-server documentation](https://learn.chatgpt.com/docs/app-server)
+describes externally supplied tokens and host-owned refresh; this is a possible
+binding mechanism, not an implemented N2 launch receipt. The current loop still
+executes a separate CLI process after measurement. Claude's
+[documented authentication precedence](https://code.claude.com/docs/en/authentication)
+also permits project/settings and environment credentials to change the route.
+Execution identity must therefore remain explicitly unverified until the launch
+path itself establishes and preserves the account binding.

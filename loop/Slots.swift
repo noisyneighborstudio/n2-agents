@@ -101,6 +101,7 @@ func unusable(_ s: Slot, cooldowns: [String: Cooldown], now: Date = Date()) -> S
     if let c = cooldowns[s.key], c.until > now { return c.reason }
     switch s.quota {
     case "no-token", "stale-token": return "sign-in expired (\(s.quota))"
+    case "local-reserve": return "at N2 scheduling reserve"
     case "ok":
         guard let u = s.used, u.isFinite, u >= 0, u <= 100 else { return "usage unknown" }
         if u >= 95 { return "\(Int(u))% of quota used (local reserve)" }

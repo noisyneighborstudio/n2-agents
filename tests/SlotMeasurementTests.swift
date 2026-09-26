@@ -15,7 +15,7 @@ import Foundation
         let healthy: [String: Any] = ["scope": "primary", "usedPercent": 10]
         let full: [String: Any] = ["scope": "custom:model", "usedPercent": 99, "resetsAt": now.addingTimeInterval(100).timeIntervalSince1970]
         let custom = try parse(windows: [healthy, full])
-        precondition(custom.status == "restricted" && custom.used == 99 && custom.resets == now.addingTimeInterval(100))
+        precondition(custom.status == "local-reserve" && custom.used == 99 && custom.resets == now.addingTimeInterval(100))
         let unknownReset = try parse(windows: [full, ["usedPercent": 100]])
         precondition(unknownReset.resets == nil)
         let explicit = try parse(windows: [healthy], restrictions: [["scope": "account", "reason": "blocked"]])
@@ -45,6 +45,8 @@ import Foundation
         precondition(failed.used == nil)
         let restricted = try parse(windows: [], status: "restricted")
         precondition(restricted.status == "restricted")
+        let unexplained = try parse(windows: [full], status: "restricted")
+        precondition(unexplained.resets == nil, "a restriction cannot borrow an unrelated window reset")
         precondition(SlotMeasurement.date("2027-01-15T08:00:00.123Z") != nil)
         precondition(SlotMeasurement.parse("not JSON", now: now) == nil)
         print("Structured slot measurement tests passed")

@@ -210,8 +210,10 @@ def details(vendor, data):
     result = {'windows': [], 'restrictions': [], 'credits': {},
               'identity': {'status': 'unknown'}, 'source': vendor + '-usage'}
     def window(scope, value, seconds=None, native=False):
+        if value is None:
+            return  # optional window not supplied by this plan
         if not isinstance(value, dict):
-            return
+            raise ValueError('invalid limit window')
         used = number(value.get('usedPercent' if native else 'used_percent', value.get('utilization')))
         duration = value.get('windowDurationMins') if native else value.get('limit_window_seconds', seconds)
         if native and isinstance(duration, (int, float)):
@@ -245,19 +247,29 @@ def details(vendor, data):
                                                   organizationHash=hashlib.sha256(workspace.encode()).hexdigest())
 
             buckets = data.get('rateLimitsByLimitId')
+            if buckets is not None and not isinstance(buckets, dict):
+                raise ValueError('invalid limit bucket map')
             if not isinstance(buckets, dict) or not buckets:
-                single = data.get('rateLimits') or {}
+                single = data.get('rateLimits')
+                if single is None: single = {}
+                if not isinstance(single, dict):
+                    raise ValueError('invalid limit snapshot')
                 buckets = {single.get('limitId') or 'codex': single}
         else:
-            buckets = {'codex': data.get('rate_limit') or {}}
-            extra = data.get('additional_rate_limits') or []
-            if isinstance(extra, list):
-                for i, item in enumerate(extra):
-                    if isinstance(item, dict):
-                        buckets[str(item.get('limit_name') or item.get('limit_id') or i)] = item.get('rate_limit') or item
+            primary = data.get('rate_limit')
+            buckets = {'codex': {} if primary is None else primary}
+            extra = data.get('additional_rate_limits')
+            if extra is None: extra = []
+            if not isinstance(extra, list):
+                raise ValueError('invalid additional limits')
+            for i, item in enumerate(extra):
+                if not isinstance(item, dict):
+                    raise ValueError('invalid additional limit')
+                nested = item.get('rate_limit')
+                buckets[str(item.get('limit_name') or item.get('limit_id') or i)] = item if nested is None else nested
         for scope, bucket in buckets.items():
             if not isinstance(bucket, dict):
-                continue
+                raise ValueError('invalid limit bucket')
             for key in (('primary', 'secondary') if native else ('primary_window', 'secondary_window')):
                 window(str(scope) + ':' + key, bucket.get(key), native=native)
             reached = bucket.get('rateLimitReachedType') if native else bucket.get('limit_reached') or bucket.get('allowed') is False
@@ -319,7 +331,7 @@ def codex_row(r):
     cols = {}
     for w in (rl.get('primary_window'), rl.get('secondary_window')):
         if w:
-            used = 100 if rl.get('limit_reached') else w.get('used_percent', '-')
+            used = w.get('used_percent', '-')
             reset = time.strftime('%Y-%m-%dT%H:%M', time.gmtime(w['reset_at'])) if w.get('reset_at') else '-'
             cols['five' if w.get('limit_window_seconds', 0) <= 5 * 3600 else 'seven'] = (used, reset)
     five, seven = cols.get('five', ('-', '-')), cols.get('seven', ('-', '-'))
@@ -456,12 +468,13 @@ def main():
                 measurement = details(vendor, data)
                 columns = row(data)
                 status = data.get('_status', 'ok')
-                extra_windows = [w for w in measurement['windows']
-                                 if w['usedPercent'] is not None and w['usedPercent'] >= 95
-                                 and (w['durationSeconds'] not in (18000, 604800)
-                                      or (vendor == 'claude' and w['scope'] not in ('five_hour', 'seven_day')))]
-                if measurement['restrictions'] or extra_windows:
+                if measurement['restrictions']:
                     status = 'restricted'
+                elif status == 'ok' and vendor in ('claude', 'codex') and (
+                        not measurement['windows'] or any(w['usedPercent'] is None for w in measurement['windows'])):
+                    # A healthy general window cannot hide an unreadable model
+                    # limit. Apply the same rule to JSON and legacy consumers.
+                    status = 'fetch-error'
         except urllib.error.HTTPError as e:
             status = {429: 'rate-limited', 401: 'stale-token', 403: 'stale-token'}.get(e.code, 'fetch-error')
         except Exception:
@@ -490,6 +503,11 @@ def main():
                                 'display': {'shortUsed': five, 'longUsed': seven,
                                             'shortResets': five_at, 'longResets': seven_at}})
             print(json.dumps(measurement, allow_nan=False, separators=(',', ':')))
+        elif status == 'ok' and any(w['usedPercent'] is not None and w['usedPercent'] >= 95
+                                   for w in measurement['windows']):
+            # TSV cannot retain all buckets. Preserve its conservative selection
+            # gate, but identify N2's reserve rather than a provider rejection.
+            print(f"{name}\t{five}\t{seven}\t{five_at}\tlocal-reserve\t{seven_at}")
         elif status not in ('ok', 'restricted'):
             print(f"{name}\t-\t-\t-\t{status}")
         else:

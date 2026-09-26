@@ -418,8 +418,8 @@ EOF
   echo "$pb_best"
 }
 
-# --porcelain prints usage_table's rows untouched — the tray's quota meters
-# parse it, so like `agents porcelain` it is a contract, not a display:
+# --porcelain prints legacy usage rows. Native UI and loop selection use
+# --json for all buckets. local-reserve denotes N2 policy, not provider denial:
 #   <profile> <5h%> <7d%> <5h-resets UTC> <note: ok|no-token|stale-token|rate-limited|fetch-error|no-usage-api|shared-login> [<7d-resets UTC>]
 # The 7d columns hold the lab's long window, whatever its length
 # (vendor_long_window). shared-login: the slot uses Default's login and quota.
