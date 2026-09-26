@@ -24,4 +24,6 @@ A slice is complete only after these commands pass locally and CI passes on its 
 - Existing test suite contains sleep-based checks. New tests must wait on observable events; convert old waits when their behavior enters a slice.
 - Security review and live-provider acceptance remain outstanding in `docs/fleet-readiness.md`.
 
+- The Ctrl-C exit timeout in CI 36269470567 remains unresolved. The unchanged full suite and 180 bounded local terminal checks passed. Preserve the assertion; a recurrence needs signal/exit receipts and process-state evidence before a repair. Evidence: `docs/audits/terminal-ci-failure-spike.md`.
+
 - Provider lifetime smoke cleanup raised `PermissionError` once at `os.killpg` after the lifetime assertions; the immediate isolated rerun passed. Investigate cleanup process-group lifetime if it recurs; do not suppress permission errors without evidence.

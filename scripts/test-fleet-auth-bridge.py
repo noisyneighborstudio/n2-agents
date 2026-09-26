@@ -653,6 +653,7 @@ m.terminal(None, sys.argv[2], sys.argv[3], [sys.argv[4]])
                 [sys.executable, '-c', code, str(ROOT / 'fleet-auth-bridge.py'),
                  directory, str(frontend), str(events)],
                 stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
+            exited = False
             try:
                 self.assertTrue(select.select([reader], [], [], 5)[0], 'frontend startup receipt missing')
                 receipt = json.loads(os.read(reader, 4096))
@@ -666,6 +667,7 @@ m.terminal(None, sys.argv[2], sys.argv[3], [sys.argv[4]])
                 self.assertTrue(select.select([reader], [], [], 5)[0], 'frontend survived bridge SIGKILL')
                 self.assertEqual(os.read(reader, 4096), b'', 'frontend lifetime pipe must close')
                 self.assertTrue(exits.control(None, 1, 5), 'supervisor did not exit')
+                exited = True
                 restored = termios.tcgetattr(slave)
                 # Darwin sets PENDIN when returning to canonical input. The
                 # SDK marks this as pending-input state, not a terminal mode.
@@ -673,10 +675,13 @@ m.terminal(None, sys.argv[2], sys.argv[3], [sys.argv[4]])
                 original_modes[3] &= ~termios.PENDIN
                 self.assertEqual(restored, original_modes, 'terminal modes were not restored')
             finally:
-                try:
-                    os.killpg(bridge.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+                # Both exit receipts make a group signal unnecessary. Darwin
+                # can reject signals to an exited, unreaped group with EPERM.
+                if not exited:
+                    try:
+                        os.killpg(bridge.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
                 bridge.wait(timeout=5)
                 exits.close()
                 os.close(reader)

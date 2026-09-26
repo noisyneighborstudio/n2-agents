@@ -1,0 +1,32 @@
+{
+  "ci": {
+    "head": "69863c3d7fb0f3a31d5ba32dd0b2a5d8582e3ee4",
+    "pushRun": 36269467858,
+    "pushResult": "success",
+    "prRun": 36269470567,
+    "prResult": "failure",
+    "failures": [
+      "cleanup killpg PermissionError",
+      "supervisor SIGINT wait timed out after 5 seconds"
+    ]
+  },
+  "boundedRuns": [
+    {
+      "python": "3.9.1",
+      "tests": 90,
+      "result": "passed"
+    },
+    {
+      "python": "3.14.3",
+      "tests": 90,
+      "result": "passed"
+    }
+  ],
+  "exitedUnreapedGroup": {
+    "exitObservedBy": "kqueue NOTE_EXIT",
+    "signal": "SIGKILL",
+    "result": "PermissionError",
+    "errno": 1
+  },
+  "sigintCause": "unresolved"
+}
