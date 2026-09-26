@@ -119,6 +119,14 @@ import Foundation
         check(read(record, provider: "cursor").used == 40, "other collectors retain measured display fallback")
         record["credits"] = ["overage": ["is_enabled": 1]]
         check(read(record, provider: "cursor").creditNotes.isEmpty, "numeric credit flags are not booleans")
+        if CommandLine.arguments.count > 1 {
+            let text = try! String(contentsOfFile: CommandLine.arguments[1], encoding: .utf8)
+            let rows = Usage.parseJSON(text, provider: "claude")
+            check(rows["Available"]?.used == 56, "product-share attribution cannot become quota usage")
+            check(rows["Available"]?.windows?.count == 3, "all provider allowance windows reach native UI")
+            check(rows["ModelLimited"]?.used == 100 && rows["ModelLimited"]?.maxed == true,
+                  "model limit must block native next-agent eligibility")
+        }
         print("Usage structured observations, freshness, restrictions, and failure tests passed")
     }
 }

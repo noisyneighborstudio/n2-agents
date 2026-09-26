@@ -17,4 +17,6 @@ python3 scripts/test-fleet-auth-migration.py \
   MigrationTests.test_lost_reply_keeps_coordinator_pending_without_fabricating_acknowledgement \
   MigrationTests.test_coordinated_abandon_waits_for_peers_and_rejects_late_prepare
 
+python3 scripts/test-usage-reader.py ReaderTests.test_current_claude_limits_exclude_product_share_and_retain_model_limit
+
 exec python3 scripts/test-codex-rpc.py ParentLifetimeTests

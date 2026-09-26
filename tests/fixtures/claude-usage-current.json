@@ -1,0 +1,79 @@
+{
+  "limits": [
+    {
+      "kind": "session",
+      "group": "session",
+      "percent": 1,
+      "severity": "normal",
+      "resets_at": "2026-09-26T20:09:59.793720+00:00",
+      "scope": null,
+      "is_active": false
+    },
+    {
+      "kind": "weekly_all",
+      "group": "weekly",
+      "percent": 56,
+      "severity": "normal",
+      "resets_at": "2026-10-02T14:00:00.793740+00:00",
+      "scope": null,
+      "is_active": true
+    },
+    {
+      "kind": "weekly_scoped",
+      "group": "weekly",
+      "percent": 0,
+      "severity": "normal",
+      "resets_at": "2026-10-02T13:59:59.793901+00:00",
+      "scope": {
+        "model": {
+          "id": null,
+          "display_name": "Fable"
+        },
+        "surface": null
+      },
+      "is_active": false
+    }
+  ],
+  "five_hour": {
+    "utilization": 1.0,
+    "resets_at": "2026-09-26T20:09:59.793720+00:00",
+    "limit_dollars": null,
+    "used_dollars": null,
+    "remaining_dollars": null,
+    "locked_reason": null
+  },
+  "seven_day": {
+    "utilization": 56.0,
+    "resets_at": "2026-10-02T14:00:00.793740+00:00",
+    "limit_dollars": null,
+    "used_dollars": null,
+    "remaining_dollars": null,
+    "locked_reason": null
+  },
+  "seven_day_breakdown": {
+    "as_of": "2026-09-26T19:21:55.818398+00:00",
+    "window_started_at": "2026-09-25T14:00:00.793740+00:00",
+    "rows": [
+      {
+        "key": "claude_code",
+        "display_name": "Claude Code",
+        "percent": 99
+      },
+      {
+        "key": "chat",
+        "display_name": "Chats",
+        "percent": 0
+      },
+      {
+        "key": "cowork",
+        "display_name": "Cowork",
+        "percent": 1
+      },
+      {
+        "key": "other",
+        "display_name": "Other",
+        "percent": 0
+      }
+    ]
+  }
+}

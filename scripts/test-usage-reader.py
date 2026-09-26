@@ -17,6 +17,28 @@ u = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(u)
 
 class ReaderTests(unittest.TestCase):
+    def test_current_claude_limits_exclude_product_share_and_retain_model_limit(self):
+        data=json.loads((Path(__file__).resolve().parents[1]/'tests/fixtures/claude-usage-current.json').read_text())
+        def read(fmt):
+            output=io.StringIO()
+            with patch.dict(os.environ, {'N2_USAGE_FORMAT':fmt}, clear=True), \
+                 patch.object(u.sys,'argv',['usage.py','claude','Default=/fixture']), \
+                 patch.object(u,'claude',return_value=('ok',lambda:data)), contextlib.redirect_stdout(output):
+                u.main()
+            return output.getvalue()
+        result=json.loads(read('json'))
+        self.assertEqual(result['status'],'ok')
+        self.assertEqual({w['scope']:w['usedPercent'] for w in result['windows']},
+                         {'five_hour':1,'seven_day':56,'seven_day_fable':0})
+        self.assertEqual(read('tsv').strip().split('\t')[4],'ok')
+        data['limits'][2]['percent']=100
+        result=json.loads(read('json'))
+        self.assertEqual(next(w for w in result['windows'] if w['scope']=='seven_day_fable')['usedPercent'],100)
+        self.assertEqual(read('tsv').strip().split('\t')[4],'local-reserve')
+        for malformed in (None,True,101,'100'):
+            data['limits'][2]['percent']=malformed
+            self.assertEqual(json.loads(read('json'))['status'],'fetch-error')
+
     def test_success_and_failure_are_retained_with_original_times(self):
         with tempfile.TemporaryDirectory() as root:
             with patch.dict(os.environ, {'N2_USAGE_ROOT': root, 'N2_USAGE_ORIGIN': 'fixture-peer'}), \

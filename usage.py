@@ -252,8 +252,43 @@ def details(vendor, data):
     elif vendor == 'claude':
         result['identity'] = data.get('_identity', {'status': 'unknown'})
         for key, value in data.items():
-            if key == 'five_hour' or key.startswith('seven_day'):
+            # Product-share attribution is not an allowance window.
+            if key != 'seven_day_breakdown' and (key == 'five_hour' or key.startswith('seven_day')):
                 window(key, value, 18000 if key == 'five_hour' else 604800)
+        if data.get('limits') is not None:
+            limits = data['limits']
+            if not isinstance(limits, list) or not limits or len(limits) > 128:
+                raise ValueError('invalid Claude limits')
+            seen = set()
+            for limit in limits:
+                if (not isinstance(limit, dict) or number(limit.get('percent')) is None
+                        or limit.get('severity') != 'normal' or type(limit.get('is_active')) is not bool):
+                    raise ValueError('unrecognized Claude limit')
+                kind, group, scope = limit.get('kind'), limit.get('group'), limit.get('scope')
+                if kind == 'session' and group == 'session' and scope is None:
+                    key, duration = 'five_hour', 18000
+                elif kind == 'weekly_all' and group == 'weekly' and scope is None:
+                    key, duration = 'seven_day', 604800
+                elif kind == 'weekly_scoped' and group == 'weekly' and isinstance(scope, dict):
+                    model = scope.get('model')
+                    if not isinstance(model, dict) or scope.get('surface') is not None:
+                        raise ValueError('unrecognized Claude scope')
+                    label = model.get('id') or model.get('display_name')
+                    if (not isinstance(label, str) or not 1 <= len(label) <= 64
+                            or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-' for c in label)):
+                        raise ValueError('invalid Claude model scope')
+                    key, duration = 'seven_day_' + label.lower(), 604800
+                else:
+                    raise ValueError('unrecognized Claude limit kind')
+                if key in seen:raise ValueError('duplicate Claude limit')
+                seen.add(key)
+                existing = next((w for w in result['windows'] if w['scope'] == key), None)
+                if existing is not None:
+                    if existing['usedPercent'] != limit['percent']:raise ValueError('conflicting Claude limit')
+                else:
+                    window(key, {'utilization': limit['percent'], 'resets_at': limit.get('resets_at')}, duration)
+                # is_active is not used to omit a returned allowance: observed
+                # session and model windows can both carry false.
         extra = data.get('extra_usage') or {}
         if isinstance(extra, dict):
             result['credits']['overage'] = {k: extra[k] for k in ('is_enabled', 'monthly_limit', 'used_credits', 'utilization', 'disabled_reason', 'spend_limit_reached')
