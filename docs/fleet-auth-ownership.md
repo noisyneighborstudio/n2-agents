@@ -498,3 +498,27 @@ profile. This is broker retirement, not provider-side revocation; credentials
 already held by an unmanaged process may remain usable until provider expiry or
 revocation. The command does not delete credential files or claim migration is
 complete.
+
+
+## Remote login message contract
+
+The login-control wire now has a separate SSH signature namespace from token
+responses. Each short-lived request binds its owner, requester, nonce, operation
+ID, action, profile ID, current grant/ownership generation, account hash, binding
+revision and explicit account-replacement permission. Actions are `start`,
+`status`, `finish` and `cancel`; repeated polling uses a fresh nonce.
+
+Replies contain only a bounded status, a validated device challenge when needed,
+or a completed public replacement binding. A completed replacement must belong
+to the same profile and owner, name a new grant, and preserve the original account
+unless replacement was explicitly allowed. Unknown fields, including token
+fields, are rejected. Each verifier accepts at most one reply. The private
+pinned-SSH carrier keeps replies in memory; generic `fleet send auth-login` is
+refused before dialing because that path creates response files.
+
+This increment implements the wire and carrier only. The owner endpoint and
+operation worker remain unfinished. They must persist requester-bound operation
+intent, enforce management consent and current approval, correlate native login
+completion, handle disconnect/cancel/expiry, and serialize final publication with
+cancellation and the original binding revision. A signed message alone is not
+permission to start login, replace an account or publish a binding.

@@ -30,16 +30,23 @@ def bounded_file(path, maximum):
         os.close(descriptor)
 
 
-def validate_request(root, peer, path):
+def login_codec():
+    spec=importlib.util.spec_from_file_location('n2_login_wire',ROOT/'fleet-auth-login-wire.py')
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
+
+
+def validate_request(root, peer, path, protocol='token'):
     context = codec.decode_json(bounded_file(path, 4096))
-    codec.validate_context(context, time.time())
+    if protocol=='token':codec.validate_context(context,time.time())
+    elif protocol=='login':login_codec().validate_context(context)
+    else:raise ValueError('unknown auth protocol')
     identity, _ = codec.public_identity(bounded_file(Path(root) / 'fleet/identity/id_ed25519.pub', 1024))
     if context['owner'] != peer or context['recipient'] != identity:
         raise ValueError('request belongs to another machine')
     return context
 
 
-def exchange(root, context, owner_public_key, deadline, agents=None):
+def exchange(root, context, owner_public_key, deadline, agents=None, protocol='token'):
     """Return a verified token reply, never raw carrier output.
 
     Consent for the grant is enforced by its owner. The carrier checks approved
@@ -48,15 +55,19 @@ def exchange(root, context, owner_public_key, deadline, agents=None):
     """
     process = None
     try:
-        verifier = codec.ResponseVerifier(context, owner_public_key, deadline)
+        if protocol=='token':verifier=codec.ResponseVerifier(context,owner_public_key,deadline)
+        elif protocol=='login':verifier=login_codec().Verifier(context,owner_public_key,deadline)
+        else:raise ValueError('unknown auth protocol')
         context = verifier.context
         root = str(Path(root).resolve(strict=True))
         with tempfile.TemporaryDirectory(prefix='n2-auth-request-') as directory:
             payload = Path(directory) / 'request'
             # Whitelisted public request context only. Never spool the response.
             payload.write_bytes(codec.canonical(context))
-            validate_request(root, context['owner'], payload)
-            process = subprocess.Popen([str(agents or ROOT / 'agents'), '_fleet-auth-call', context['owner'], str(payload)],
+            validate_request(root,context['owner'],payload,protocol)
+            command=[str(agents or ROOT/'agents'),'_fleet-auth-call',context['owner'],str(payload)]
+            if protocol=='login':command.append('login')
+            process = subprocess.Popen(command,
                                        env=dict(os.environ, N2_AGENTS_ROOT=root, N2_FLEET_DEBUG=''),
                                        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                        start_new_session=True, bufsize=0)
@@ -99,7 +110,7 @@ def exchange(root, context, owner_public_key, deadline, agents=None):
 
 if __name__ == '__main__':
     try:
-        if len(sys.argv) != 5 or sys.argv[1] != 'validate-request':
+        if len(sys.argv) not in (5,6) or sys.argv[1] != 'validate-request':
             raise ValueError('invalid arguments')
         validate_request(*sys.argv[2:])
     except Exception:

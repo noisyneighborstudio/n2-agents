@@ -79,7 +79,7 @@ def public_identity(public_key):
     return fingerprint, b'ssh-ed25519 ' + fields[1]
 
 
-def public_signature(signature, public_key):
+def public_signature(signature, public_key, expected_namespace=NAMESPACE):
     # Never write an arbitrary response field to a temporary file. Parse the
     # public SSHSIG structure, then rebuild its armor before verification.
     lines = signature.strip().splitlines()
@@ -105,7 +105,7 @@ def public_signature(signature, public_key):
     value, inner = field(signed, inner)
     if (offset != len(blob) or inner != len(signed) or kind != b'ssh-ed25519' or len(value) != 64
             or key != base64.b64decode(public_key.split()[1], validate=True)
-            or namespace != NAMESPACE.encode() or reserved or algorithm not in (b'sha256', b'sha512')):
+            or namespace != expected_namespace.encode() or reserved or algorithm not in (b'sha256', b'sha512')):
         raise ValueError('invalid signature structure')
     encoded = base64.b64encode(blob)
     return b'-----BEGIN SSH SIGNATURE-----\n' + b'\n'.join(encoded[i:i+70] for i in range(0, len(encoded), 70)) + b'\n-----END SSH SIGNATURE-----\n'

@@ -752,7 +752,7 @@ fleet_carry() {  # fleet_carry <peerdir> ; message on stdin, reply on stdout
 fleet_call() {  # fleet_call <peerid> <verb> [payload-file] -> payload on stdout
   pid=$1 verb=$2 pf=${3:-/dev/null}
   case $verb in ''|*[!a-z-]*) echo "ERR malformed-verb" >&2; return 1 ;; esac
-  [ "$verb" != auth-token ] || { echo "ERR private-carrier-required" >&2; return 1; }
+  case $verb in auth-token|auth-login) echo "ERR private-carrier-required" >&2; return 1 ;; esac
   d=$(fleet_peer_dir "$pid")
   [ -d "$d" ] || { echo "ERR unknown-peer" >&2; return 1; }
   fleet_approved "$pid" || { echo "ERR not-approved" >&2; return 1; }
@@ -783,9 +783,10 @@ fleet_call() {  # fleet_call <peerid> <verb> [payload-file] -> payload on stdout
 # by fleet-auth-transport.py, which verifies their owner signature and context.
 fleet_auth_call() (
   set +e
-  [ "$#" = 2 ] || return 1
-  ac_peer=$1 ac_payload=$2
-  /usr/bin/python3 "$scripts_dir/fleet-auth-transport.py" validate-request "$root" "$ac_peer" "$ac_payload" 2>/dev/null || return 1
+  [ "$#" = 2 ] || [ "$#" = 3 ] || return 1
+  ac_peer=$1 ac_payload=$2 ac_protocol=${3:-token}
+  case $ac_protocol in token) ac_verb=auth-token ;; login) ac_verb=auth-login ;; *) return 1 ;; esac
+  /usr/bin/python3 "$scripts_dir/fleet-auth-transport.py" validate-request "$root" "$ac_peer" "$ac_payload" "$ac_protocol" 2>/dev/null || return 1
   ac_dir=$(fleet_peer_dir "$ac_peer")
   fleet_approved "$ac_peer" || return 1
   [ "$(fleet_fp "$ac_dir/key.pub")" = "$ac_peer" ] || return 1
@@ -793,7 +794,7 @@ fleet_auth_call() (
   [ -z "$(fleet_meta "$ac_dir" bootstrap 2>/dev/null)" ] || return 1
   ac_tmp=$(mktemp -d "${TMPDIR:-/tmp}/n2auth-call.XXXXXX") || return 1
   trap 'rm -rf "$ac_tmp"' EXIT
-  fleet_envelope "$ac_peer" auth-token "$ac_payload" > "$ac_tmp/request" || return 1
+  fleet_envelope "$ac_peer" "$ac_verb" "$ac_payload" > "$ac_tmp/request" || return 1
   N2_FLEET_AUTH_CARRIER=1 N2_FLEET_DEBUG= fleet_carry "$ac_dir" < "$ac_tmp/request"
   ac_rc=$?
   [ "$ac_rc" = 0 ] || return 1

@@ -713,3 +713,20 @@ The ad-hoc QA package and helper parity pass; no app is installed. Correctness
 review is clear. The independent security-review gate remains outstanding from
 the prior automatic approval rejection. Remote orchestration, migration, broader
 execution routing and full fleet/provider acceptance remain required.
+
+
+### Remote login wire and private carrier
+
+Remote login messages now bind the operation/action/profile and current owner
+intent, use a separate signature namespace, and travel through the pinned private
+carrier without reply spooling. Nine new wire/transport tests pass, including
+real signatures, wrong-request refusal, account-replacement checks, namespace
+separation and generic-carrier refusal. Existing token response and transport
+regressions pass, and correctness review is clear. The owner endpoint and
+operation worker are not implemented by this increment; remote login is not yet
+usable. The independent security-review gate remains outstanding.
+
+The ad-hoc QA package passes all 28 login-wire/token-response/token-transport
+tests with helper byte parity and private fixture HOME roots. Seven endpoint and
+fifteen owner-client source regressions also pass. Packaged staging omits the QA
+root selector, and no app or live credential change is performed.
