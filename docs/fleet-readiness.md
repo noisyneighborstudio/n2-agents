@@ -330,3 +330,36 @@ live success and rejection attribution through the native connection, not full
 fleet or T3 integration, resource parity, refresh behavior, or an independent
 reconciliation against provider billing. Rejection reset propagation still needs
 work; no reset time was invented for the native rejection.
+
+
+### Native quota reset evidence
+
+The bound runner now retains an explicit retry time from a terminal native
+`usageLimitExceeded` or `rateLimitExceeded` error. It converts a complete relative
+seconds/minutes/hours expression at receipt time, or a timezone-qualified ISO
+timestamp, into UTC in the verified execution receipt and sanitized failure message. The
+loop records only the receipt timestamp with the verified account rejection,
+including explicit unknown. Conflicting model text cannot supply a reset. Raw error messages and
+additional details are never copied into the journal. Ambiguous local dates,
+compound expressions, multiple retry instructions, expired values and implausibly
+distant dates remain unknown.
+
+The [official app-server documentation](https://learn.chatgpt.com/docs/app-server)
+and the installed Codex 0.157.1 `TurnError` schema expose error text and error
+classification, but no typed rejection reset field. Account `resetsAt` values
+belong to individual quota windows. This implementation deliberately does not
+infer which window caused a rejection or use a rolling-window reset to clear a
+credit/spend restriction. This is conservative compatibility parsing, not a
+provider guarantee about error-message formatting. A fresh percentage poll still
+cannot clear a durable rejection.
+
+Subprocess fixtures cover explicit and ambiguous resets, redaction and account
+receipts. The Swift integration drives the real runner through `runTurn` and
+checks the retained journal timestamp. These are deterministic fixtures; the
+previous live ExpoIO rejection remains reset-unknown, and live recovery is still
+an acceptance item.
+
+The final full regression suite and ad-hoc QA build pass. The packaged helper
+passes the reset fixture and matches the source. Scoped correctness and security
+reviews are clear after fixing malformed timezone normalization and model-text
+reset precedence. No credentials were changed and no app was installed.

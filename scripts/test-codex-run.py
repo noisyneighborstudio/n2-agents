@@ -67,6 +67,39 @@ class BoundTurnTests(unittest.TestCase):
         self.assertIn('usage limit', rows[-2]['error']['message'])
         self.assertNotIn('not copied', json.dumps(rows))
 
+    def test_quota_reset_survives_without_raw_error_text(self):
+        before = time.time()
+        code, rows = self.run_turn('quota-reset')
+        self.assertEqual(code, 1)
+        message = rows[-2]['error']['message']
+        stamp = message.split('Try again at ')[1]
+        reset = bound.datetime.datetime.fromisoformat(stamp).timestamp()
+        self.assertAlmostEqual(rows[-1]['quotaResetAt'], reset, delta=0.000001)
+        self.assertGreaterEqual(reset, before + 180)
+        self.assertLessEqual(reset, time.time() + 180)
+        self.assertNotIn('not copied', json.dumps(rows))
+        _, ambiguous = self.run_turn('quota-ambiguous')
+        self.assertNotIn('Try again', ambiguous[-2]['error']['message'])
+        self.assertIsNone(ambiguous[-1]['quotaResetAt'])
+
+    def test_reset_parser_rejects_ambiguous_or_unrelated_evidence(self):
+        rpc = bound.load('reset_test_rpc', 'codex-rpc.py')
+        now = 1800000000
+        def parse(message, code='usageLimitExceeded'):
+            return rpc.reported_quota_reset({'message': message, 'codexErrorInfo': code}, now)
+        self.assertEqual(parse('Quota. Try again in 3 minutes.'), now + 180)
+        stamp = bound.datetime.datetime.fromtimestamp(now + 120, bound.datetime.timezone.utc).isoformat()
+        self.assertEqual(parse('Quota. Try again at ' + stamp), now + 120)
+        for phrase in ('in 3 minutes and 10 seconds', 'in 3 minutes or contact support',
+                       'at Sep 26th, 2026 11:20 AM', 'in 0 seconds', 'in 99999999 hours',
+                       'at 2020-01-01T00:00:00Z', 'at 2028-02-30T00:00:00Z',
+                       'at 2027-01-15T08:02:00', 'at 2027-01-15T09:42:00+00:99',
+                       'at 2027-01-15T06:24:00-00:99', 'at 2027-01-15T08:03:00-00:00', 'in 3 minutes.\nUnrelated text',
+                       'in 1 hour. Try again in 2 hours'):
+            self.assertIsNone(parse('Quota. Try again ' + phrase), phrase)
+        self.assertIsNone(parse('Try again in 3 minutes', 'unauthorized'))
+        self.assertIsNone(parse('Try again in 3 minutes', {'httpStatusCode': 429}))
+
     def test_changed_selection_never_starts_thread(self):
         with self.assertRaisesRegex(RuntimeError, 'selected Codex account changed'):
             self.run_turn(expected='a' * 64)

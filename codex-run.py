@@ -6,6 +6,7 @@ one disposable app-server process; it never falls back to another account.
 """
 import argparse
 import contextlib
+import datetime
 import importlib.util
 import json
 import os
@@ -112,10 +113,14 @@ def run(config, expected_account, effort, prompt, timeout=3600, executable='code
             'input_tokens': counts.get('inputTokens'), 'cached_input_tokens': counts.get('cachedInputTokens'),
             'output_tokens': counts.get('outputTokens')}})
     else:
-        emit({'type': 'turn.failed', 'error': {'message': failure_message(result['errorCode'])}})
+        message = failure_message(result['errorCode'])
+        if result['errorResetAt'] is not None:
+            reset = datetime.datetime.fromtimestamp(result['errorResetAt'], datetime.timezone.utc).isoformat(timespec='microseconds')
+            message += '\nTry again at ' + reset
+        emit({'type': 'turn.failed', 'error': {'message': message}})
     emit({'type': 'n2.account.binding', 'identity': {'status': 'verified', 'accountHash': expected_account},
           'session': result['threadId'], 'turn': result['turnId'], 'model': result['model'],
-          'usageScope': 'provider-thread', 'tokens': result['tokens']})
+          'usageScope': 'provider-thread', 'tokens': result['tokens'], 'quotaResetAt': result['errorResetAt']})
     return 0 if result['status'] == 'completed' else 1
 
 

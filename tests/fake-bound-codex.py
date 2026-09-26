@@ -61,14 +61,18 @@ for line in sys.stdin:
             Path(os.environ['N2_BOUND_STARTED']).write_text(str(os.getpid()))
             time.sleep(60)
         # Deliberately send events before the turn/start response.
-        notice('item/completed', dict(params, item={'type': 'agentMessage', 'text': 'Bound answer'}))
+        notice('item/completed', dict(params, item={'type': 'agentMessage', 'text': 'Try again in 1 minute' if mode.startswith('quota') else 'Bound answer'}))
         counts = {'inputTokens': 50, 'cachedInputTokens': 30, 'outputTokens': 10, 'totalTokens': 60}
         if mode == 'bad-tokens': counts['inputTokens'] = True
         notice('thread/tokenUsage/updated', dict(params, tokenUsage={'total': counts}))
         notice('thread/tokenUsage/updated', {'threadId': 'unrelated', 'turnId': 'unrelated', 'tokenUsage': {'total': {'inputTokens': 999}}})
         if mode == 'rerouted': notice('model/rerouted', dict(params, toModel='other-model'))
-        completed = {'id': 'turn-fixture', 'status': 'failed' if mode == 'quota' else 'completed', 'items': []}
-        if mode == 'quota': completed['error'] = {'codexErrorInfo': 'usageLimitExceeded', 'message': 'not copied'}
+        completed = {'id': 'turn-fixture', 'status': 'failed' if mode.startswith('quota') else 'completed', 'items': []}
+        if mode.startswith('quota'):
+            message = 'not copied'
+            if mode == 'quota-reset': message += '. Try again in 3 minutes.'
+            if mode == 'quota-ambiguous': message += '. Try again at Sep 26th, 2026 11:20 AM.'
+            completed['error'] = {'codexErrorInfo': 'usageLimitExceeded', 'message': message}
         notice('turn/completed', {'threadId': 'thread-fixture', 'turn': completed})
         result = {'turn': {'id': 'turn-fixture', 'status': 'inProgress', 'items': []}}
     send({'id': request['id'], 'result': result})

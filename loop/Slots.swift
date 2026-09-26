@@ -226,7 +226,10 @@ func recordUsageOutcome(cli: String, slot: String, outcome: String, task: String
     let parts = slot.split(separator: "|", maxSplits: 1).map(String.init)
     guard parts.count == 2 else { return }
     let requestedModel: Any = parts[0] == "claude" ? ([Effort.deep: "opus", .standard: "sonnet", .light: "haiku"][effort] ?? "unknown") as Any : NSNull()
-    let reset = outcome == "quota" ? Failure.reportedResetTime(in: failureText, now: Date()) : nil
+    // Verified execution receipts are authoritative even when their reset is
+    // unknown. Never let model/display text override native terminal evidence.
+    let reported = usage.accountHash != nil ? usage.quotaResetAt : Failure.reportedResetTime(in: failureText, now: Date())
+    let reset = outcome == "quota" ? reported : nil
     let value: [String: Any] = [
         "status": outcome == "quota" ? "restricted" : (outcome == "ok" ? "ok" : "execution-failed"), "source": "n2-loop",
         "identity": usage.accountHash.map { ["status": "verified", "accountHash": $0] } ?? ["status": "unknown"], "session": usage.session as Any? ?? NSNull(), "model": usage.model as Any? ?? NSNull(),

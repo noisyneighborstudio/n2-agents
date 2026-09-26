@@ -6,6 +6,8 @@ import CoreFoundation
 struct TaskUsage {
     var scope = "unknown"
     var accountHash: String? = nil
+    /// Terminal provider evidence only. A verified receipt with nil means unknown.
+    var quotaResetAt: Date? = nil
     var models: [String: TaskUsage] = [:]
     var session: String? = nil
     var model: String? = nil
@@ -140,6 +142,11 @@ struct AgentResult {
                 result.usage.accountHash = expected
                 result.usage.scope = "provider-thread"
                 result.usage.model = receipt["model"] as? String
+                if let reset = receipt["quotaResetAt"] as? NSNumber,
+                   CFGetTypeID(reset) != CFBooleanGetTypeID(), reset.doubleValue.isFinite,
+                   reset.doubleValue > 0, reset.doubleValue <= Date().timeIntervalSince1970 + 366 * 86400 {
+                    result.usage.quotaResetAt = Date(timeIntervalSince1970: reset.doubleValue)
+                }
                 if let tokens = receipt["tokens"] as? [String: Any] {
                     result.usage.inputTokens = count(tokens["inputTokens"])
                     result.usage.outputTokens = count(tokens["outputTokens"])

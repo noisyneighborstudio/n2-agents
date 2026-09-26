@@ -45,6 +45,31 @@ func waitForBoundProvider(_ started: URL) throws -> pid_t {
         precondition(history.ok && history.out.contains(account) && history.out.contains("bound-fixture/1"), history.said)
         precondition(!history.out.contains("synthetic-private-token"))
 
+        for mode in ["quota-reset", "quota-ambiguous"] {
+            setenv("N2_BOUND_FIXTURE", mode, 1)
+            let began = Date()
+            let denied = try runTurn(request(repo + "/agents"), abort: Flag())
+            precondition(denied.exit != 0 && denied.usage.accountHash == account)
+            let reset = denied.usage.quotaResetAt
+            precondition(denied.tail.contains("Try again in 1 minute"), "conflicting model text fixture")
+            if mode == "quota-reset" {
+                precondition(reset != nil && reset!.timeIntervalSince(began) >= 180 && reset!.timeIntervalSinceNow <= 180)
+            } else { precondition(reset == nil) }
+            recordUsageOutcome(cli: repo + "/agents", slot: slot.key, outcome: "quota", task: mode,
+                               effort: .standard, usage: denied.usage, failureText: denied.tail, startedAt: began)
+            let retained = run(repo + "/agents", ["usage", "history"])
+            precondition(retained.ok && !retained.out.contains("not copied"), retained.said)
+            let rows = try JSONSerialization.jsonObject(with: Data(retained.out.utf8)) as! [[String: Any]]
+            let event = rows.first { row in
+                let data = row["data"] as? [String: Any]
+                return (data?["attribution"] as? [String: Any])?["task"] as? String == mode
+            }!
+            let data = event["data"] as! [String: Any]
+            precondition(data["resetKnown"] as? Bool == (mode == "quota-reset"))
+            if let reset { precondition(abs((data["recheckAt"] as! Double) - reset.timeIntervalSince1970) < 0.01) }
+        }
+        setenv("N2_BOUND_FIXTURE", "", 1)
+
         let fake = root.appendingPathComponent("fake-agents")
         let terminal = "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}"
         let session = "{\"type\":\"thread.started\",\"thread_id\":\"session\"}"

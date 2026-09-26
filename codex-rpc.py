@@ -4,7 +4,10 @@
 The owner keeps this connection for the operation being attributed. Never treat
 an account observation from a different CLI process as an execution receipt.
 """
+import datetime
 import json
+import math
+import re
 import os
 import queue
 import select
@@ -15,6 +18,41 @@ import time
 
 MAX_MESSAGE_BYTES = 2 * 1024 * 1024
 MAX_PENDING_MESSAGES = 128
+
+
+def reported_quota_reset(error, now):
+    """Extract only an unambiguous retry time from a terminal quota error.
+
+    TurnError has no typed reset field. Never borrow a window from an account
+    poll or retain the provider's raw error text. Local dates and compound or
+    qualified retry phrases remain unknown.
+    """
+    if not isinstance(error, dict) or error.get('codexErrorInfo') not in ('usageLimitExceeded', 'rateLimitExceeded'):
+        return None
+    message = error.get('message')
+    if not isinstance(message, str) or len(message) > 16384:
+        return None
+    if len(re.findall(r'(?i)\btry again\b', message)) != 1:
+        return None
+    match = re.search(r'(?i)\btry again (in|at|after) ([^\r\n]+)[\r\n]*$', message)
+    if not match:
+        return None
+    phrase = match[2].strip()
+    if phrase.endswith('.'):
+        phrase = phrase[:-1]
+    relative = re.fullmatch(r'(\d{1,8})\s+(seconds?|secs?|minutes?|mins?|hours?|hrs?)', phrase, re.I)
+    if match[1].lower() == 'in' and relative:
+        unit = relative[2].lower()
+        reset = now + int(relative[1]) * (3600 if unit.startswith('h') else 60 if unit.startswith('m') else 1)
+    elif match[1].lower() in ('at', 'after') and re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)', phrase) and not phrase.endswith('-00:00'):
+        try:
+            reset = datetime.datetime.fromisoformat(phrase.replace('Z', '+00:00')).timestamp()
+        except (ValueError, OverflowError):
+            return None
+    else:
+        return None
+    # Malformed, expired and implausibly distant values cannot expire a denial.
+    return reset if math.isfinite(reset) and now < reset <= now + 366 * 86400 else None
 
 
 class CodexRPC:
@@ -316,7 +354,7 @@ class CodexRPC:
             self._binding_failed = True
             raise ValueError('invalid Codex turn acknowledgement')
         result = {'threadId': thread['id'], 'turnId': turn['id'], 'model': started.get('model'),
-                  'text': '', 'tokens': None, 'status': None, 'errorCode': None}
+                  'text': '', 'tokens': None, 'status': None, 'errorCode': None, 'errorResetAt': None}
         def consume(message):
             method = message.get('method')
             if method is None:
@@ -337,6 +375,8 @@ class CodexRPC:
                 error = completed.get('error')
                 if isinstance(error, dict):
                     result['errorCode'] = error.get('codexErrorInfo')
+                    if state == 'failed':
+                        result['errorResetAt'] = reported_quota_reset(error, time.time())
             elif params.get('turnId') == turn['id']:
                 if method == 'item/completed':
                     item = params.get('item')
