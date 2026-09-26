@@ -1552,6 +1552,7 @@ case $cmd in
   loop)     cmd_loop "$@" ;;
   profiles) cmd_profiles "$@" ;;
   _profile-routes) cmd_profile_routes ;;
+  _fleet-auth-call) fleet_auth_call "$@" ;;
   porcelain) cmd_porcelain ;;
   version)  cmd_version ;;
   help|-h|--help) cmd_help ;;

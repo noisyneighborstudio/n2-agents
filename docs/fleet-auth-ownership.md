@@ -192,7 +192,13 @@ verifies them in memory. The signature namespace is
 `n2-agents-auth-response-v1`. The exact request context includes schema version,
 owner and recipient fleet fingerprints, a 32-byte random nonce encoded as hex,
 grant UUID, ownership-generation UUID, expected account hash and a wall-clock
-expiry no more than 30 seconds away. A separate monotonic deadline bounds local
+expiry no more than 30 seconds away. `rejectedTokenGeneration` is explicitly
+null for an initial fetch or the opaque UUID returned with a rejected token.
+This is signed request context, separate from the ownership generation. The owner
+must coalesce known stale generations and reject unknown generations instead of
+blindly starting another refresh. A renewal response cannot return the rejected
+generation. Both signing and verification enforce that condition. A separate
+monotonic deadline bounds local
 operations. Replies also carry an opaque token-generation UUID.
 
 Each outstanding request has one verifier. Success and failure both consume it,
@@ -209,5 +215,28 @@ This module authenticates replies and request correlation. It does not encrypt
 them, check fleet consent, or prove provider account identity. It must be used
 only over an authenticated encrypted carrier, followed by the bound runner's
 provider verification. Existing `fleet_call` writes reply files and must not be
-used for these messages. The replacement carrier and owner service remain to be
-implemented.
+used for these messages. The private carrier below replaces that reply path;
+the owner service remains to be implemented.
+
+## Token-response carrier
+
+`fleet-auth-transport.py.exchange` now sends a public request context through
+`agents _fleet-auth-call`. The private command signs the ordinary fleet request
+and streams the reply through the existing pinned SSH carrier. It requires an
+approved peer whose key matches the expected owner. The actual carrier refuses
+`exec` and bootstrap credentials, including a route edited after initial checks.
+After the carrier finishes, approval and the owner key are checked again.
+
+The client bounds reply bytes and total elapsed time, rejects nonzero carrier
+exits, and verifies the owner signature before returning a token. Public request
+context and signed requests can use temporary files. Reply bytes stay in memory;
+carrier stderr is discarded, and failures expose one fixed diagnostic. Timeout
+cleanup kills the dedicated local process group, including descendants holding
+the reply pipe open. These approval checks are observations, not a lease that
+can prevent a later revocation.
+
+The `auth-token` owner handler remains unimplemented. Grant consent, ownership
+state, renewal and response signing still need to be connected on the server.
+The client transport does not substitute for these checks. The synthetic SSH
+fixture exercises real fleet request verification and signed token responses;
+it does not establish live provider renewal.

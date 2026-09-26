@@ -711,6 +711,7 @@ fleet_carry() {  # fleet_carry <peerdir> ; message on stdin, reply on stdout
   cmd=$(fleet_meta "$d" command 2>/dev/null || echo "${N2_FLEET_REMOTE_CMD:-agents}")
   case $t in
     exec)
+      [ "${N2_FLEET_AUTH_CARRIER:-}" != 1 ] || return 1
       home=$(fleet_meta "$d" home) || return 1
       env HOME="$home" N2_FLEET_AGENTS="$(fleet_agents_cmd)" \
         "$(fleet_agents_cmd)" fleet serve 2>"$(fleet_carry_err)"
@@ -718,6 +719,9 @@ fleet_carry() {  # fleet_carry <peerdir> ; message on stdin, reply on stdout
     tailscale|ssh)
       port=$(fleet_meta "$d" port 2>/dev/null || true)
       boot=$(fleet_meta "$d" bootstrap 2>/dev/null || true)
+      if [ "${N2_FLEET_AUTH_CARRIER:-}" = 1 ]; then
+        [ -z "$boot" ] || return 1
+      fi
       fleet_valid_addr "$addr" || { echo "ERR bad-address" >&2; return 1; }
       fleet_valid_user "$user" || { echo "ERR bad-user" >&2; return 1; }
       [ -z "$port" ] || fleet_valid_port "$port" || { echo "ERR bad-port" >&2; return 1; }
@@ -762,6 +766,29 @@ fleet_call() {  # fleet_call <peerid> <verb> [payload-file] -> payload on stdout
     *) echo "ERR malformed-reply" >&2; rm -rf "$ctmp"; return 1 ;;
   esac
 }
+
+# Private owner-response path. Only public requests use temporary files. Replies
+# stay on stdout through the pinned encrypted carrier and are consumed in memory
+# by fleet-auth-transport.py, which verifies their owner signature and context.
+fleet_auth_call() (
+  set +e
+  [ "$#" = 2 ] || return 1
+  ac_peer=$1 ac_payload=$2
+  /usr/bin/python3 "$scripts_dir/fleet-auth-transport.py" validate-request "$root" "$ac_peer" "$ac_payload" 2>/dev/null || return 1
+  ac_dir=$(fleet_peer_dir "$ac_peer")
+  fleet_approved "$ac_peer" || return 1
+  [ "$(fleet_fp "$ac_dir/key.pub")" = "$ac_peer" ] || return 1
+  case $(fleet_meta "$ac_dir" transport) in ssh|tailscale) ;; *) return 1 ;; esac
+  [ -z "$(fleet_meta "$ac_dir" bootstrap 2>/dev/null)" ] || return 1
+  ac_tmp=$(mktemp -d "${TMPDIR:-/tmp}/n2auth-call.XXXXXX") || return 1
+  trap 'rm -rf "$ac_tmp"' EXIT
+  fleet_envelope "$ac_peer" auth-token "$ac_payload" > "$ac_tmp/request" || return 1
+  N2_FLEET_AUTH_CARRIER=1 N2_FLEET_DEBUG= fleet_carry "$ac_dir" < "$ac_tmp/request"
+  ac_rc=$?
+  [ "$ac_rc" = 0 ] || return 1
+  fleet_approved "$ac_peer" || return 1
+  [ "$(fleet_fp "$ac_dir/key.pub")" = "$ac_peer" ] || return 1
+)
 
 # Best effort fan-out. An offline peer is a status, not a failure: the
 # disconnect path in `execution` depends on this never aborting the caller.

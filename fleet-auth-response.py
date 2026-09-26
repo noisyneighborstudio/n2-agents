@@ -19,7 +19,7 @@ import uuid
 NAMESPACE = 'n2-agents-auth-response-v1'
 MAX_BYTES = 128 * 1024
 CONTEXT_KEYS = {'schemaVersion', 'owner', 'recipient', 'nonce', 'grantId',
-                'ownershipGeneration', 'accountHash', 'expiresAt'}
+                'ownershipGeneration', 'accountHash', 'expiresAt', 'rejectedTokenGeneration'}
 
 
 def canonical(value):
@@ -56,6 +56,9 @@ def validate_context(context, now):
             raise ValueError('invalid request binding')
     if not valid_uuid(context['grantId']) or not valid_uuid(context['ownershipGeneration']):
         raise ValueError('invalid grant identity')
+    rejected = context['rejectedTokenGeneration']
+    if rejected is not None and not valid_uuid(rejected):
+        raise ValueError('invalid rejected token generation')
     expiry = context['expiresAt']
     if type(expiry) not in (int, float) or not math.isfinite(expiry) or not now < expiry <= now + 30:
         raise ValueError('expired request')
@@ -116,6 +119,8 @@ def validate_payload(payload, expected, now):
         raise ValueError('response does not match request')
     if not valid_uuid(payload['tokenGeneration']):
         raise ValueError('invalid token generation')
+    if payload['tokenGeneration'] == expected['rejectedTokenGeneration']:
+        raise ValueError('owner returned the rejected token generation')
     token, account = payload['accessToken'], payload['chatgptAccountId']
     if not isinstance(token, str) or not token or len(token.encode()) > 65536:
         raise ValueError('invalid access token')

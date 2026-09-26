@@ -28,7 +28,7 @@ class ResponseTests(unittest.TestCase):
         self.context = {'schemaVersion': 1, 'owner': self.identity, 'recipient': 'SHA256:' + 'A'*43,
                         'nonce': secrets.token_hex(32), 'grantId': str(uuid.uuid4()),
                         'ownershipGeneration': str(uuid.uuid4()), 'accountHash': 'b'*64,
-                        'expiresAt': time.time()+20}
+                        'expiresAt': time.time()+20, 'rejectedTokenGeneration': None}
         self.generation = str(uuid.uuid4()); self.token = 'SYNTHETIC-PRIVATE-ACCESS-TOKEN'
 
     def signed(self, context=None):
@@ -48,11 +48,29 @@ class ResponseTests(unittest.TestCase):
         response = self.signed()
         for key, replacement in [('recipient', 'SHA256:'+'B'*43), ('nonce', 'c'*64),
                                   ('grantId', str(uuid.uuid4())), ('ownershipGeneration', str(uuid.uuid4())),
-                                  ('accountHash', 'c'*64), ('expiresAt', self.context['expiresAt']-1)]:
+                                  ('accountHash', 'c'*64), ('rejectedTokenGeneration', str(uuid.uuid4())), ('expiresAt', self.context['expiresAt']-1)]:
             with self.subTest(key=key):
                 changed = dict(self.context, **{key: replacement})
                 with self.assertRaisesRegex(ValueError, 'response rejected'):
                     self.verifier(changed).verify(response)
+
+    def test_rejected_generation_is_explicit_and_signed(self):
+        self.context['rejectedTokenGeneration']=str(uuid.uuid4())
+        self.assertEqual(self.verifier().verify(self.signed())['accessToken'],self.token)
+        for value in ('', True, 1, 'unknown-generation'):
+            with self.assertRaises(ValueError): self.verifier(dict(self.context,rejectedTokenGeneration=value))
+        missing=dict(self.context); del missing['rejectedTokenGeneration']
+        with self.assertRaises(ValueError): self.verifier(missing)
+
+    def test_renewal_cannot_return_the_rejected_generation(self):
+        self.context['rejectedTokenGeneration']=self.generation
+        with self.assertRaises(ValueError): self.signed()
+        # Model a buggy owner that signs a stale cache entry. The receiving
+        # verifier must reject it independently of the owner's validation.
+        with patch.object(m,'validate_payload',return_value=None):
+            response=self.signed()
+        with self.assertRaisesRegex(ValueError,'response rejected'):
+            self.verifier().verify(response)
 
     def test_payload_tampering_and_failed_attempt_consume_request(self):
         response = self.signed(); tampered = json.loads(response)

@@ -457,3 +457,30 @@ carrier, consent enforcement and owner service remain required; the ordinary
 fleet reply path still uses temporary files and is unsuitable for tokens.
 The QA build passes; its packaged codec matches source bytes and passes all ten
 real-key tests. No live credentials were used or changed.
+
+### In-memory owner-response transport
+
+The private token carrier now uses approved, pinned SSH peers while retaining
+public request signing. It never uses the ordinary reply-file decoder. Bounded
+reply bytes stay in memory until owner/context verification succeeds. Nonzero
+carrier exit, revocation, wrong key, malformed output and timeout reject the
+response. A final-use guard prevents route edits from selecting `exec` or
+bootstrap credentials after admission.
+
+Seven disposable transport tests cover signed framing, SSH options, response
+persistence, route changes, revocation, failed and oversized carriers, timeouts,
+inherited output pipes and wrong recipients. Independent correctness/security
+reviews are clear after the carrier race fix. The owner endpoint, grant consent,
+renewal and production runner connection remain unimplemented.
+
+The owner request now includes an explicit rejected token generation, separate
+from ownership generation. Initial fetch uses null; renewal names the opaque
+generation the client rejected. Twelve codec tests include missing, malformed
+and tampered generation fields and reject a signed stale-generation response. This supplies correlation for the future owner's
+coalescing logic; it does not implement that logic.
+
+The full fleet run passes with live SSH required: 339 transport checks, zero
+failures or skips; 639 sync checks across all 75 sections; 97 execution checks;
+and native UI parser/action checks. The final QA package matches the source and
+passes all 19 codec/transport tests. Scoped reviews are clear after rejecting
+stale-generation responses. No live provider credential was used or renewed.
