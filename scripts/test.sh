@@ -1,5 +1,6 @@
 #!/bin/zsh
 set -euo pipefail
+trap 'print -u2 -- "Test failed at line $LINENO"' ZERR
 cd "${0:A:h}/.."
 
 test_root="$PWD/.test-tmp"
