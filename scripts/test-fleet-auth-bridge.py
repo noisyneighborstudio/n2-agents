@@ -1,0 +1,686 @@
+#!/usr/bin/env python3
+"""Account-bound app-server relay: auth isolation and provider route invariants."""
+import importlib.util
+import io
+import json
+from pathlib import Path
+import queue
+import os
+import subprocess
+import unittest
+import time
+import tempfile
+import select
+import pty
+import termios
+import signal
+import sys
+
+ROOT=Path(__file__).resolve().parents[1]
+spec=importlib.util.spec_from_file_location('bridge',ROOT/'fleet-auth-bridge.py')
+m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+
+class Provider:
+    def __init__(self):
+        self.initialization={'userAgent':'fixture'};self.cwd='/project';self.sent=[]
+        self.verified=0;self.messages=queue.Queue();self.denied=False
+    def send(self,value):self.sent.append(value)
+    def validate_account_binding(self, deferred_messages=None):
+        if self.denied:raise RuntimeError('owner unavailable')
+        self.verified+=1
+
+class BridgeTests(unittest.TestCase):
+    def setUp(self):
+        self.provider=Provider();self.out=[];self.bridge=m.Bridge(self.provider,self.out.append)
+        self.bridge.frontend({'id':1,'method':'initialize'})
+    def start(self):
+        self.bridge.frontend({'id':1,'method':'thread/start','params':{}})
+        key=self.provider.sent[-1]['id']
+        self.bridge.backend({'id':key,'result':{'thread':{'id':'thread'},'modelProvider':'openai','cwd':'/project'}})
+    def test_initialization_is_local_and_frontend_ids_do_not_collide_with_auth_ids(self):
+        self.assertEqual(self.out,[{'id':1,'result':self.provider.initialization}])
+        self.assertEqual(self.provider.sent,[])
+        self.start();self.assertEqual(self.provider.verified,1)
+        self.assertIsInstance(self.provider.sent[0]['id'],str)
+        self.assertEqual(self.out[-1]['id'],1)
+        self.bridge.frontend({'id':1,'method':'turn/start','params':{'threadId':'thread'}})
+        self.assertNotEqual(self.provider.sent[-1]['id'],self.provider.sent[0]['id'])
+        self.assertEqual(self.provider.verified,2)
+    def test_auth_and_configuration_mutations_never_reach_provider(self):
+        for method in ('account/login/start','account/logout','config/value/write'):
+            self.bridge.frontend({'id':2,'method':method,'params':{'accessToken':'frontend-secret'}})
+            self.assertIn('error',self.out[-1])
+        self.assertEqual(self.provider.sent,[])
+        self.assertNotIn('frontend-secret',json.dumps(self.out))
+    def test_approval_round_trip_uses_separate_ids_and_rejects_replay(self):
+        self.bridge.backend({'id':1,'method':'item/commandExecution/requestApproval','params':{}})
+        key=self.out[-1]['id'];self.assertIsInstance(key,str)
+        self.bridge.frontend({'id':key,'result':{'decision':'decline'}})
+        self.assertEqual(self.provider.sent[-1],{'id':1,'result':{'decision':'decline'}})
+        with self.assertRaises(ValueError):self.bridge.frontend({'id':key,'result':{}})
+    def test_route_overrides_and_unknown_threads_are_refused(self):
+        for method,params in [('thread/start',{'modelProvider':'other'}),('thread/start',{'config':{'openai_base_url':'https://other.invalid'}}),
+                              ('thread/start',{'cwd':'/other'}),('thread/resume',{'threadId':'foreign'}),
+                              ('turn/start',{'threadId':'foreign'}),('thread/archive',{'threadId':'foreign'})]:
+            self.bridge.frontend({'id':2,'method':method,'params':params})
+            self.assertIn('error',self.out[-1])
+        self.assertEqual(self.provider.sent,[])
+    def test_relative_current_directory_is_normalized_without_allowing_another_directory(self):
+        self.bridge.frontend({'id':2,'method':'config/read','params':{'cwd':'.'}})
+        self.assertEqual(self.provider.sent[-1]['params']['cwd'],self.provider.cwd)
+        self.bridge.backend({'id':self.provider.sent[-1]['id'],'result':{}})
+        for cwd in ('../other','/another',7,''):
+            before=len(self.provider.sent)
+            self.bridge.frontend({'id':3,'method':'config/read','params':{'cwd':cwd}})
+            self.assertIn('error',self.out[-1]);self.assertEqual(len(self.provider.sent),before)
+
+    def test_native_web_search_preference_does_not_open_route_overrides(self):
+        self.bridge.frontend({'id':2,'method':'thread/start','params':{'config':{'web_search':'cached'}}})
+        self.assertEqual(self.provider.sent[-1]['params']['config'],{'web_search':'cached'})
+        key=self.provider.sent[-1]['id'];self.bridge.backend({'id':key,'error':{'code':-1}})
+        for overrides in ({'web_search':'cached','openai_base_url':'https://other.invalid'},
+                          {'web_search':{'provider':'other'}},{'cli_auth_credentials_store':'file'},False):
+            before=len(self.provider.sent)
+            self.bridge.frontend({'id':3,'method':'thread/start','params':{'config':overrides}})
+            self.assertIn('error',self.out[-1]);self.assertEqual(len(self.provider.sent),before)
+
+    def test_mismatched_thread_route_is_never_exposed(self):
+        self.bridge.frontend({'id':2,'method':'thread/start'})
+        key=self.provider.sent[-1]['id']
+        with self.assertRaises(RuntimeError):
+            self.bridge.backend({'id':key,'result':{'thread':{'id':'wrong'},'modelProvider':'other','cwd':'/project'}})
+        self.assertEqual(len(self.out),1);self.assertEqual(self.bridge.threads,set())
+    def test_authentication_failure_prevents_turn_dispatch(self):
+        self.start();before=len(self.provider.sent);self.provider.denied=True
+        with self.assertRaises(RuntimeError):self.bridge.frontend({'id':2,'method':'turn/start','params':{'threadId':'thread'}})
+        self.assertEqual(len(self.provider.sent),before)
+    def test_renewal_control_messages_never_reach_frontend(self):
+        for method in ('account/chatgptAuthTokens/refresh','account/updated'):
+            with self.assertRaises(RuntimeError):self.bridge.backend({'id':3,'method':method,'params':{'accessToken':'secret'}})
+        self.assertNotIn('secret',json.dumps(self.out))
+    def test_malformed_messages_and_unknown_ids_fail_closed(self):
+        for raw in (b'{"id":1,"id":2}',b'[]',b'{"id":NaN}'):
+            with self.assertRaises(ValueError):m.decode(raw)
+        with self.assertRaises(ValueError):self.bridge.frontend({'method':'account/read','id':True})
+        with self.assertRaises(ValueError):self.bridge.backend({'id':1,'result':{}})
+
+class RealRPCMessageTests(unittest.TestCase):
+    def setUp(self):
+        rpc=m.load('bridge_rpc_regression','codex-rpc.py')
+        self.provider=rpc.CodexRPC.__new__(rpc.CodexRPC)
+        p=self.provider
+        p.messages=queue.Queue();p.timeout=.1;p.next_id=1;p.failure=None
+        p._initial_owner_account=None;p.account_generation=0;p._bound_generation=0
+        p._binding_failed=False;p._custom_openai_endpoint=False;p.cwd='/project'
+        p.initialization={'userAgent':'fixture'}
+        self.account={'type':'chatgpt','email':'fixture@example.invalid','planType':'plus'}
+        p._bound_account=p._account_key({'account':self.account,'workspaceRouting':None})
+        self.sent=[]
+        def send(message,deadline=None):
+            self.sent.append(message)
+            if 'method' not in message:return
+            method=message['method']
+            result={'config':{}} if method=='config/read' else ({'account':self.account} if method=='account/read' else {})
+            if method=='thread/start':result={'thread':{'id':'thread'},'modelProvider':'openai','cwd':'/project'}
+            p.messages.put((time.monotonic(),{'id':message['id'],'result':result}))
+        p.send=send
+        self.out=[];self.bridge=m.Bridge(p,self.out.append)
+        self.bridge.frontend({'id':1,'method':'initialize'})
+    def test_successful_renewal_yields_to_frontend_without_next_provider_message(self):
+        renewed=[]
+        self.provider._renew_external_account=lambda message,deadline:renewed.append(message['id'])
+        self.provider.messages.put((time.monotonic(),{'id':99,'method':'account/chatgptAuthTokens/refresh'}))
+        sink=io.BytesIO()
+        m.serve(self.provider,io.BytesIO(b'{"id":1,"method":"initialize"}\n'),sink)
+        self.assertEqual(renewed,[99])
+        self.assertEqual(json.loads(sink.getvalue()),{'id':1,'result':self.provider.initialization})
+    def test_verification_preserves_interleaved_notifications(self):
+        notice={'method':'thread/name/updated','params':{'threadId':'thread','name':'updated'}}
+        self.provider.messages.put((time.monotonic(),notice))
+        self.bridge.frontend({'id':2,'method':'thread/start'})
+        self.assertIn(notice,self.out)
+        self.bridge.backend(self.provider.receive(time.monotonic()+.1))
+        self.assertEqual(self.out[-1]['id'],2)
+    def test_verification_preserves_approval_and_defers_new_execution(self):
+        self.provider.messages.put((time.monotonic(),{'id':99,'method':'item/commandExecution/requestApproval','params':{}}))
+        self.bridge.frontend({'id':2,'method':'thread/start'})
+        approval=self.out[-2]
+        self.assertEqual(approval['method'],'item/commandExecution/requestApproval')
+        self.assertIn('error',self.out[-1])
+        self.assertFalse(self.provider._binding_failed)
+        self.assertFalse(any(msg.get('method')=='thread/start' for msg in self.sent))
+        self.bridge.frontend({'id':approval['id'],'result':{'decision':'decline'}})
+        self.assertEqual(self.sent[-1],{'id':99,'result':{'decision':'decline'}})
+
+class ReceiptTests(unittest.TestCase):
+    def setUp(self):
+        directory=tempfile.TemporaryDirectory();self.addCleanup(directory.cleanup);self.directory=directory.name
+        store=m.load('receipt_store_tests','usage-store.py')
+        self.journal=store.Journal(directory.name)
+        self.addCleanup(self.journal.db.close)
+        self.receipts=m.Receipts(self.journal,'Work','a'*64)
+        self.receipts.thread('thread','model-a',True)
+    def start(self,identifier='turn'):
+        self.receipts.begin('thread');self.receipts.acknowledge({'id':identifier})
+    def usage(self,total,identifier='turn'):
+        self.receipts.observe('thread/tokenUsage/updated',{'threadId':'thread','turnId':identifier,
+            'tokenUsage':{'total':{'inputTokens':total-10,'cachedInputTokens':5,'outputTokens':10,'totalTokens':total}}})
+    def complete(self,identifier='turn',status='completed',error=None):
+        self.receipts.observe('turn/completed',{'threadId':'thread','turn':{'id':identifier,'status':status,'error':error}})
+    def test_cumulative_thread_tokens_count_each_turn_once(self):
+        self.start();self.usage(60);self.complete();self.receipts.finish()
+        self.start('second');self.usage(90,'second');self.complete('second');self.receipts.finish()
+        result=self.journal.token_summary()
+        self.assertEqual(result['uniqueTasks'],2)
+        self.assertEqual(result['groups'][0]['reportedTotalTokens'],90)
+        self.assertEqual(result['groups'][0]['accountHash'],'a'*64)
+        self.assertEqual(result['groups'][0]['usageScope'],'provider-turn')
+    def test_missing_boundary_does_not_attribute_previous_turn_tokens(self):
+        self.start();self.complete();self.receipts.finish()
+        self.start('second');self.usage(90,'second');self.complete('second');self.receipts.finish()
+        group=self.journal.token_summary()['groups'][0]
+        self.assertEqual(group['knownTokenTasks'],0);self.assertEqual(group['unknownTokenTasks'],2)
+    def test_quota_failure_is_durable_and_has_no_raw_error(self):
+        self.start();self.complete(status='failed',error={'codexErrorInfo':'usageLimitExceeded','message':'private error secret'})
+        self.receipts.finish()
+        events=self.journal.events();self.assertEqual(events[0]['kind'],'quota-rejected')
+        self.assertFalse(events[0]['data']['resetKnown'])
+        self.assertNotIn('private error secret',json.dumps(events))
+        self.assertTrue(self.journal.active_rejections())
+    def test_early_notifications_and_foreign_completion_are_correlated(self):
+        self.receipts.begin('thread');self.usage(60);self.complete('foreign');self.complete()
+        self.receipts.acknowledge({'id':'turn'})
+        self.assertEqual(self.receipts.current['completion']['id'],'turn')
+        self.receipts.finish();self.assertEqual(self.journal.token_summary()['groups'][0]['reportedTotalTokens'],60)
+    def test_reroute_and_disconnection_do_not_invent_attribution(self):
+        self.start();self.usage(60)
+        self.receipts.observe('model/rerouted',{'threadId':'thread','turnId':'turn','toModel':'other'})
+        self.complete();self.receipts.finish(verified=False)
+        event=self.journal.events()[0]
+        self.assertEqual(event['kind'],'execution-failed');self.assertIsNone(event['data']['model'])
+        self.assertEqual(event['data']['identity'],{'status':'unknown'})
+        self.assertIsNone(event['data']['attribution']['totalTokens'])
+    def test_persistent_model_override_allows_later_success_to_clear_rejection(self):
+        self.receipts.begin('thread','model-b');self.receipts.acknowledge({'id':'turn'})
+        self.complete(status='failed',error={'codexErrorInfo':'usageLimitExceeded'})
+        self.receipts.finish();self.assertEqual(len(self.journal.active_rejections()),1)
+        self.start('second');self.complete('second');self.receipts.finish()
+        self.assertEqual(self.journal.active_rejections(),[])
+        events=self.journal.events()
+        self.assertEqual({event['data']['requestedModel'] for event in events},{'model-b'})
+        self.assertTrue(all(event['data']['model'] is None for event in events))
+
+    def test_restart_preserves_requested_model_for_quota_recovery(self):
+        sessions=m.Sessions(self.directory);self.receipts.sessions=sessions
+        self.receipts.begin('thread','model-b');self.receipts.acknowledge({'id':'turn'})
+        self.complete(status='failed',error={'codexErrorInfo':'usageLimitExceeded'})
+        self.receipts.finish();self.assertEqual(len(self.journal.active_rejections()),1)
+        self.receipts=m.Receipts(self.journal,'Work','a'*64,m.Sessions(self.directory))
+        self.receipts.thread('thread','model-b',False)
+        self.start('resumed');self.complete('resumed');self.receipts.finish()
+        self.assertEqual(self.journal.active_rejections(),[])
+        self.assertEqual(self.receipts.threads['thread']['requestedModel'],'model-b')
+
+    def test_rejected_turn_request_does_not_change_effective_model(self):
+        provider=Provider();bridge=m.Bridge(provider,lambda _:None,self.receipts)
+        bridge.frontend({'id':1,'method':'initialize'});bridge.threads.add('thread')
+        bridge.frontend({'id':2,'method':'turn/start','params':{'threadId':'thread','model':'model-b'}})
+        key=provider.sent[-1]['id']
+        bridge.backend({'id':key,'error':{'code':-32602,'message':'invalid parameters'}})
+        self.start('second')
+        self.assertIsNone(self.receipts.current['requestedModel'])
+        self.assertEqual(self.receipts.current['model'],'model-a')
+        self.usage(60,'second');self.complete('second');self.receipts.finish()
+        events=self.journal.events()
+        success=next(event for event in events if event['kind']=='execution-succeeded')
+        self.assertIsNone(success['data']['requestedModel'])
+        self.assertEqual(success['data']['attribution']['totalTokens'],60)
+
+    def test_hard_kill_preserves_unconfirmed_invocation_without_clearing_quota(self):
+        self.journal.append('codex','Work','quota-rejected',{'status':'restricted',
+            'identity':{'status':'verified','accountHash':'a'*64},'model':'model-a'})
+        code="""import importlib.util,sys,time
+from pathlib import Path
+spec=importlib.util.spec_from_file_location('bridge',Path(sys.argv[1])/'fleet-auth-bridge.py')
+m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+journal=m.load('store','usage-store.py').Journal(sys.argv[2])
+receipts=m.Receipts(journal,'Work','a'*64)
+receipts.thread('killed-thread','model-a',True)
+receipts.begin('killed-thread')
+print('committed',flush=True)
+time.sleep(60)
+"""
+        process=subprocess.Popen(['python3','-c',code,str(ROOT),self.directory],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        try:
+            ready,_,_=select.select([process.stdout],[],[],10);self.assertTrue(ready)
+            self.assertEqual(process.stdout.readline(),b'committed\n')
+            process.kill();process.wait(timeout=5)
+        finally:
+            if process.poll() is None:process.kill();process.wait(timeout=5)
+            process.stdout.close();process.stderr.close()
+        reopened=m.load('reopened_store','usage-store.py').Journal(self.directory)
+        self.addCleanup(reopened.db.close)
+        event=next(event for event in reopened.events() if event['kind']=='execution-started')
+        self.assertEqual(event['data']['status'],'execution-unconfirmed')
+        self.assertIsNone(event['data']['attribution']['totalTokens'])
+        self.assertEqual(sum(g['unconfirmedTasks'] for g in reopened.token_summary()['groups']),1)
+        self.assertEqual(len(reopened.active_rejections()),1)
+
+    def test_counter_reset_remains_unknown(self):
+        self.start();self.usage(60);self.complete();self.receipts.finish()
+        self.start('second');self.usage(30,'second');self.complete('second');self.receipts.finish()
+        group=self.journal.token_summary()['groups'][0]
+        self.assertEqual(group['reportedTotalTokens'],60);self.assertEqual(group['unknownTokenTasks'],1)
+    def test_bridge_completion_checks_binding_and_records_once(self):
+        provider=Provider();out=[];bridge=m.Bridge(provider,out.append,self.receipts)
+        bridge.frontend({'id':1,'method':'initialize'});bridge.threads.add('thread')
+        bridge.frontend({'id':2,'method':'turn/start','params':{'threadId':'thread'}})
+        key=provider.sent[-1]['id']
+        bridge.backend({'method':'thread/tokenUsage/updated','params':{'threadId':'thread','turnId':'turn',
+            'tokenUsage':{'total':dict(inputTokens=50,cachedInputTokens=30,outputTokens=10,totalTokens=60)}}})
+        bridge.backend({'method':'turn/completed','params':{'threadId':'thread','turn':{'id':'turn','status':'completed'}}})
+        bridge.backend({'id':key,'result':{'turn':{'id':'turn'}}})
+        bridge.flush_receipts();bridge.flush_receipts()
+        self.assertEqual(provider.verified,2);self.assertFalse(bridge.active)
+        self.assertEqual(len(self.journal.events()),2)
+        self.assertEqual(self.journal.token_summary()['groups'][0]['reportedTotalTokens'],60)
+
+class BridgeIntegrationTests(unittest.TestCase):
+    def setUp(self):
+        spec=importlib.util.spec_from_file_location('bridge_fixture',ROOT/'scripts/test-fleet-auth-manage.py')
+        fixture=importlib.util.module_from_spec(spec);spec.loader.exec_module(fixture)
+        self.fixture=fixture.ManageTests('test_register_status_and_explicit_revision')
+        self.addCleanup(self.fixture.doCleanups);self.fixture.setUp();self.fixture.register()
+        self.wire=self.fixture.fixture
+        (self.wire.bin/'settings.json').write_text(json.dumps({'allowExternalHome':True}))
+        self.root=self.wire.base/'client';profile=self.root/'Work';slot=profile/'codex';slot.mkdir(parents=True)
+        (profile/'.n2-profile').write_bytes((self.fixture.slot.parent/'.n2-profile').read_bytes())
+        (slot/'.n2-owner.json').write_bytes((self.fixture.slot/'.n2-owner.json').read_bytes());(slot/'.n2-owner.json').chmod(0o600)
+    def run_cli(self,requests,args=('app-server',)):
+        return subprocess.run([str(ROOT/'agents'),'run','Work','--vendor','codex',*args],
+            env=dict(os.environ,N2_AGENTS_ROOT=str(self.root)),input=''.join(json.dumps(r)+'\n' for r in requests),
+            text=True,capture_output=True,timeout=20)
+    def test_restart_resumes_persisted_history_without_credentials(self):
+        first=self.run_cli([{'id':1,'method':'initialize'},{'id':2,'method':'thread/start'}])
+        self.assertEqual(first.returncode,0,first.stderr)
+        second=self.run_cli([{'id':1,'method':'initialize'},{'id':2,'method':'thread/resume','params':{'threadId':'fixture-thread'}}])
+        self.assertEqual(second.returncode,0,second.stderr)
+        rows=[json.loads(line) for line in second.stdout.splitlines()]
+        self.assertEqual(rows[-1]['result']['thread']['id'],'fixture-thread')
+        trace=[json.loads(line) for line in (self.wire.bin/'trace.jsonl').read_text().splitlines()]
+        homes={r['home'] for r in trace if r['method'] in ('thread/start','thread/resume')}
+        self.assertEqual(len(homes),1)
+        self.assertTrue((Path(next(iter(homes)))/'fixture-history.json').exists())
+        self.assertFalse(list((self.root/'codex-sessions').rglob('auth.json')))
+
+    def test_persisted_binding_rejects_other_account_directory_and_history_override(self):
+        store=m.Sessions(self.root)
+        record=json.loads((self.root/'Work/codex/.n2-owner.json').read_text())
+        store.remember('saved',record,'/project')
+        provider=Provider();out=[];bridge=m.Bridge(provider,out.append,sessions=store,record=record)
+        bridge.frontend({'id':1,'method':'initialize'})
+        bridge.frontend({'id':2,'method':'thread/resume','params':{'threadId':'saved'}})
+        self.assertEqual(provider.sent[-1]['method'],'thread/resume')
+        for changed in (dict(record,accountHash='f'*64),dict(record,ownershipGeneration='00000000-0000-4000-8000-000000000001')):
+            self.assertFalse(store.matches('saved',changed,'/project'))
+            with self.assertRaises(ValueError):store.remember('saved',changed,'/project')
+        self.assertFalse(store.matches('saved',record,'/another'))
+        before=len(provider.sent)
+        for params in ({'threadId':'saved','history':[]},{'threadId':'saved','path':'/other/history'}):
+            bridge.frontend({'id':3,'method':'thread/resume','params':params})
+            self.assertIn('error',out[-1])
+        self.assertEqual(len(provider.sent),before)
+        path=store.thread_path('saved');path.unlink();path.symlink_to(self.root/'Work/codex/.n2-owner.json')
+        with self.assertRaises(OSError):store.read('saved')
+
+    def test_explicit_native_resume_uses_original_grant_after_profile_replacement(self):
+        path=self.root/'Work/codex/.n2-owner.json';record=json.loads(path.read_text())
+        m.Sessions(self.root).remember('saved',record,os.getcwd())
+        path.write_text(json.dumps(dict(record,accountHash='f'*64)))
+        executable=self.wire.bin/'codex';executable.rename(self.wire.bin/'provider')
+        executable.write_bytes((ROOT/'tests/fake-owner-terminal.py').read_bytes());executable.chmod(0o700)
+        result=self.run_cli([],args=('resume','saved','--no-alt-screen'))
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(result.stdout.strip(),'terminal-connected')
+        for args in (('--no-alt-screen','resume','saved'),('resume','--no-alt-screen','saved')):
+            trace=self.wire.bin/'trace.jsonl';before=trace.read_bytes()
+            result=self.run_cli([],args=args)
+            self.assertNotEqual(result.returncode,0)
+            self.assertEqual(trace.read_bytes(),before)
+
+    def test_n2_session_browser_and_resume_discover_original_profile(self):
+        record=json.loads((self.root/'Work/codex/.n2-owner.json').read_text())
+        store=m.Sessions(self.root);store.remember('saved',record,os.getcwd())
+        store.remember('newer',record,os.getcwd());store.model('newer','model-a')
+        env=dict(os.environ,N2_AGENTS_ROOT=str(self.root))
+        result=subprocess.run([str(ROOT/'agents'),'sessions','Work','--vendor','codex','--porcelain','--limit','1'],env=env,text=True,capture_output=True,timeout=10)
+        self.assertEqual(result.returncode,0,result.stderr)
+        rows=result.stdout.splitlines();self.assertEqual(len(rows),1)
+        fields=rows[0].split('\t');self.assertEqual(len(fields),8)
+        self.assertEqual(fields[:2],['Work','codex']);self.assertIn(fields[2],('saved','newer'))
+        self.assertEqual(fields[4],os.getcwd())
+        executable=self.wire.bin/'codex';executable.rename(self.wire.bin/'provider')
+        executable.write_bytes((ROOT/'tests/fake-owner-terminal.py').read_bytes());executable.chmod(0o700)
+        # Profile rename must not break a stable profile-ID binding.
+        (self.root/'Work').rename(self.root/'Renamed')
+        result=subprocess.run([str(ROOT/'agents'),'run','--start-from-session=saved'],env=env,text=True,capture_output=True,timeout=20)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(result.stdout.strip(),'terminal-connected')
+        result=subprocess.run([str(ROOT/'agents'),'run','--next','--start-from-session=saved'],env=env,text=True,capture_output=True,timeout=10)
+        self.assertNotEqual(result.returncode,0);self.assertIn('cannot rotate',result.stderr)
+
+    def test_capitalized_vendor_resumes_saved_session(self):
+        record=json.loads((self.root/'Work/codex/.n2-owner.json').read_text())
+        m.Sessions(self.root).remember('saved',record,os.getcwd())
+        executable=self.wire.bin/'codex';executable.rename(self.wire.bin/'provider')
+        executable.write_bytes((ROOT/'tests/fake-owner-terminal.py').read_bytes());executable.chmod(0o700)
+        result=subprocess.run([str(ROOT/'agents'),'run','Work','--vendor','Codex','--start-from-session=saved'],env=dict(os.environ,N2_AGENTS_ROOT=str(self.root)),text=True,capture_output=True,timeout=20)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(result.stdout.strip(),'terminal-connected')
+
+    def test_existing_session_with_duplicate_or_missing_profile_never_falls_back(self):
+        record=json.loads((self.root/'Work/codex/.n2-owner.json').read_text())
+        m.Sessions(self.root).remember('saved',record,os.getcwd())
+        duplicate=self.root/'Duplicate';duplicate.mkdir()
+        (duplicate/'.n2-profile').write_bytes((self.root/'Work/.n2-profile').read_bytes())
+        for missing in (False,True):
+            if missing:
+                (duplicate/'.n2-profile').unlink();(self.root/'Work/.n2-profile').unlink()
+            result=subprocess.run([str(ROOT/'agents'),'run','--start-from-session=saved'],env=dict(os.environ,N2_AGENTS_ROOT=str(self.root)),text=True,capture_output=True,timeout=10)
+            self.assertNotEqual(result.returncode,0)
+            self.assertIn('bindings are unavailable',result.stderr)
+            self.assertNotIn('next best',result.stderr)
+
+    def test_session_discovery_does_not_hide_corrupt_or_foreign_bindings(self):
+        record=json.loads((self.root/'Work/codex/.n2-owner.json').read_text())
+        store=m.Sessions(self.root);store.remember('saved',record,os.getcwd())
+        self.assertEqual(m.session_rows(self.root,'Missing'),[])
+        self.assertEqual(m.session_rows(self.root,identifier='absent'),[])
+        path=store.thread_path('saved');path.write_text('{}');path.chmod(0o600)
+        result=subprocess.run([str(ROOT/'agents'),'run','--start-from-session=saved'],env=dict(os.environ,N2_AGENTS_ROOT=str(self.root)),text=True,capture_output=True,timeout=10)
+        self.assertNotEqual(result.returncode,0);self.assertIn('bindings are unavailable',result.stderr)
+        self.assertNotIn('next best',result.stderr)
+
+    def test_resume_model_override_replaces_saved_selection_only_after_success(self):
+        sessions=m.Sessions(self.root);record=json.loads((self.root/'Work/codex/.n2-owner.json').read_text())
+        sessions.remember('saved',record,'/project');sessions.model('saved','model-b')
+        for success in (False,True):
+            provider=Provider();bridge=m.Bridge(provider,lambda _:None,sessions=sessions,record=record)
+            bridge.frontend({'id':1,'method':'initialize'})
+            bridge.frontend({'id':2,'method':'thread/resume','params':{'threadId':'saved','model':'model-c'}})
+            self.assertEqual(sessions.model('saved'),'model-b')
+            response={'result':{'thread':{'id':'saved'},'modelProvider':'openai','cwd':'/project','model':'model-c'}} if success else {'error':{'code':-1}}
+            bridge.backend(dict(response,id=provider.sent[-1]['id']))
+            self.assertEqual(sessions.model('saved'),'model-c' if success else 'model-b')
+
+    def test_persistent_home_preserves_history_and_refreshes_selected_configuration(self):
+        store=m.Sessions(self.root);config=self.root/'Work/codex'
+        record=json.loads((config/'.n2-owner.json').read_text())
+        (config/'config.toml').write_text('model="first"')
+        home=Path(store.home(record,'/project',config));(home/'history').write_text('keep')
+        (config/'config.toml').write_text('model="second"')
+        self.assertEqual(store.home(record,'/project',config),str(home))
+        self.assertEqual((home/'history').read_text(),'keep')
+        self.assertEqual((home/'config.toml').read_text(),'model="second"')
+        other=store.home(dict(record,accountHash='f'*64),'/project',config)
+        self.assertNotEqual(str(home),other)
+        self.assertFalse((Path(other)/'history').exists())
+
+    def test_actual_frontend_turns_record_tokens_and_share_quota_rejection(self):
+        (self.wire.bin/'settings.json').write_text(json.dumps({'allowExternalHome':True,'quotaTurn':3}))
+        process=subprocess.Popen([str(ROOT/'agents'),'run','Work','--vendor','codex','app-server'],
+            env=dict(os.environ,N2_AGENTS_ROOT=str(self.root)),stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0)
+        def cleanup():
+            if process.poll() is None:process.kill()
+            process.wait(timeout=5)
+            for stream in (process.stdin,process.stdout,process.stderr):stream.close()
+        self.addCleanup(cleanup)
+        def send(value):process.stdin.write(json.dumps(value).encode()+b'\n');process.stdin.flush()
+        def until(predicate):
+            deadline=time.monotonic()+10;raw=b''
+            while time.monotonic()<deadline:
+                ready,_,_=select.select([process.stdout],[],[],max(0,deadline-time.monotonic()))
+                self.assertTrue(ready,'frontend response timed out')
+                byte=process.stdout.read(1);self.assertTrue(byte,'frontend closed unexpectedly')
+                raw+=byte
+                if byte==b'\n':
+                    message=json.loads(raw);raw=b''
+                    if predicate(message):return message
+            self.fail('frontend response timed out')
+        send({'id':1,'method':'initialize'});until(lambda x:x.get('id')==1)
+        send({'id':2,'method':'thread/start'});until(lambda x:x.get('id')==2)
+        for turn in range(3):
+            send({'id':3+turn,'method':'turn/start','params':{'threadId':'fixture-thread','input':[]}})
+            until(lambda x:x.get('method')=='turn/completed')
+        send({'id':9,'method':'account/read'});until(lambda x:x.get('id')==9)
+        process.stdin.close();self.assertEqual(process.wait(timeout=5),0)
+        store=m.load('receipt_integration_store','usage-store.py');journal=store.Journal(self.root)
+        self.addCleanup(journal.db.close)
+        summary=journal.token_summary()
+        self.assertEqual(summary['uniqueTasks'],3)
+        self.assertEqual(sum(g['reportedTotalTokens'] for g in summary['groups']),180)
+        self.assertEqual({g['accountHash'] for g in summary['groups']},{self.wire.context['accountHash']})
+        self.assertEqual(len(journal.active_rejections()),1)
+        self.assertNotIn('private quota diagnostic',json.dumps(journal.events()))
+        peer_dir=self.wire.base/'receipt-peer';peer=store.Journal(peer_dir)
+        self.addCleanup(peer.db.close)
+        events=journal.events();peer.import_events(events,events[0]['origin'])
+        self.assertEqual(len(peer.active_rejections()),1)
+        self.assertEqual(peer.token_summary()['uniqueTasks'],3)
+
+    def test_actual_cli_connects_to_remote_owner_without_forwarding_credentials(self):
+        result=self.run_cli([{'id':10,'method':'initialize'}, {'method':'initialized'},
+                             {'id':11,'method':'account/read','params':{'refreshToken':True}},
+                             {'id':12,'method':'account/logout'}])
+        self.assertEqual(result.returncode,0,result.stderr)
+        rows=[json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual([r['id'] for r in rows],[10,11,12])
+        self.assertEqual(rows[1]['result']['account']['email'],'fixture@example.invalid')
+        self.assertIn('error',rows[2])
+        self.assertNotIn('original-secret',result.stdout+result.stderr)
+        self.assertFalse((self.root/'Work/codex/auth.json').exists())
+        trace=[json.loads(line) for line in (self.wire.bin/'trace.jsonl').read_text().splitlines()]
+        self.assertFalse(any(row['refresh'] for row in trace))
+    def test_ordinary_terminal_launch_uses_private_socket_and_owner_account(self):
+        executable=self.wire.bin/'codex';executable.rename(self.wire.bin/'provider')
+        executable.write_bytes((ROOT/'tests/fake-owner-terminal.py').read_bytes());executable.chmod(0o700)
+        result=self.run_cli([],args=())
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(result.stdout.strip(),'terminal-connected')
+        self.assertNotIn('original-secret',result.stdout+result.stderr)
+        self.assertFalse((self.root/'Work/codex/auth.json').exists())
+        result=self.run_cli([],args=('--remote','unix:///other'))
+        self.assertNotEqual(result.returncode,0)
+        self.assertNotIn('terminal-connected',result.stdout)
+
+    def test_unknown_owner_and_unsupported_direct_login_never_fall_back(self):
+        result=self.run_cli([],args=('login',))
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('owner-managed',result.stderr)
+        self.fixture.command('deny','--peer',self.wire.identities['client'])
+        result=self.run_cli([{'id':10,'method':'initialize'}])
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual(result.stdout,'')
+        self.assertFalse((self.root/'Work/codex/auth.json').exists())
+
+
+class TerminalLifetimeTests(unittest.TestCase):
+    def test_modes_restore_after_shell_reclaims_foreground(self):
+        pid, master = pty.fork()
+        if pid == 0:
+            supervisor = None
+            try:
+                with tempfile.TemporaryDirectory() as directory:
+                    fifo = str(Path(directory) / 'ready'); os.mkfifo(fifo)
+                    ready = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+                    front = Path(directory) / 'front.py'
+                    front.write_text("import os,sys,termios,signal\n"
+                        "a=termios.tcgetattr(0);a[3]&=~termios.ECHO\n"
+                        "termios.tcsetattr(0,termios.TCSANOW,a)\n"
+                        "f=os.open(sys.argv[1],os.O_WRONLY);os.write(f,b'ready')\n"
+                        "signal.pause()\n")
+                    reader, writer = os.pipe(); gate, release = os.pipe()
+                    code = """
+import os, signal, sys, importlib.util
+signal.signal(signal.SIGTTOU, signal.SIG_DFL)
+os.read(int(sys.argv[1]), 1)
+spec=importlib.util.spec_from_file_location('bridge', sys.argv[2])
+m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+sys.argv=['bridge','--terminal-supervisor',sys.argv[3],sys.executable,sys.argv[4],sys.argv[5]]
+sys.exit(m.terminal_supervisor())
+"""
+                    signal.signal(signal.SIGTTOU, signal.SIG_IGN)
+                    supervisor = subprocess.Popen([sys.executable, '-c', code, str(gate),
+                        str(ROOT/'fleet-auth-bridge.py'), str(reader), str(front), fifo],
+                        pass_fds=(reader, gate), preexec_fn=os.setpgrp)
+                    os.close(reader); os.close(gate)
+                    os.tcsetpgrp(0, supervisor.pid); os.write(release, b'x'); os.close(release)
+                    assert select.select([ready], [], [], 5)[0], 'startup receipt missing'
+                    assert os.read(ready, 100) == b'ready'
+                    assert not termios.tcgetattr(0)[3] & termios.ECHO
+                    os.tcsetpgrp(0, os.getpgrp()); os.close(writer)
+                    supervisor.wait(timeout=5)
+                    assert termios.tcgetattr(0)[3] & termios.ECHO, 'echo not restored'
+                    os.close(ready)
+                    print('restored after foreground reclaim', flush=True)
+            except BaseException as error:
+                print(repr(error), flush=True)
+            finally:
+                if supervisor is not None and supervisor.poll() is None:
+                    os.killpg(supervisor.pid, signal.SIGKILL); supervisor.wait(timeout=5)
+            os._exit(0)
+        output = b''; deadline = time.monotonic() + 12
+        try:
+            while True:
+                self.assertTrue(select.select([master], [], [], max(0, deadline-time.monotonic()))[0])
+                try: chunk = os.read(master, 4096)
+                except OSError: break
+                if not chunk: break
+                output += chunk
+            self.assertIn(b'restored after foreground reclaim', output)
+        finally:
+            try: os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError: pass
+            os.waitpid(pid, 0); os.close(master)
+
+    def test_supervisor_preserves_terminal_sigint_and_frontend_exit_code(self):
+        with tempfile.TemporaryDirectory() as directory:
+            frontend = Path(directory) / 'frontend'
+            frontend.write_text("""#!/usr/bin/env python3
+import signal, sys, termios
+attrs = termios.tcgetattr(0)
+attrs[3] &= ~termios.ECHO
+termios.tcsetattr(0, termios.TCSANOW, attrs)
+signal.signal(signal.SIGINT, lambda *_: sys.exit(17))
+print('ready', flush=True)
+while True: signal.pause()
+""")
+            frontend.chmod(0o700)
+            lifetime_reader, lifetime_writer = os.pipe()
+            master, slave = pty.openpty()
+            original_modes = termios.tcgetattr(slave)
+            # Deliver SIGINT after fork but before Popen returns to the
+            # supervisor. The guardian must survive this startup boundary.
+            code = """
+import importlib.util, os, signal, sys
+spec = importlib.util.spec_from_file_location('bridge', sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+spawn = m.subprocess.Popen
+def interrupt_after_spawn(*args, **kwargs):
+    child = spawn(*args, **kwargs)
+    os.kill(os.getpid(), signal.SIGINT)
+    return child
+m.subprocess.Popen = interrupt_after_spawn
+sys.argv = [sys.argv[1], '--terminal-supervisor', *sys.argv[2:]]
+sys.exit(m.terminal_supervisor())
+"""
+            supervisor = subprocess.Popen(
+                [sys.executable, '-c', code, str(ROOT / 'fleet-auth-bridge.py'),
+                 str(lifetime_reader), str(frontend)],
+                stdin=slave, stdout=slave, stderr=slave, start_new_session=True,
+                pass_fds=(lifetime_reader,))
+            os.close(lifetime_reader)
+            try:
+                self.assertTrue(select.select([master], [], [], 5)[0], 'frontend startup receipt missing')
+                self.assertIn(b'ready', os.read(master, 4096))
+                self.assertNotEqual(termios.tcgetattr(slave), original_modes)
+                os.killpg(supervisor.pid, signal.SIGINT)
+                self.assertEqual(supervisor.wait(timeout=5), 17)
+                self.assertEqual(termios.tcgetattr(slave), original_modes)
+            finally:
+                try:
+                    os.killpg(supervisor.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                except PermissionError:
+                    if supervisor.poll() is None:raise
+                supervisor.wait(timeout=5)
+                os.close(lifetime_writer)
+                os.close(slave)
+                os.close(master)
+
+    def test_bridge_sigkill_stops_frontend_attached_to_pty(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            events = base / 'events'
+            os.mkfifo(events, 0o600)
+            reader = os.open(events, os.O_RDONLY | os.O_NONBLOCK)
+            frontend = base / 'frontend'
+            frontend.write_text(r"""#!/usr/bin/env python3
+import json, os, signal, sys, termios
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+attrs = termios.tcgetattr(0)
+attrs[3] &= ~(termios.ECHO | termios.ICANON)
+termios.tcsetattr(0, termios.TCSANOW, attrs)
+fd = os.open(sys.argv[-1], os.O_WRONLY)
+os.write(fd, json.dumps({'pid': os.getpid(), 'parent': os.getppid(), 'group': os.getpgrp(),
+                        'tty': all(os.isatty(n) for n in (0, 1, 2))}).encode())
+while True: signal.pause()
+""")
+            frontend.chmod(0o700)
+            code = """
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('bridge', sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+m.terminal(None, sys.argv[2], sys.argv[3], [sys.argv[4]])
+"""
+            master, slave = pty.openpty()
+            original_modes = termios.tcgetattr(slave)
+            exits = select.kqueue()
+            bridge = subprocess.Popen(
+                [sys.executable, '-c', code, str(ROOT / 'fleet-auth-bridge.py'),
+                 directory, str(frontend), str(events)],
+                stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
+            try:
+                self.assertTrue(select.select([reader], [], [], 5)[0], 'frontend startup receipt missing')
+                receipt = json.loads(os.read(reader, 4096))
+                self.assertTrue(receipt['tty'], 'frontend lost its terminal streams')
+                self.assertEqual(receipt['group'], bridge.pid, 'frontend left the terminal process group')
+                self.assertNotEqual(termios.tcgetattr(slave), original_modes, 'fixture did not change terminal modes')
+                exits.control([select.kevent(receipt['parent'], filter=select.KQ_FILTER_PROC,
+                    flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT, fflags=select.KQ_NOTE_EXIT)], 0, 0)
+                bridge.kill()
+                bridge.wait(timeout=5)
+                self.assertTrue(select.select([reader], [], [], 5)[0], 'frontend survived bridge SIGKILL')
+                self.assertEqual(os.read(reader, 4096), b'', 'frontend lifetime pipe must close')
+                self.assertTrue(exits.control(None, 1, 5), 'supervisor did not exit')
+                restored = termios.tcgetattr(slave)
+                # Darwin sets PENDIN when returning to canonical input. The
+                # SDK marks this as pending-input state, not a terminal mode.
+                restored[3] &= ~termios.PENDIN
+                original_modes[3] &= ~termios.PENDIN
+                self.assertEqual(restored, original_modes, 'terminal modes were not restored')
+            finally:
+                try:
+                    os.killpg(bridge.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                bridge.wait(timeout=5)
+                exits.close()
+                os.close(reader)
+                os.close(slave)
+                os.close(master)
+
+if __name__=='__main__':unittest.main()

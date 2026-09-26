@@ -13,6 +13,7 @@ struct TurnRequest {
     /// everything it started. The foreground planner stays in the terminal's
     /// group instead, so Ctrl-C reaches it.
     let detach: Bool
+    var cancellationFile: String? = nil
 }
 
 struct TurnOutput {
@@ -22,6 +23,7 @@ struct TurnOutput {
     var stdout: String
     var stderr: String
     var seconds: Double
+    var usage = TaskUsage()
     var tail: String { String((stdout + "\n" + stderr).suffix(3000)) }
 }
 
@@ -34,28 +36,68 @@ final class Flag: @unchecked Sendable {
 
 /// Run one agent turn to completion. Blocking: the controller calls it off
 /// the main thread.
-func runTurn(_ r: TurnRequest, abort: Flag, onSpawn: (pid_t) -> Void = { _ in }) throws -> TurnOutput {
+func runTurn(_ r: TurnRequest, abort: Flag, onSpawn: (pid_t) throws -> Void = { _ in }) throws -> TurnOutput {
     guard let adapter = Adapter.of(r.slot.vendor) else { throw LoopError("no headless adapter for \(r.slot.vendor)") }
     let promptFile = r.files + ".prompt", outFile = r.files + ".out", errFile = r.files + ".err"
     try r.prompt.write(toFile: promptFile, atomically: true, encoding: .utf8)
-    let argv = [r.cli, "run", r.slot.profile, "--vendor", r.slot.vendor] + adapter.args(r.effort, promptFile)
+    let boundAccount = r.slot.vendor == "codex" ? r.slot.accountHash : nil
+    let executionHome = r.files + ".codex-home"
+    if boundAccount != nil {
+        guard !FileManager.default.fileExists(atPath: executionHome) else {
+            throw LoopError("previous account-bound execution home requires recovery")
+        }
+        try FileManager.default.createDirectory(atPath: executionHome, withIntermediateDirectories: false,
+                                                attributes: [.posixPermissions: 0o700])
+    }
+    defer {
+        if boundAccount != nil { try? FileManager.default.removeItem(atPath: executionHome) }
+    }
+    let arguments: [String]
+    if let boundAccount {
+        let effort: [Effort: String] = [.deep: "high", .standard: "medium", .light: "low"]
+        arguments = ["--bound-account", boundAccount, "--bound-effort", effort[r.effort]!, "--bound-process-group", "--bound-home", executionHome]
+    } else {
+        arguments = adapter.args(r.effort, promptFile)
+    }
+    let argv = [r.cli, "run", r.slot.profile, "--vendor", r.slot.vendor] + arguments
 
+    // Bound servers share the child group so persisted loop recovery reaches
+    // them even if the Python wrapper dies before its finally block.
+    var foregroundSignals: [DispatchSourceSignal] = []
+    let forwardsSignals = boundAccount != nil && !r.detach
+    let previousInt = forwardsSignals ? signal(SIGINT, SIG_IGN) : nil
+    let previousTerm = forwardsSignals ? signal(SIGTERM, SIG_IGN) : nil
+    if forwardsSignals {
+        for number in [SIGINT, SIGTERM] {
+            let source = DispatchSource.makeSignalSource(signal: number, queue: .global())
+            source.setEventHandler { abort.set() }
+            source.resume()
+            foregroundSignals.append(source)
+        }
+    }
+    defer {
+        foregroundSignals.forEach { $0.cancel() }
+        if forwardsSignals { signal(SIGINT, previousInt); signal(SIGTERM, previousTerm) }
+    }
     let started = Date()
     let (exit, timedOut, aborted) = try spawnAndWait(argv, cwd: r.cwd, stdin: adapter.promptOnStdin ? promptFile : "/dev/null",
-                                                     stdout: outFile, stderr: errFile, timeout: r.timeout, detach: r.detach,
-                                                     abort: abort, onSpawn: onSpawn)
+                                                     stdout: outFile, stderr: errFile, timeout: r.timeout, detach: r.detach || boundAccount != nil,
+                                                     abort: abort, onSpawn: onSpawn, cleanupGroup: boundAccount != nil, admissionFile: boundAccount != nil ? executionHome + "/process-group" : nil, cancellationFile: r.cancellationFile)
+    let parsed = AgentResult.parse((try? String(contentsOfFile: outFile, encoding: .utf8)) ?? "", vendor: r.slot.vendor, boundAccount: boundAccount)
+    let missingBinding = boundAccount != nil && parsed.usage.accountHash != boundAccount
+    let stderrText = (try? String(contentsOfFile: errFile, encoding: .utf8)) ?? ""
     return TurnOutput(
-        exit: exit, timedOut: timedOut, aborted: aborted,
-        stdout: (try? String(contentsOfFile: outFile, encoding: .utf8)) ?? "",
-        stderr: (try? String(contentsOfFile: errFile, encoding: .utf8)) ?? "",
-        seconds: Date().timeIntervalSince(started))
+        exit: exit == 0 && missingBinding ? 1 : exit, timedOut: timedOut, aborted: aborted,
+        stdout: parsed.text,
+        stderr: stderrText + (missingBinding ? "\nCodex account-bound execution returned no valid account receipt" : ""),
+        seconds: Date().timeIntervalSince(started), usage: parsed.usage)
 }
 
 /// Spawn `argv` (absolute path first) and wait, stopping it at the timeout or
 /// when `abort` is set. Returns (exit status, timed out, aborted).
 func spawnAndWait(_ argv: [String], cwd: String, stdin: String, stdout: String, stderr: String,
                   timeout: TimeInterval, detach: Bool, abort: Flag,
-                  onSpawn: (pid_t) -> Void = { _ in }) throws -> (Int32, Bool, Bool) {
+                  onSpawn: (pid_t) throws -> Void = { _ in }, cleanupGroup: Bool = false, admissionFile: String? = nil, cancellationFile: String? = nil) throws -> (Int32, Bool, Bool) {
     var actions: posix_spawn_file_actions_t? = nil
     posix_spawn_file_actions_init(&actions)
     defer { posix_spawn_file_actions_destroy(&actions) }
@@ -66,10 +108,9 @@ func spawnAndWait(_ argv: [String], cwd: String, stdin: String, stdout: String, 
     var attr: posix_spawnattr_t? = nil
     posix_spawnattr_init(&attr)
     defer { posix_spawnattr_destroy(&attr) }
-    // A worker must not hold the controller's command pipes or lock open.
-    // Only descriptors explicitly configured above belong in the child.
-    var flags = Int16(POSIX_SPAWN_CLOEXEC_DEFAULT)
-    if detach { flags |= Int16(POSIX_SPAWN_SETSID) }
+    // A concurrent Foundation Process may own Git output pipes or locks.
+    // Keep only descriptors installed by our explicit file actions.
+    let flags = Int16(POSIX_SPAWN_CLOEXEC_DEFAULT) | (detach ? Int16(POSIX_SPAWN_SETSID) : 0)
     posix_spawnattr_setflags(&attr, flags)
 
     var pid: pid_t = 0
@@ -78,13 +119,23 @@ func spawnAndWait(_ argv: [String], cwd: String, stdin: String, stdout: String, 
     let started = Date()
     let rc = posix_spawn(&pid, argv[0], &actions, &attr, cargs, environ)
     guard rc == 0 else { throw LoopError("could not start \(argv[0]): \(String(cString: strerror(rc)))") }
-    onSpawn(pid)
+    do {
+        // The bound wrapper waits for this durable group record before it may
+        // start its server. Recovery can use it even before state.json catches up.
+        try onSpawn(pid)
+        if let admissionFile { try String(pid).write(toFile: admissionFile, atomically: true, encoding: .utf8) }
+    } catch {
+        kill(detach ? -pid : pid, SIGKILL)
+        var failedStatus: Int32 = 0
+        waitpid(pid, &failedStatus, 0)
+        throw error
+    }
 
     var status: Int32 = 0
     var timedOut = false, aborted = false
     while waitpid(pid, &status, WNOHANG) == 0 {
         if Date().timeIntervalSince(started) > timeout { timedOut = true }
-        if abort.isSet { aborted = true }
+        if abort.isSet || cancellationFile.map({ FileManager.default.fileExists(atPath: $0) }) == true { aborted = true }
         if timedOut || aborted {
             // TERM the group and reap our child as it goes (a zombie would
             // still answer kill -0); then KILL whatever in the group is left.
@@ -101,6 +152,9 @@ func spawnAndWait(_ argv: [String], cwd: String, stdin: String, stdout: String, 
         }
         usleep(200_000)
     }
+    // The child has been reaped. Bound turns must not leave server/tool
+    // descendants behind after a normal exit or an uncatchable wrapper crash.
+    if cleanupGroup && detach { kill(-pid, SIGKILL) }
     let exit: Int32 = (status & 0x7f) == 0 ? (status >> 8) & 0xff : 128 + (status & 0x7f)
     return (exit, timedOut, aborted)
 }
@@ -130,11 +184,25 @@ func spawnDetached(_ argv: [String], log: String) throws -> pid_t {
     var attr: posix_spawnattr_t? = nil
     posix_spawnattr_init(&attr)
     defer { posix_spawnattr_destroy(&attr) }
-    posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSID))
+    posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSID) | Int16(POSIX_SPAWN_CLOEXEC_DEFAULT))
     var pid: pid_t = 0
     let cargs = argv.map { strdup($0) } + [nil]
     defer { cargs.forEach { free($0) } }
     let rc = posix_spawn(&pid, argv[0], &actions, &attr, cargs, environ)
     guard rc == 0 else { throw LoopError("could not start \(argv[0]): \(String(cString: strerror(rc)))") }
     return pid
+}
+
+/// Recover all unfinished turns from the same store that launched them. Bound
+/// wrappers record their group before starting a server, covering the interval
+/// before the controller's state update is written.
+func recoverTurnProcesses(_ turns: inout [Turn], runId: String, store: Store) {
+    for i in turns.indices where turns[i].endedAt == nil {
+        let home = store.turnFiles(runId, turns[i].id) + ".codex-home"
+        let recorded = (try? String(contentsOfFile: home + "/process-group", encoding: .utf8)).flatMap { pid_t($0) }
+        if let group = turns[i].pgid ?? recorded, group > 1, kill(-group, 0) == 0 { stop(group: group) }
+        try? FileManager.default.removeItem(atPath: home)
+        turns[i].endedAt = Date()
+        turns[i].outcome = "interrupted"
+    }
 }

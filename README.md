@@ -308,3 +308,10 @@ moves them (and re-points the PATH links) to the new name.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Fleet profile sync QA spike
+
+The isolated fleet QA build syncs profile configuration across enrolled Macs, with
+per-category sharing controls and explicit conflict resolution. See
+[the QA setup and limitations](docs/fleet-spike.md). Build with
+`N2_QA=1 N2_FLEET_QA=1 ./tray/build.sh`; keep the QA app separate from production.

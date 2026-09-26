@@ -3,11 +3,12 @@
 # the tray app shells out to this for anything with side effects.
 #
 #   agents list                           profiles × vendors (✓ active, 🟢 running)
+#   agents profiles [--json|--ensure-ids] stable fleet profile metadata
 #   agents vendors                        labs found on this machine, and how each isolates
 #   agents active [--vendor <v>]          print the active profile
 #   agents use <Profile|Default> [--vendor <v>]
 #   agents run [Profile|--next|--best] [--vendor <v>] [--start-from-session=<id>] [args]   (unsaid = next best)
-#   agents best [--vendor <v>] [--porcelain]  per-profile usage (5h/7d windows)
+#   agents best [--vendor <v>] [--porcelain|--json]  per-profile usage (5h/7d windows)
 #   agents new <Name> [--vendors a,b]
 #   agents delete <Name> [--yes]
 #   agents adopt [--yes]                  import existing `claudes` profiles (shared, not copied)
@@ -30,7 +31,7 @@
 # POSIX sh on purpose — no zsh/bashisms; callers can be any shell.
 set -eu
 
-root="$HOME/.n2-agents"
+root="${N2_AGENTS_ROOT:-$HOME/.n2-agents}"
 
 # Resolve symlinks (install.sh links this onto PATH) so sibling scripts and
 # the bundle Info.plist are found next to the real file, not the link.
@@ -50,7 +51,19 @@ die() { echo "agents: $*" >&2; exit 1; }
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
 # The vendor adapter table — every lab-specific fact lives there.
+# The fleet QA bundle has its own profiles, peer identity and background job.
+# Detect it here too: SSH and launchd invoke the CLI without the app environment.
+if [ -f "$scripts_dir/fleet-qa" ]; then
+  root="$HOME/.n2-agents-qa"
+  export N2_AGENTS_ROOT="$root"
+  export N2_FLEET_REMOTE_CMD='exec ~/Applications/N2-Fleet-QA.app/Contents/Resources/agents'
+  export N2_FLEET_SYNC_LABEL=com.n2agents.fleet-sync-qa
+  export N2_FLEET_QA=1
+fi
 . "$scripts_dir/vendors.sh"
+. "$scripts_dir/fleet.sh"
+. "$scripts_dir/fleet-sync.sh"
+. "$scripts_dir/fleet-exec.sh"
 
 # --- vendor selection ------------------------------------------------------
 
@@ -117,7 +130,7 @@ valid_profile_name() {
   [ -n "$1" ] || return 1
   clean=$(printf '%s' "$1" | LC_ALL=C tr -cd 'A-Za-z0-9')
   [ "$clean" = "$1" ] || return 1
-  case $(lower "$1") in default) return 1 ;; *) return 0 ;; esac
+  case $(lower "$1") in default|fleet) return 1 ;; *) return 0 ;; esac
 }
 
 # All profile names: the slot dirs under the root (one per line, sorted, unique).
@@ -151,7 +164,7 @@ resolve_profile() {
 # where another vendor has been switched but this one hasn't.
 config_dir() {  # profile, vendor
   cd_slot="$root/$1/$(vendor_slot_name "$2")"
-  if [ "$1" = Default ] && [ ! -e "$cd_slot" ] && [ ! -L "$cd_slot" ]; then
+  if [ "${N2_FLEET_QA:-}" != 1 ] && [ "$1" = Default ] && [ ! -e "$cd_slot" ] && [ ! -L "$cd_slot" ]; then
     vendor_dot "$2"
   else
     echo "$cd_slot"
@@ -375,213 +388,11 @@ usage_table() {  # vendor
   done
   [ -n "$ut_args" ] || return 0
   # shellcheck disable=SC2086
-  /usr/bin/python3 - "$1" $ut_args <<'PYEOF'
-import hashlib, json, os, signal, subprocess, sys, tempfile, threading, time, urllib.error, urllib.request
-from datetime import datetime, timezone
-
-def claude_creds(cfg, is_default):
-    # Keychain service is "Claude Code-credentials[-<sha256(cfgdir)[:8]>]";
-    # the unsuffixed entry belongs to the default ~/.claude config dir. The
-    # hash is of whatever path the CLI was handed, so a slot that is a symlink
-    # (adopted from `claudes`) has an entry under each path; the one written
-    # last is the live login.
-    paths = {cfg, os.path.realpath(cfg)}
-    svcs = ['Claude Code-credentials-' + hashlib.sha256(p.encode()).hexdigest()[:8] for p in paths]
-    if is_default:
-        svcs.append('Claude Code-credentials')
-    found = []
-    for svc in svcs:
-        p = subprocess.run(['security', 'find-generic-password', '-s', svc, '-w'],
-                           capture_output=True, text=True)
-        if p.returncode == 0:
-            try:
-                found.append(json.loads(p.stdout.strip()).get('claudeAiOauth', {}))
-            except ValueError:
-                pass
-    try:
-        found.append(json.load(open(cfg + '/.credentials.json')).get('claudeAiOauth', {}))
-    except (OSError, ValueError):
-        pass
-    found = [c for c in found if c.get('accessToken')]
-    if not found:
-        return None, 'no-token'
-    c = max(found, key=lambda c: c.get('expiresAt', 0))
-    return c, 'ok' if c.get('expiresAt', 0) / 1000 > time.time() else 'stale-token'
-
-def claude(name, cfg):
-    c, status = claude_creds(cfg, name == 'Default')
-    if status != 'ok':
-        return status, None
-    return 'ok', urllib.request.Request('https://api.anthropic.com/api/oauth/usage',
-        headers={'Authorization': 'Bearer ' + c['accessToken'],
-                 'anthropic-beta': 'oauth-2025-04-20', 'User-Agent': 'n2-agents'})
-
-def claude_row(r):
-    five, seven = r.get('five_hour') or {}, r.get('seven_day') or {}
-    return (five.get('utilization', '-'), seven.get('utilization', '-'),
-            (five.get('resets_at') or '-')[:16], (seven.get('resets_at') or '-')[:16])
-
-def codex(name, cfg):
-    # An API-key login has no plan quota to read, and no tokens.
-    try:
-        t = json.load(open(cfg + '/auth.json')).get('tokens') or {}
-    except (OSError, ValueError):
-        t = {}
-    if not t.get('access_token'):
-        return 'no-token', None
-    url = os.environ.get('N2_CODEX_USAGE_URL', 'https://chatgpt.com/backend-api/wham/usage')
-    return 'ok', urllib.request.Request(url,
-        headers={'Authorization': 'Bearer ' + t['access_token'],
-                 'ChatGPT-Account-Id': t.get('account_id', ''), 'User-Agent': 'n2-agents'})
-
-def codex_row(r):
-    # Plans differ in which windows they have (a 5-hour one, a weekly one, or
-    # both), so each window is placed by its length, not its position.
-    rl = r.get('rate_limit') or {}
-    cols = {}
-    for w in (rl.get('primary_window'), rl.get('secondary_window')):
-        if w:
-            used = 100 if rl.get('limit_reached') else w.get('used_percent', '-')
-            reset = time.strftime('%Y-%m-%dT%H:%M', time.gmtime(w['reset_at'])) if w.get('reset_at') else '-'
-            cols['five' if w.get('limit_window_seconds', 0) <= 5 * 3600 else 'seven'] = (used, reset)
-    five, seven = cols.get('five', ('-', '-')), cols.get('seven', ('-', '-'))
-    return five[0], seven[0], five[1], seven[1]
-
-def grok(name, cfg):
-    # Signed in = an auth.x.ai entry in the slot's auth.json. Its key lasts six
-    # hours, so the read goes through the CLI, which renews it on the way.
-    try:
-        a = json.load(open(cfg + '/auth.json'))
-    except (OSError, ValueError):
-        a = {}
-    if not any(k.startswith('https://auth.x.ai::') and v.get('key') for k, v in a.items()):
-        return 'no-token', None
-    return 'ok', lambda: grok_billing(cfg)
-
-def grok_billing(cfg):
-    # grok's own billing call over ACP (JSON-RPC on stdio), pinned to the slot.
-    # Only the replies are parsed: its startup notices carry MCP servers' env.
-    # SIGTERM ends it in ~1.5 s (closing stdin takes 4); SIGKILL if it hangs.
-    p = subprocess.Popen(['grok', 'agent', 'stdio'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                         stderr=subprocess.DEVNULL, text=True, cwd=tempfile.gettempdir(),
-                         env=dict(os.environ, GROK_HOME=cfg), start_new_session=True)
-    kill = lambda sig: os.killpg(p.pid, sig)
-    timer = threading.Timer(20, kill, (signal.SIGKILL,))
-    timer.start()
-    def call(i, method, params):
-        p.stdin.write(json.dumps({'jsonrpc': '2.0', 'id': i, 'method': method, 'params': params}) + '\n')
-        p.stdin.flush()
-        for line in p.stdout:
-            try:
-                m = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(m, dict) and m.get('id') == i:
-                if 'result' not in m:
-                    raise RuntimeError(m.get('error'))
-                return m['result']
-        raise RuntimeError('grok exited')
-    try:
-        call(1, 'initialize', {'protocolVersion': 1, 'clientCapabilities': {}})
-        return call(2, '_x.ai/billing', {})
-    finally:
-        timer.cancel()
-        try:
-            kill(signal.SIGTERM)
-            p.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            kill(signal.SIGKILL)
-            p.wait()
-        except ProcessLookupError:
-            p.wait()
-
-def grok_row(r):
-    # One credit pool per billing period (a week on today's plans) and no
-    # 5-hour window, so it fills the 7d column alone.
-    c = r.get('config') or {}
-    end = (c.get('currentPeriod') or {}).get('end') or c.get('billingPeriodEnd')
-    reset = datetime.fromisoformat(end.replace('Z', '+00:00')).astimezone(timezone.utc) \
-        .strftime('%Y-%m-%dT%H:%M') if end else '-'
-    return '-', c.get('creditUsagePercent', '-'), '-', reset
-
-def muse(name, cfg):
-    # A profile's login is in its slot's auth.json (the file backend N2 pins);
-    # Default's is the one keychain item a plain `muse` uses. Never the
-    # keychain for a profile: that would show Default's numbers under its name.
-    try:
-        t = (json.load(open(cfg + '/auth.json')).get('providers') or {}).get('meta', {}).get('access_token', '')
-    except (OSError, ValueError):
-        t = ''
-    if not t and name == 'Default':
-        p = subprocess.run(['security', 'find-generic-password', '-s', 'ai.meta.dev.credentials',
-                            '-a', 'meta', '-w'], capture_output=True, text=True)
-        try:
-            t = json.loads(p.stdout).get('access_token', '') if p.returncode == 0 else ''
-        except ValueError:
-            t = ''
-    if not t.startswith('dca:'):
-        return 'no-token', None
-    url = os.environ.get('N2_MUSE_USAGE_URL', 'https://api.meta.ai/muse-code/key')
-    return 'ok', urllib.request.Request(url, data=b'{}', method='POST',
-        headers={'Authorization': 'Bearer ' + t, 'x-api-version': '1.0.0',
-                 'Content-Type': 'application/json', 'User-Agent': 'n2-agents'})
-
-def muse_row(r):
-    # The key endpoint (it mints an inference key we drop) reports both
-    # windows: `window` is the 5-hour one, `weekly` the week.
-    u = r.get('subs_usage') or {}
-    cols = []
-    for w in (u.get('window') or {}, u.get('weekly') or {}):
-        at = w.get('resets_at')
-        cols.append((w.get('used_percent', '-'),
-                     time.strftime('%Y-%m-%dT%H:%M', time.gmtime(at)) if at else '-'))
-    return cols[0][0], cols[1][0], cols[0][1], cols[1][1]
-
-def cursor(name, cfg):
-    # cursor-agent keeps ONE login in the keychain whatever CURSOR_CONFIG_DIR
-    # says, so there is one account to read. It's shown once, on Default;
-    # other slots say they share it rather than repeat the numbers.
-    if name != 'Default':
-        return 'shared-login', None
-    p = subprocess.run(['security', 'find-generic-password', '-s', 'cursor-access-token',
-                        '-a', 'cursor-user', '-w'], capture_output=True, text=True)
-    if p.returncode != 0 or not p.stdout.strip():
-        return 'no-token', None
-    url = os.environ.get('N2_CURSOR_USAGE_URL',
-                         'https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage')
-    return 'ok', urllib.request.Request(url, data=b'{}', method='POST',
-        headers={'Authorization': 'Bearer ' + p.stdout.strip(), 'Content-Type': 'application/json',
-                 'Connect-Protocol-Version': '1', 'User-Agent': 'n2-agents'})
-
-def cursor_row(r):
-    # One pool per monthly billing cycle, in the long-window column; the
-    # percent is already in percent units (0.4 means 0.4%).
-    end = r.get('billingCycleEnd')
-    reset = time.strftime('%Y-%m-%dT%H:%M', time.gmtime(int(end) / 1000)) if end else '-'
-    return '-', (r.get('planUsage') or {}).get('totalPercentUsed', '-'), '-', reset
-
-request, row = {'claude': (claude, claude_row), 'codex': (codex, codex_row),
-                'grok': (grok, grok_row), 'muse': (muse, muse_row),
-                'cursor': (cursor, cursor_row)}[sys.argv[1]]
-for pair in sys.argv[2:]:
-    name, cfg = pair.split('=', 1)
-    status, req = request(name, cfg)
-    if status != 'ok':
-        print(f"{name}\t-\t-\t-\t{status}")
-        continue
-    try:
-        five, seven, five_at, seven_at = row(req() if callable(req) else json.load(urllib.request.urlopen(req, timeout=10)))
-        print(f"{name}\t{five}\t{seven}\t{five_at}\tok\t{seven_at}")
-    except urllib.error.HTTPError as e:
-        note = {429: 'rate-limited', 401: 'stale-token', 403: 'stale-token'}.get(e.code, 'fetch-error')
-        print(f"{name}\t-\t-\t-\t{note}")
-    except Exception:
-        print(f"{name}\t-\t-\t-\tfetch-error")
-PYEOF
+  N2_USAGE_ROOT="$root" N2_USAGE_ORIGIN="$(fleet_self_id 2>/dev/null)" /usr/bin/python3 "$scripts_dir/usage.py" "$1" $ut_args
 }
 
 # Lowest 5-hour utilization wins; ties fall to 7-day, then list order. A
-# maxed profile (95%+ in either window — the last few points are unusable)
+# maxed profile (95%+ in either window, our local scheduling reserve)
 # is out of the running exactly like one with a bad token.
 # Updates the rotation pointer so --next continues from the pick.
 # $1 vendor, $2 (optional): profile to exclude (a resumed session's source).
@@ -590,7 +401,8 @@ pick_best() {
   while IFS="$(printf '\t')" read -r n five seven _ note _; do
     [ "$note" = ok ] || continue
     [ "$n" = "${2:-}" ] && continue
-    # A plan may have only one of the windows; the other counts as empty.
+    # Require at least one measured window; missing both is not capacity.
+    case "$five:$seven" in -:-|:) continue ;; esac
     f=${five%.*} s=${seven%.*}
     case $f in ''|*[!0-9]*) f=0 ;; esac
     case $s in ''|*[!0-9]*) s=0 ;; esac
@@ -607,18 +419,19 @@ EOF
   echo "$pb_best"
 }
 
-# --porcelain prints usage_table's rows untouched — the tray's quota meters
-# parse it, so like `agents porcelain` it is a contract, not a display:
+# --porcelain prints legacy usage rows. Native UI and loop selection use
+# --json for all buckets. local-reserve denotes N2 policy, not provider denial:
 #   <profile> <5h%> <7d%> <5h-resets UTC> <note: ok|no-token|stale-token|rate-limited|fetch-error|no-usage-api|shared-login> [<7d-resets UTC>]
 # The 7d columns hold the lab's long window, whatever its length
 # (vendor_long_window). shared-login: the slot uses Default's login and quota.
 cmd_best() {
-  vsel="" porcelain=0
+  vsel="" porcelain=0 json_output=0
   while [ $# -gt 0 ]; do
     case $1 in
       --vendor) vsel=${2:-}; shift 2 ;;
       --vendor=*) vsel=${1#--vendor=}; shift ;;
       --porcelain) porcelain=1; shift ;;
+      --json) json_output=1; shift ;;
       *) shift ;;
     esac
   done
@@ -627,11 +440,15 @@ cmd_best() {
     bv=$(for x in $(vendors_installed); do vendor_has_usage "$x" && echo "$x"; done; true)
     [ -n "$bv" ] || die "none of the installed labs reports usage"
     for x in $bv; do
-      if [ "$porcelain" = 1 ]; then cmd_best --vendor "$x" --porcelain; else cmd_best --vendor "$x"; fi
+      if [ "$json_output" = 1 ]; then cmd_best --vendor "$x" --json; elif [ "$porcelain" = 1 ]; then cmd_best --vendor "$x" --porcelain; else cmd_best --vendor "$x"; fi
     done
     return 0
   fi
   v=$(one_vendor "$vsel")
+  if [ "$json_output" = 1 ]; then
+    N2_USAGE_FORMAT=json usage_table "$v"
+    return 0
+  fi
   if [ "$porcelain" = 1 ]; then
     usage_table "$v"
     return 0
@@ -690,6 +507,7 @@ slot_has_room() {  # profile, vendor, usage rows
 $su_row
 EOF
   [ "$su_note" = ok ] || return 1
+  case "$su_f:$su_s" in -:-|:) return 1 ;; esac
   su_f=${su_f%.*} su_s=${su_s%.*}
   case $su_f in ''|*[!0-9]*) su_f=0 ;; esac
   case $su_s in ''|*[!0-9]*) su_s=0 ;; esac
@@ -737,7 +555,7 @@ session_vendor() {  # id, [profile]
 
 cmd_run() {
   usage="usage: agents run [Profile|--next|--best] [--vendor <v>] [--start-from-session=<id>] [args...]"
-  name="" sess="" rotate=0 best=0 vsel=""
+  name="" sess="" rotate=0 best=0 vsel="" bound_account="" bound_effort="medium" bound_group=0 bound_home="" bound_effort_set=0
   while [ $# -gt 0 ]; do
     case $1 in
       --next) rotate=1; shift ;;
@@ -745,14 +563,40 @@ cmd_run() {
       --vendor) vsel=${2:-}; shift 2 ;;
       --vendor=*) vsel=${1#--vendor=}; shift ;;
       --start-from-session=*) sess=${1#--start-from-session=}; shift ;;
+      --bound-home) bound_home=${2:-}; [ -n "$bound_home" ] || die "missing bound home"; shift 2 ;;
+      --bound-process-group) bound_group=1; shift ;;
+      --bound-account) bound_account=${2:-}; [ -n "$bound_account" ] || die "missing bound account"; shift 2 ;;
+      --bound-effort) bound_effort_set=1; bound_effort=${2:-}; [ -n "$bound_effort" ] || die "missing bound effort"; shift 2 ;;
       -*) break ;;  # remaining args belong to the agent CLI
       *) if [ -z "$name" ] && [ "$rotate" = 0 ] && [ "$best" = 0 ]; then name=$1; shift; else break; fi ;;
     esac
   done
+  if [ "$bound_group" = 1 ] || [ -n "$bound_home" ] || [ "$bound_effort_set" = 1 ]; then
+    [ -n "$bound_account" ] || die "bound execution options require --bound-account"
+  fi
+  if [ -n "$bound_home" ]; then
+    [ "$bound_group" = 1 ] || die "an owner-managed bound home requires --bound-process-group"
+  fi
   picks=$(( (rotate + best) + $( [ -n "$name" ] && echo 1 || echo 0 ) ))
   [ "$picks" -le 1 ] || die "$usage (pick at most one of a profile name, --next, --best)"
   if [ -n "$name" ]; then
     want=$name; name=$(resolve_profile "$want") || die "no profile named '$want' (see: agents list)"
+  fi
+  # Owner-bound sessions choose their original profile before capacity-based
+  # selection. Never transfer them implicitly to a different account.
+  if [ -n "$sess" ] && { [ -z "$vsel" ] || [ "$(lower "$vsel")" = codex ]; }; then
+    if saved_profile=$(/usr/bin/python3 "$scripts_dir/fleet-auth-bridge.py" --root "$root" --find-session "$sess"); then
+      [ "$rotate" = 0 ] && [ "$best" = 0 ] && [ -z "$bound_account" ] || die "owner-bound resume cannot rotate accounts"
+      [ -z "$name" ] || [ "$name" = "$saved_profile" ] || die "session belongs to profile '$saved_profile'"
+      name=$saved_profile
+      cfg=$(config_dir "$name" codex)
+      migration_launch_guard codex "$cfg"
+      remember_slot "$name" codex
+      exec /usr/bin/python3 "$scripts_dir/fleet-auth-bridge.py" --root "$root" --profile "$name" --config "$cfg" --executable "$(vendor_cli codex)" --tui -- resume "$sess" "$@"
+    else
+      saved_status=$?
+      [ "$saved_status" = 1 ] || die "saved session bindings are unavailable"
+    fi
   fi
   # A resumed session already says which lab it belongs to.
   if [ -z "$vsel" ] && [ -n "$sess" ]; then
@@ -791,7 +635,18 @@ cmd_run() {
 
   cfg=$(config_dir "$name" "$v")
   [ -d "$cfg" ] || die "profile '$name' has no $v slot — create it: agents new $name --vendors $v"
+  migration_launch_guard "$v" "$cfg"
 
+  if [ -n "$bound_account" ]; then
+    [ "$v" = codex ] && [ -z "$sess" ] && [ $# -eq 0 ] || die "bound turns require Codex, a fresh session and no vendor arguments"
+    case "$bound_effort" in low|medium|high) ;; *) die "invalid bound effort" ;; esac
+    remember_slot "$name" "$v"
+    if [ "$bound_group" = 1 ]; then
+      [ -n "$bound_home" ] || die "bound process groups require an owner-managed execution home"
+      exec /usr/bin/python3 "$scripts_dir/codex-run.py" --config "$cfg" --owner-root "$root" --profile-name "$name" --expected-account "$bound_account" --effort "$bound_effort" --shared-process-group --execution-home "$bound_home"
+    fi
+    exec /usr/bin/python3 "$scripts_dir/codex-run.py" --config "$cfg" --owner-root "$root" --profile-name "$name" --expected-account "$bound_account" --effort "$bound_effort"
+  fi
   remember_slot "$name" "$v"
 
   announce_auth "$v" "$name" "$cfg" "${1:-}"
@@ -826,8 +681,27 @@ resume_flag() {
 
 # Launch a vendor CLI pinned to a config dir through its env var (and any
 # extra the lab needs to keep its login in the slot).
+migration_launch_guard() {
+  [ "$1" = codex ] || return 0
+  if [ -e "$2/.n2-migration.json" ] || [ -L "$2/.n2-migration.json" ]; then
+    die "Codex profile migration is pending; inspect agents fleet auth migration-status before running or logging in"
+  fi
+}
+
 exec_vendor() {  # vendor, profile, cfg, cli, args...
   ev_vendor=$1 ev_profile=$2 ev_cfg=$3; shift 3
+  migration_launch_guard "$ev_vendor" "$ev_cfg"
+  if [ "$ev_vendor" = codex ] && sync_owner_managed "$ev_profile" codex; then
+    ev_cli=$1; shift
+    if [ "$#" -eq 1 ] && [ "$1" = app-server ]; then
+      exec /usr/bin/python3 "$scripts_dir/fleet-auth-bridge.py" --root "$root" --profile "$ev_profile" --config "$ev_cfg" --executable "$ev_cli"
+    fi
+    case ${1:-} in
+      login|logout|auth|exec|e|review|app-server|app|mcp|plugin|remote-control|exec-server|cloud|agents|queue|archive|delete|unarchive|migrate-rollouts|sandbox|debug|apply|a|completion|update|doctor|features|help)
+        die "this owner-managed profile requires N2's bound runner or app-server route for that command" ;;
+    esac
+    exec /usr/bin/python3 "$scripts_dir/fleet-auth-bridge.py" --root "$root" --profile "$ev_profile" --config "$ev_cfg" --executable "$ev_cli" --tui -- "$@"
+  fi
   # shellcheck disable=SC2046
   exec env "$(vendor_env "$ev_vendor")=$(vendor_env_value "$ev_vendor" "$ev_cfg")" \
     $(vendor_env_extra "$ev_vendor" "$ev_profile") "$@"
@@ -860,6 +734,7 @@ cmd_login() {
     die "$(vendor_label "$v") CLI not found — install it: $(vendor_install_hint "$v")"
   cfg=$(config_dir "$name" "$v")
   [ -d "$cfg" ] || die "profile '$name' has no $v slot — create it: agents new $name --vendors $v"
+  migration_launch_guard "$v" "$cfg"
 
   out_args=$(vendor_logout "$v")
   if vendor_authed "$v" "$cfg" "$name"; then authed=0; else authed=$?; fi
@@ -1298,7 +1173,7 @@ sessions_cache="$root/.sessions.v1.tsv"
 # transcripts we can read unless narrowed. A contract for the tray, like
 # `porcelain`:
 #   <profile> <vendor> <session-id> <mtime epoch> <cwd> <first prompt> <branch> <title>
-sessions_porcelain() {  # profiles, vendors, limit ("" = all)
+sessions_porcelain_legacy() {  # profiles, vendors, limit ("" = all)
   mkdir -p "$root"
   touch "$sessions_cache"
   sp_list=$(mktemp) sp_new=$(mktemp) tab=$(printf '\t')
@@ -1343,6 +1218,23 @@ sessions_porcelain() {  # profiles, vendors, limit ("" = all)
     cat "$sp_new"; } > "$sessions_cache.$$"
   mv "$sessions_cache.$$" "$sessions_cache"
   rm -f "$sp_list" "$sp_new"
+}
+
+sessions_porcelain() {
+  sp_combined=$(mktemp)
+  sessions_porcelain_legacy "$1" "$2" "$3" > "$sp_combined"
+  for sp_vendor in $2; do
+    [ "$sp_vendor" = codex ] || continue
+      for sp_profile in $1; do
+        if ! /usr/bin/python3 "$scripts_dir/fleet-auth-bridge.py" --root "$root" --profile "$sp_profile" --list-sessions >> "$sp_combined"; then
+          rm -f "$sp_combined"
+          die "saved session bindings are unavailable"
+        fi
+      done
+  done
+  sort -t "$(printf '\t')" -k4,4nr "$sp_combined" | awk -F '\t' -v limit="$3" '
+    !seen[$1 FS $2 FS $3]++ { if (limit == "" || count < limit) { print; count++ } }'
+  rm -f "$sp_combined"
 }
 
 cmd_sessions() {
@@ -1590,7 +1482,43 @@ cmd_version() {
 }
 
 
-cmd_profiles() { all_profiles; }
+# Internal read-only inventory consumed by profile-metadata.py. NUL fields
+# preserve spaces and tabs in paths. Never invoke a provider or read credentials.
+cmd_profile_routes() {
+  printf 'n2-profile-routes-v1\0%s\0%s\0%s\0' "$N2_VENDORS" "$root" "$(fleet_self_id 2>/dev/null || true)"
+  cpr_count=0
+  for cpr_name in $(all_profiles); do
+    cpr_count=$((cpr_count + 1))
+    [ "$cpr_count" -le 1024 ] || return 1
+    for cpr_vendor in $N2_VENDORS; do
+      cpr_home=$(config_dir "$cpr_name" "$cpr_vendor") || return 1
+      cpr_cli=$(vendor_cli "$cpr_vendor")
+      cpr_binary=$(command -v "$cpr_cli" 2>/dev/null || true)
+      printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+        "$cpr_name" "$cpr_vendor" "$cpr_home" "$(vendor_env "$cpr_vendor")" \
+        "$(vendor_env_value "$cpr_vendor" "$cpr_home")" "$(vendor_env_extra "$cpr_vendor" "$cpr_name")" \
+        "$cpr_cli" "$cpr_binary"
+    done
+  done
+}
+
+cmd_profiles() {
+  case ${1:-} in
+    '') all_profiles ;;
+    --json)
+      [ "$#" = 1 ] || die "usage: agents profiles [--json|--ensure-ids]"
+      /usr/bin/python3 "$scripts_dir/profile-metadata.py" report "$root" --with-routes --machine "$(fleet_self_id 2>/dev/null || true)" ;;
+    --ensure-ids)
+      [ "$#" = 1 ] || die "usage: agents profiles [--json|--ensure-ids]"
+      sync_need
+      # Default's ID is local. Its marker is never included in a fleet manifest.
+      mkdir -p "$root/Default"
+      all_profiles | while IFS= read -r n; do
+        sync_profile_marker "$n" migrate || exit 1
+      done ;;
+    *) die "usage: agents profiles [--json|--ensure-ids]" ;;
+  esac
+}
 
 authed_word() {  # vendor, slot dir, profile
   if vendor_authed "$1" "$2" "$3"; then echo yes; elif [ $? = 1 ]; then echo no; else echo unknown; fi
@@ -1651,6 +1579,12 @@ cmd_help() {
 
 cmd=${1:-help}
 [ $# -ge 1 ] && shift
+if [ "${N2_FLEET_QA:-}" = 1 ]; then
+  case $cmd in
+    use|adopt|shims|login|desktop|run|new|delete|transfer|loop)
+      die "This fleet QA build manages isolated profile copies; use the primary app for $cmd." ;;
+  esac
+fi
 case $cmd in
   list)     cmd_list "$@" ;;
   vendors)  cmd_vendors "$@" ;;
@@ -1658,6 +1592,7 @@ case $cmd in
   use)      cmd_use "$@" ;;
   run)      cmd_run "$@" ;;
   best)     cmd_best "$@" ;;
+  usage)    /usr/bin/python3 "$scripts_dir/usage-store.py" --root "$root" --origin "$(fleet_self_id 2>/dev/null)" "$@" ;;
   new)      cmd_new "$@" ;;
   delete)   cmd_delete "$@" ;;
   adopt)    cmd_adopt "$@" ;;
@@ -1667,8 +1602,11 @@ case $cmd in
   transfer) cmd_transfer "$@" ;;
   desktop)  cmd_desktop "$@" ;;
   shims)    cmd_shims "$@" ;;
+  fleet)    cmd_fleet "$@" ;;
   loop)     cmd_loop "$@" ;;
-  profiles) cmd_profiles ;;
+  profiles) cmd_profiles "$@" ;;
+  _profile-routes) cmd_profile_routes ;;
+  _fleet-auth-call) fleet_auth_call "$@" ;;
   porcelain) cmd_porcelain ;;
   version)  cmd_version ;;
   help|-h|--help) cmd_help ;;

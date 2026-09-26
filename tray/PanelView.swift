@@ -74,6 +74,13 @@ struct PanelView: View {
                                 SessionsSection(data: data, actions: actions)
                             }
                         }
+                        // The fleet sits below this machine's own profiles on
+                        // purpose: the local machine is what the panel is for,
+                        // and the other Macs are the second question.
+                        if let fleetActions = actions as? FleetActions {
+                            Divider()
+                            FleetSection(model: model, actions: fleetActions)
+                        }
                     }
                 }
             } else {
@@ -336,6 +343,13 @@ private struct NextBestButton: View {
                 }
             }
             .buttonStyle(RowButtonStyle(radius: 8, border: true))
+        case .usageUnavailable?:
+            Button { actions.retryUsage() } label: {
+                row(icon: "arrow.clockwise", iconColor: Ink.secondary, title: "Usage unavailable") {
+                    Text("Refresh").foregroundStyle(Ink.link)
+                }
+            }
+            .buttonStyle(RowButtonStyle(radius: 8, border: true))
         case .nothingSignedIn?:
             row(icon: "bolt.slash", iconColor: Ink.secondary, title: "Nothing is signed in") { EmptyView() }
                 .background(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.12)))
@@ -502,6 +516,7 @@ private struct ProfileCard: View {
         switch reading.state {
         case .ready:             return (nil, "Ready", Ink.secondary)
         case .checking:          return (nil, "Checking…", Ink.secondary)
+        case .usageUnknown:      return ("questionmark.circle", "Usage unknown", Ink.amber)
         case .allOut:            return ("clock", "All out", maxedRed)
         case .labsOut(let out, let of, _):
             return ("clock", "\(out) of \(of) out", Ink.amber)
@@ -513,7 +528,7 @@ private struct ProfileCard: View {
 
     private var helpText: String {
         var parts: [String] = [status.text]
-        if let used = reading.used { parts.append("\(used)% used across \(slotted.count) labs") }
+        if let used = reading.used { parts.append("\(used)% used in the fullest measured lab") }
         switch reading.state {
         case .allOut(let until), .labsOut(_, _, let until):
             if let until { parts.append("first back \(clockTime(until))") }
@@ -601,14 +616,12 @@ private struct SlotRow: View {
                 .frame(width: 56, alignment: .trailing)
             meta(u, b)
         } else if usage?.note == .ok {
-            // Read cleanly with nothing to show: no window open (Muse between
-            // its 5-hour windows). Normal, so not amber.
-            flat(nil, "idle", Ink.secondary)
+            flat(nil, usage?.isFresh == false ? "stale reading" : "usage unknown", Ink.amber)
         } else if let note = usage?.note {
             if note == .sharedLogin {
-                flat("link", label(for: note), Ink.secondary)
+                flat("link", usage?.statusLabel ?? "no reading", Ink.secondary)
             } else {
-                flat(note == .staleToken ? "exclamationmark.triangle" : "arrow.clockwise", label(for: note), Ink.amber)
+                flat(note == .staleToken ? "exclamationmark.triangle" : "arrow.clockwise", usage?.statusLabel ?? "no reading", Ink.amber)
             }
         } else if model.usageSweeping {
             Sweep().clipShape(Capsule())
@@ -633,6 +646,7 @@ private struct SlotRow: View {
         .foregroundStyle(u.maxed ? maxedRed : Ink.secondary)
         .lineLimit(1)
         .frame(width: 88, alignment: .trailing)
+        .help("Usage checked at \(u.fetchedAt.formatted(date: .abbreviated, time: .standard))")
     }
 
     private func flat(_ icon: String?, _ text: String, _ tint: Color) -> some View {
@@ -646,16 +660,7 @@ private struct SlotRow: View {
         .lineLimit(1)
     }
 
-    private func label(for note: Usage.Note) -> String {
-        switch note {
-        case .noToken:     return "not signed in"
-        case .staleToken:  return "token expired"
-        case .rateLimited: return "rate-limited"
-        case .fetchError:  return "check failed"
-        case .sharedLogin: return "shared login"
-        default:           return "no reading"
-        }
-    }
+
 }
 
 // MARK: - Depth 3: everything for one slot
@@ -680,15 +685,8 @@ private struct SlotActions: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if let u = usage, u.note == .ok {
-                if let five = u.fiveHour {
-                    MeterRow(label: "5h", percent: five,
-                             meta: u.resets.map(clockTime) ?? "", delay: 0)
-                }
-                if let seven = u.sevenDay {
-                    MeterRow(label: u.longWindow, percent: seven,
-                             meta: u.sevenResets.map(clockTime) ?? "", delay: 0)
-                }
+            if let u = usage {
+                UsageDetailsView(usage: u)
             }
 
             group("Start", "bolt")
@@ -951,7 +949,7 @@ private struct CapacitySegment: View {
     let namespace: Namespace.ID
 
     private var used: Int? { usage?.used }
-    private var maxed: Bool { (used ?? 0) >= Usage.maxedAt }
+    private var maxed: Bool { usage?.maxed ?? false }
 
     var body: some View {
         VStack(spacing: 3) {
@@ -970,7 +968,9 @@ private struct CapacitySegment: View {
         var parts = [vendor.label]
         if !vendor.hasUsageAPI { parts.append("no quota API") }
         else if signedOut { parts.append("not signed in") }
-        else if let u = used { parts.append(u >= Usage.maxedAt ? "maxed" : "\(u)% used") }
+        else if maxed { parts.append(usage?.note == .restricted ? "provider restriction" : "at N2 scheduling reserve") }
+        else if let u = used { parts.append("\(u)% used") }
+        else { parts.append(usage?.statusLabel ?? "usage unavailable") }
         return parts.joined(separator: " · ")
     }
 
@@ -981,6 +981,9 @@ private struct CapacitySegment: View {
         } else if signedOut {
             Capsule().fill(Ink.amber.opacity(0.18))
                 .overlay(Capsule().strokeBorder(Ink.amber.opacity(0.45)))
+        } else if maxed, usage?.note == .restricted {
+            Capsule().fill(maxedRed.opacity(0.18))
+                .overlay(Capsule().strokeBorder(maxedRed))
         } else if let u = used {
             Gauge(percent: u)
         } else if sweeping {

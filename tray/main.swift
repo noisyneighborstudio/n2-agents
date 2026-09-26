@@ -67,9 +67,10 @@ let terminalSpecs: [TerminalSpec] = [
     }),
 ]
 
-final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtocol, PanelActions, SetupHost {
-    private var statusItem: NSStatusItem!
-    private let model = PanelModel()
+final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtocol, PanelActions, FleetActions, SetupHost {
+    var statusItem: NSStatusItem!
+    let model = PanelModel()
+    var announcer = FleetAnnouncer()
     private var statusIcon: StatusIcon?
     private var quotaWatch: AnyCancellable?
     private var menuBarAppearance: NSKeyValueObservation?
@@ -137,7 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         }
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePanel)
-        hotKey.register(Shortcut.load())
+        if !UpdateChannel.isQABuild { hotKey.register(Shortcut.load()) }
         // @Published fires before the store, so read the model a turn later.
         quotaWatch = model.$data.combineLatest(model.$usage)
             .receive(on: DispatchQueue.main)
@@ -162,12 +163,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         // The first full session read indexes every transcript, which takes
         // minutes on a big history; do it now, not when the window is opened.
         loadAllSessions()
+        refreshFleet()
+        Timer.scheduledTimer(withTimeInterval: 45, repeats: true) { [weak self] _ in self?.refreshFleet() }
         Timer.scheduledTimer(withTimeInterval: 180, repeats: true) { [weak self] _ in self?.refreshPanel() }
 
         // Keep claude-as / claude-<profile> on PATH in step with the profile
         // list — real executables, so apps and scripts get them too, and
         // upgrades from a shell-function-only version heal themselves.
-        DispatchQueue.global(qos: .utility).async { self.runCLI(["shims"]) }
+        if !UpdateChannel.isQABuild {
+            DispatchQueue.global(qos: .utility).async { self.runCLI(["shims"]) }
+        }
 
 #if canImport(Sparkle)
         // Sparkle owns automatic scheduling and signature verification. Both
@@ -193,6 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         // Setting the image re-resolves the button's appearance, which fires
         // the observer that calls this: redraw only on a real change, or the
         // two feed each other forever.
+        statusItem.button?.toolTip = model.capacitySummary
         if let last = drawnIcon, last == drawn { return }
         drawnIcon = drawn
         let image = icon.image(remaining: drawn.remaining, dark: drawn.dark)
@@ -216,11 +222,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         DispatchQueue.main.async { self.model.presented = true }
         refreshPanel()
         refreshUsage(force: false, onDemand: true)
+        refreshFleet()
     }
 
     // Anything that opens a window, dialog or terminal closes the panel first:
     // a transient panel would otherwise vanish under it mid-click.
-    private func dismissPanel() {
+    func dismissPanel() {
         panel.dismiss()
     }
 
@@ -230,7 +237,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     // fresh one.
     private var refreshGeneration = 0
 
-    private func refreshPanel() {
+    func refreshPanel() {
         refreshGeneration += 1
         let generation = refreshGeneration
         DispatchQueue.global(qos: .userInitiated).async {
@@ -324,8 +331,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: slow)
         DispatchQueue.global(qos: .utility).async {
             let fresh = Dictionary(uniqueKeysWithValues: vendors.map { v in
-                let r = self.runCLI(["best", "--porcelain", "--vendor", v.id])
-                return (v.id, r.status == 0 ? Usage.parse(r.output, longWindow: v.longWindow) : [:])
+                let r = self.runCLI(["best", "--json", "--vendor", v.id])
+                return (v.id, r.status == 0 ? Usage.parseJSON(r.output, provider: v.id, longWindow: v.longWindow) : [:])
             })
             DispatchQueue.main.async {
                 self.model.usageLoading = false
@@ -541,10 +548,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 
     // MARK: - agents CLI (single implementation of profile side effects)
 
-    private var cliPath: String { scriptsDir + "/agents" }
+    var cliPath: String { scriptsDir + "/agents" }
 
     @discardableResult
-    private func runCLI(_ args: [String]) -> (status: Int32, output: String) {
+    func runCLI(_ args: [String]) -> (status: Int32, output: String) {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/sh")
         task.arguments = [cliPath] + args
@@ -897,6 +904,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     }
 
     func installCLI() -> String {
+        if Bundle.main.object(forInfoDictionaryKey: "N2FleetQA") as? Bool == true {
+            return "Fleet QA uses its bundled CLI; the primary CLI stays installed."
+        }
         let source = URL(fileURLWithPath: cliPath).standardizedFileURL
         let agentAs = scriptsDir + "/agent-as"
         guard fm.isExecutableFile(atPath: source.path), fm.isExecutableFile(atPath: agentAs) else {
@@ -970,7 +980,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     // MARK: - Terminal + alerts
 
     // Runs in Terminal.app so script output/progress is visible to the user.
-    private func runInTerminal(_ command: String) {
+    func runInTerminal(_ command: String) {
         let escaped = command
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
@@ -1002,7 +1012,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         }
     }
 
-    private func alert(_ title: String, _ message: String) {
+    func alert(_ title: String, _ message: String) {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message

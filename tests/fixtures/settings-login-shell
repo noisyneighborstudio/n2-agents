@@ -1,0 +1,5 @@
+#!/bin/sh
+# Deterministic login-shell cost without sourcing the user's shell files.
+printf 'login\n' >> "$N2_SETTINGS_TEST_DIR/login-calls"
+/bin/sleep "${N2_SETTINGS_LOGIN_DELAY:-0.12}"
+printf 'PATH=/usr/bin:/bin:/usr/sbin:/sbin\n'

@@ -9,17 +9,36 @@
 #   fail-b-once       the first verification rejects criterion has-b
 #   liar              the sign-off says done whatever the evidence says
 set -eu
+if [ "${LOOP_FAKE_STRUCTURED:-}" = 1 ]; then
+  exec /usr/bin/python3 "$(dirname "$0")/fake-loop-protocol.py" "$0" "$@"
+fi
 prompt=$(cat)
 role=$(printf '%s\n' "$prompt" | sed -n 's/^ROLE: //p' | head -1)
 chunk=$(printf '%s\n' "$prompt" | sed -n 's/^CHUNK: //p' | head -1)
 profile=$(basename "$(dirname "$CODEX_HOME")")
 echo "$role ${chunk:-} $profile" >> "$LOOP_FAKE/calls"
 
-left=$(cat "$LOOP_FAKE/worker-quota-$profile" 2>/dev/null || echo 0)
-if [ "$role" = worker ] && [ "$left" -gt 0 ]; then
-  echo $((left - 1)) > "$LOOP_FAKE/worker-quota-$profile"
-  echo "ERROR: You've hit your usage limit. Try again in 2 seconds." >&2
-  exit 1
+# A shared budget removes dependence on how the scheduler allocates slots.
+# Lock both shared and legacy counters because a slot can run parallel turns.
+if [ "$role" = worker ]; then
+  left=$(/usr/bin/python3 - "$LOOP_FAKE" "$profile" <<'COUNTER'
+import fcntl,sys
+from pathlib import Path
+root=Path(sys.argv[1]);path=root/'worker-quota-total'
+if not path.exists():path=root/('worker-quota-'+sys.argv[2])
+if not path.exists():print(0)
+else:
+    with path.open('r+') as stream:
+        fcntl.flock(stream,fcntl.LOCK_EX)
+        left=int(stream.read());print(left)
+        stream.seek(0);stream.write(str(max(0,left-1)));stream.truncate()
+COUNTER
+)
+  if [ "$left" -gt 0 ]; then
+    retry=$(cat "$LOOP_FAKE/worker-retry-seconds" 2>/dev/null || echo 2)
+    echo "ERROR: You've hit your usage limit. Try again in $retry seconds." >&2
+    exit 1
+  fi
 fi
 
 if [ -f "$LOOP_FAKE/quota-$profile" ]; then

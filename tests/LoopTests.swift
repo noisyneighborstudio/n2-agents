@@ -46,11 +46,27 @@ import Darwin
         if case .quota(let until) = Failure.classify("429 Too Many Requests", now: now) {
             expect(until == now.addingTimeInterval(3600), "an unstated reset waits an hour")
         } else { expect(false, "429 is quota") }
+        expect(Failure.reportedResetTime(in: "try again in 1 hour and 30 minutes", now: now) == nil, "compound reset is not a one-hour expiry")
+        expect(Failure.reportedResetTime(in: "try again in 2 seconds.", now: now) == now.addingTimeInterval(2), "complete relative reset is known")
+        expect(Failure.reportedResetTime(in: "try again at Sep 26 11:20 AM", now: now) == nil, "missing year/timezone is unknown")
+        expect(Failure.reportedResetTime(in: "try again at 2099-09-26T11:20:00Z", now: now) != nil, "qualified future ISO reset is known")
+        expect(Failure.reportedResetTime(in: "try again at 2000-09-26T11:20:00Z", now: now) == nil, "past reset is not recovery evidence")
         if case .auth = Failure.classify("Error: not logged in") {} else { expect(false, "not logged in is auth") }
         if case .attention = Failure.classify("[ACTION REQUIRED] An update to our Consumer Terms has taken effect. You must run `claude` to review the updated terms.") {}
         else { expect(false, "new terms need a person") }
         if case .outage = Failure.classify("HTTP 503 Service Unavailable") {} else { expect(false, "503 is an outage") }
         if case .other = Failure.classify("TypeError: undefined is not a function") {} else { expect(false, "a crash is other") }
+
+        for message in ["You've hit your session limit", "You've hit your monthly spend limit",
+                        "You're out of usage credits. Switch to another model to continue."] {
+            if case .quota = Failure.classify(message) {} else { expect(false, "provider rejection: \(message)") }
+        }
+        for candidate in [slot("claude", "Unknown", used: nil),
+                          slot("codex", "Failed", used: 10, quota: "fetch-error"),
+                          slot("claude", "Throttled", used: 10, quota: "rate-limited")] {
+            expect(pick([candidate], effort: .deep, cooldowns: [:], busy: [:]) == nil,
+                   "missing or failed measurements cannot advertise capacity")
+        }
 
         // Paths: overlapping chunks never run together.
         expect(pathsOverlap(["src/api/**"], ["src/api/users.ts"]), "a glob covers a file under it")
@@ -72,6 +88,11 @@ import Darwin
         expect(pick([slots[3], slots[4]], effort: .light, cooldowns: [:], busy: [:]) == nil, "expired or full slots are never picked")
         expect(pick([slot("claude", "A", used: 10), slot("claude", "B", used: 10)], effort: .standard, cooldowns: [:], busy: ["claude|A": 1])?.key == "claude|B",
                "work spreads across equal slots")
+
+        let reserved = slot("claude", "Reserve", used: 96, quota: "local-reserve")
+        expect(pick([reserved], effort: .deep, cooldowns: [:], busy: [:]) == nil,
+               "N2 reserve stays excluded without a provider-rejection label")
+        expect(unusable(reserved, cooldowns: [:]) == "at N2 scheduling reserve", "name local scheduling policy")
 
         // Plans: every problem is named, so the planner can fix exactly that.
         let bad: [String: Any] = ["plan": ["criteria": [["id": "c1", "description": "d", "verification": "v"], ["id": "c2", "description": "d", "verification": "v"]],

@@ -1,10 +1,12 @@
 import Foundation
+import CoreFoundation
+import Combine
 
 // State behind the menu bar panel. The app delegate is the only writer — it
 // runs the CLI off the main thread and publishes results here — and the views
 // only read it and call back through PanelActions.
 
-/// One row of `agents best --porcelain`.
+/// One structured allowance observation from `agents best --json`.
 struct Usage {
     enum Note: String {
         case ok
@@ -12,6 +14,11 @@ struct Usage {
         case staleToken = "stale-token"
         case rateLimited = "rate-limited"
         case fetchError = "fetch-error"
+        case restricted
+        case credentialOverride = "credential-override"
+        case credentialStoreUnavailable = "credential-store-unavailable"
+        case ownerUnavailable = "owner-unavailable"
+        case migrationPending = "migration-pending"
         case noUsageAPI = "no-usage-api"
         /// The lab has one login for the machine; Default's row carries it.
         case sharedLogin = "shared-login"
@@ -20,28 +27,127 @@ struct Usage {
     let fiveHour: Int?
     let sevenDay: Int?
     let resets: Date?       // when the 5h window resets
-    let note: Note
+    var note: Note
     let sevenResets: Date?  // when the 7d window resets
     /// What the long window is for this lab ("7d", or Cursor's "mo").
     var longWindow = "7d"
     var fetchedAt = Date()
+    struct Window {
+        let scope: String
+        let percent: Double
+        let resets: Date?
+        var durationSeconds: Double? = nil
+        var label: String {
+            switch scope {
+            case "five_hour": return "5h"
+            case "seven_day": return "7d"
+            case "seven_day_opus": return "Opus · 7d"
+            case "seven_day_sonnet": return "Sonnet · 7d"
+            default:
+                let name = scope.replacingOccurrences(of: "_", with: " ").replacingOccurrences(of: ":", with: " · ")
+                guard let durationSeconds, durationSeconds > 0 else { return name }
+                let scale: (Double, String) = durationSeconds.truncatingRemainder(dividingBy: 86400) == 0 ? (86400, "d")
+                    : durationSeconds.truncatingRemainder(dividingBy: 3600) == 0 ? (3600, "h")
+                    : durationSeconds.truncatingRemainder(dividingBy: 60) == 0 ? (60, "m") : (1, "s")
+                return name + " · " + String(format: "%.0f", durationSeconds / scale.0) + scale.1
+            }
+        }
+    }
+    /// nil denotes a legacy TSV row. An empty array is a structured missing reading.
+    var windows: [Window]? = nil
+    var restrictionResets: [Date?] = []
+    var restrictionReasons: [String] = []
+    var creditNotes: [String] = []
+    var identityStatus = "unknown"
+    var accountHash: String? = nil
+
+    var accountSummary: String {
+        if identityStatus == "verified", let accountHash {
+            return "Usage account · \(accountHash.prefix(12))"
+        }
+        return "Usage account not verified"
+    }
+    var accountHelp: String {
+        if identityStatus == "verified", let accountHash {
+            return "Account confirmed for this usage observation: \(accountHash). Match this identifier across machines."
+        }
+        return "Account identity: \(identityStatus). Matching profile names do not establish the same account."
+    }
+
+    var statusLabel: String {
+        switch note {
+        case .ok: return isFresh ? "usage unknown" : "stale reading"
+        case .noToken: return "not signed in"
+        case .staleToken: return "token expired"
+        case .rateLimited: return "rate-limited"
+        case .fetchError: return "check failed"
+        case .restricted: return "provider restriction"
+        case .credentialOverride: return "credential override"
+        case .credentialStoreUnavailable: return "credential store unavailable"
+        case .ownerUnavailable: return "account owner unavailable"
+        case .migrationPending: return "migration pending"
+        case .noUsageAPI: return "no usage API"
+        case .sharedLogin: return "shared login"
+        }
+    }
+
+    var statusExplanation: String {
+        switch note {
+        case .ownerUnavailable:
+            return "N2 could not authenticate through this account's owner. Check the owner's connection and account access. Capacity is unknown."
+        case .migrationPending:
+            return "This profile is paused for credential migration. Capacity stays unknown until the migration is resolved."
+        case .credentialStoreUnavailable:
+            return "N2 could not read the credential store. Capacity is unknown."
+        case .credentialOverride:
+            return "A credential override prevents N2 from verifying this profile's account and capacity."
+        case .staleToken, .noToken:
+            return "Authentication must be restored before N2 can measure capacity."
+        default:
+            return "Current usage is unavailable. No remaining capacity is inferred from this reading."
+        }
+    }
+
+    /// Expired observations cannot advertise capacity or select an account.
+    static let maximumAge: TimeInterval = 15 * 60
+    var hasObservationTime: Bool { fetchedAt != .distantPast }
+    var isFresh: Bool {
+        let age = Date().timeIntervalSince(fetchedAt)
+        return age >= -300 && age <= Self.maximumAge
+    }
 
     /// Used in whichever window is tighter — the one that stops you first.
     /// A plan may have only one of the two.
     var used: Int? {
-        guard note == .ok, fiveHour != nil || sevenDay != nil else { return nil }
+        guard note == .ok, isFresh else { return nil }
+        if let windows { return windows.map(\.percent).max().map { Int($0.rounded()) } }
+        guard fiveHour != nil || sevenDay != nil else { return nil }
         return max(fiveHour ?? 0, sevenDay ?? 0)
     }
 
-    /// 95%+ in either window. The endpoint reports utilisation and the last
-    /// few points are unusable in practice, so this is out, not "nearly".
+    /// Local scheduling reserve, not the provider's exhaustion threshold.
     static let maxedAt = 95
-    var maxed: Bool { (used ?? 0) >= Self.maxedAt }
+    var maxed: Bool {
+        guard isFresh else { return false }
+        if note == .restricted { return true }
+        guard note == .ok else { return false }
+        if let windows { return windows.contains { $0.percent >= Double(Self.maxedAt) } }
+        return (used ?? 0) >= Self.maxedAt
+    }
+    /// A provider rejection establishes no runnable capacity, without inventing
+    /// a utilization percentage. Unknown or failed observations stay unknown.
+    var availableRemaining: Int? {
+        if maxed { return 0 }
+        return used.map { 100 - $0 }
+    }
 
     /// The window that binds — the one that stops you first — with its reset.
     /// Depth 2 shows this one; depth 3 shows both.
     var binding: (tag: String, percent: Int, resets: Date?)? {
-        guard note == .ok else { return nil }
+        guard note == .ok, isFresh else { return nil }
+        if let windows {
+            return windows.max { $0.percent < $1.percent }.map { ($0.label, Int($0.percent.rounded()), $0.resets) }
+        }
         let f = fiveHour ?? -1, d = sevenDay ?? -1
         guard f >= 0 || d >= 0 else { return nil }
         return f >= d ? ("5h", max(f, 0), resets) : (longWindow, max(d, 0), sevenResets)
@@ -50,8 +156,15 @@ struct Usage {
     /// When a maxed lab comes back: the latest reset among the maxed windows.
     var maxedUntil: Date? {
         guard maxed else { return nil }
-        let windows = [((fiveHour ?? 0) >= Self.maxedAt, resets), ((sevenDay ?? 0) >= Self.maxedAt, sevenResets)]
-        return windows.filter { $0.0 }.compactMap { $0.1 }.max()
+        let evidence: [Date?]
+        if let windows {
+            evidence = windows.filter { $0.percent >= Double(Self.maxedAt) }.map(\.resets) + restrictionResets
+        } else {
+            evidence = [((fiveHour ?? 0) >= Self.maxedAt, resets), ((sevenDay ?? 0) >= Self.maxedAt, sevenResets)]
+                .filter { $0.0 }.map { $0.1 }
+        }
+        guard !evidence.isEmpty, evidence.allSatisfy({ $0 != nil }) else { return nil }
+        return evidence.compactMap { $0 }.max()
     }
 
     private static let resetFormat: DateFormatter = {
@@ -62,14 +175,19 @@ struct Usage {
         return f
     }()
 
+    private static func percent(_ text: String) -> Int? {
+        guard let value = Double(text), value.isFinite, value >= 0, value <= 100 else { return nil }
+        return Int(value.rounded())
+    }
+
     /// profile -> usage. Unknown notes are dropped: a newer CLI may add some.
     static func parse(_ text: String, longWindow: String = "7d") -> [String: Usage] {
         var rows: [String: Usage] = [:]
         for line in text.split(separator: "\n") {
             let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
             guard f.count >= 5, let note = Note(rawValue: f[4]) else { continue }
-            rows[f[0]] = Usage(fiveHour: Double(f[1]).map { Int($0.rounded()) },
-                               sevenDay: Double(f[2]).map { Int($0.rounded()) },
+            rows[f[0]] = Usage(fiveHour: percent(f[1]),
+                               sevenDay: percent(f[2]),
                                resets: resetFormat.date(from: f[3]),
                                note: note,
                                sevenResets: f.count > 5 ? resetFormat.date(from: f[5]) : nil,
@@ -78,13 +196,118 @@ struct Usage {
         return rows
     }
 
-    /// A failed read doesn't erase a good one: the last numbers stay, dated by
-    /// their own fetchedAt so the panel can say how old they are.
+    private static func number(_ value: Any?) -> Double? {
+        guard let value = value as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID(),
+              value.doubleValue.isFinite else { return nil }
+        return value.doubleValue
+    }
+
+    private static func boolean(_ value: Any?) -> Bool? {
+        guard let value = value as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() else { return nil }
+        return value.boolValue
+    }
+
+    private static func observationDate(_ value: Any?) -> Date? {
+        if let value = number(value) { return Date(timeIntervalSince1970: value) }
+        guard let text = value as? String else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: text) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: text) ?? resetFormat.date(from: text)
+    }
+
+    static func parseJSON(_ text: String, provider: String, longWindow: String = "7d") -> [String: Usage] {
+        var rows: [String: Usage] = [:]
+        for line in text.split(separator: "\n") {
+            guard let data = String(line).data(using: .utf8),
+                  let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  number(value["schemaVersion"]) == 1, value["provider"] as? String == provider,
+                  let profile = value["profile"] as? String, !profile.isEmpty else { continue }
+            var row = Usage(fiveHour: nil, sevenDay: nil, resets: nil, note: .fetchError,
+                            sevenResets: nil, longWindow: longWindow,
+                            fetchedAt: observationDate(value["observedAt"]) ?? .distantPast, windows: [])
+            // Duplicate bindings cannot be resolved by accepting whichever row
+            // happened to arrive last. Keep the whole binding unavailable.
+            if rows[profile] != nil { rows[profile] = row; continue }
+            guard let rawStatus = value["status"] as? String, let status = Note(rawValue: rawStatus) else {
+                rows[profile] = row; continue
+            }
+            row.note = status
+            if let identity = value["identity"] as? [String: Any],
+               let state = identity["status"] as? String,
+               ["verified", "login-only", "unknown", "conflicting", "unavailable"].contains(state) {
+                row.identityStatus = state
+                if state == "verified", let hash = identity["accountHash"] as? String,
+                   hash.count == 64, hash.allSatisfy({ "0123456789abcdef".contains($0) }) {
+                    row.accountHash = hash
+                } else if state == "verified" { row.identityStatus = "unavailable" }
+            }
+            if let credits = value["credits"] as? [String: [String: Any]] {
+                for key in credits.keys.sorted() {
+                    let credit = credits[key] ?? [:]
+                    if key == "overage", let enabled = boolean(credit["is_enabled"]) {
+                        row.creditNotes.append(enabled ? "Extra usage enabled" : "Extra usage disabled")
+                        if enabled, boolean(credit["spend_limit_reached"]) == true {
+                            row.creditNotes.append("Extra usage spending limit reached")
+                        }
+                    } else if boolean(credit["unlimited"]) == true {
+                        row.creditNotes.append("\(key): unlimited credits")
+                    } else if let balance = credit["balance"] as? String, balance.count <= 64 {
+                        row.creditNotes.append("\(key): credit balance \(balance)")
+                    }
+                }
+            }
+            guard status == .ok || status == .restricted else { rows[profile] = row; continue }
+            guard let windows = value["windows"] as? [[String: Any]],
+                  let restrictions = value["restrictions"] as? [[String: Any]] else {
+                row.note = .fetchError; rows[profile] = row; continue
+            }
+            var incomplete = false
+            for window in windows {
+                guard let scope = window["scope"] as? String, !scope.isEmpty,
+                      let percent = number(window["usedPercent"]), (0...100).contains(percent) else {
+                    incomplete = true; continue
+                }
+                row.windows?.append(Window(scope: scope, percent: percent, resets: observationDate(window["resetsAt"]), durationSeconds: number(window["durationSeconds"])))
+            }
+            // Other collectors expose their single/two measured windows in
+            // display columns. Claude and Codex must supply full buckets.
+            if windows.isEmpty, !["claude", "codex"].contains(provider), let display = value["display"] as? [String: Any] {
+                for (key, reset, label) in [("shortUsed", "shortResets", "5h"), ("longUsed", "longResets", longWindow)] {
+                    let raw = display[key]
+                    if raw == nil || raw is NSNull || raw as? String == "-" { continue }
+                    let percent = number(raw) ?? (raw as? String).flatMap(Double.init)
+                    guard let percent, percent.isFinite, (0...100).contains(percent) else { incomplete = true; continue }
+                    row.windows?.append(Window(scope: label, percent: percent, resets: observationDate(display[reset])))
+                }
+            }
+            row.restrictionResets = restrictions.map { observationDate($0["resetsAt"]) }
+            row.restrictionReasons = restrictions.map { restriction in
+                let scope = restriction["scope"] as? String ?? "unknown"
+                let reason = restriction["reason"] as? String ?? "provider restriction"
+                return "\(scope): \(reason)"
+            }
+            if status == .restricted || !restrictions.isEmpty {
+                row.note = .restricted
+                if incomplete || restrictions.isEmpty { row.restrictionResets.append(nil) }
+            } else if incomplete || row.windows?.isEmpty != false { row.note = .fetchError }
+            rows[profile] = row
+        }
+        return rows
+    }
+
+    /// Keep the last observation for diagnosis, but retain the failed read's
+    /// status. A failed refresh must never leave a healthy capacity gauge.
     static func merge(_ old: [String: Usage], _ new: [String: Usage]) -> [String: Usage] {
         new.mapValues { $0 }.merging(old) { fresh, previous in
-            (fresh.note == .rateLimited || fresh.note == .fetchError) && previous.note == .ok ? previous : fresh
+            guard fresh.note == .rateLimited || fresh.note == .fetchError else { return fresh }
+            var stale = previous
+            stale.note = fresh.note
+            return stale
         }.filter { new[$0.key] != nil }
     }
+
 }
 
 /// Everything one refresh reads from disk and the CLI, published as a unit so
@@ -130,6 +353,7 @@ enum NextBest {
     /// Every signed-in slot is out of quota; the soonest one back, if known.
     case allMaxed(firstBack: Date?)
     case nothingSignedIn
+    case usageUnavailable
 }
 
 /// Where a profile stands, as one closed vocabulary. The card's status slot
@@ -139,6 +363,7 @@ enum NextBest {
 enum ProfileState: Equatable {
     case ready
     case checking
+    case usageUnknown
     /// Some labs are out; `until` is the soonest one back.
     case labsOut(out: Int, of: Int, until: Date?)
     /// Nothing left to run at all.
@@ -177,17 +402,17 @@ final class PanelModel: ObservableObject {
     @Published var pendingSetups: [String: [String]] = [:]
     /// Every session, for the standalone window; the panel itself keeps the
     /// two newest. Kept between opens, so the window never starts empty.
+    @Published var fleet: FleetData?
     @Published var allSessions: [SessionInfo] = []
     @Published var sessionsLoading = false
 
     /// A profile's status and its capacity, read together because they answer
     /// halves of the same question.
     ///
-    /// The number is the mean of `used` across the slots that reported one:
-    /// equal weighting is a rule that can be stated, and a profile with one lab
-    /// maxed and six with room is genuinely usable — the mean says so while the
-    /// strip below it shows where the hole is. Labs with no quota API and labs
-    /// that aren't signed in contribute no number rather than a guessed one.
+    /// The number is the highest measured utilization across this profile's
+    /// slots. A provider rejection affects availability without inventing a
+    /// utilization percentage. nextBest independently finds an available slot.
+    /// Missing readings contribute no number.
     func reading(_ profile: Profile, _ data: PanelData) -> (state: ProfileState, used: Int?) {
         let slotted = data.snapshot.installedVendors.filter { profile.slots[$0.id] != nil }
         let metered = slotted.filter(\.hasUsageAPI)
@@ -195,9 +420,9 @@ final class PanelModel: ObservableObject {
         func row(_ v: Vendor) -> Usage? { usage[v.id]?[profile.name] }
 
         let live = metered.filter(signedIn)
-        let readable = live.compactMap { row($0) }.filter { $0.note == .ok }
+        let readable = live.compactMap { row($0) }.filter { $0.isFresh && ($0.note == .ok || $0.note == .restricted) }
         let values = readable.compactMap(\.used)
-        let used = values.isEmpty ? nil : Int((Double(values.reduce(0, +)) / Double(values.count)).rounded())
+        let used = readable.count == live.count && live.allSatisfy({ row($0)?.availableRemaining != nil }) ? values.max() : nil
 
         let out = readable.filter(\.maxed)
         let back = out.compactMap(\.maxedUntil).min()
@@ -215,41 +440,64 @@ final class PanelModel: ObservableObject {
         }
         if !out.isEmpty { return (.labsOut(out: out.count, of: slotted.count, until: back), used) }
         if !signedOut.isEmpty { return (.needsSignIn(signedOut.count), used) }
+        if live.contains(where: { row($0)?.used == nil }) { return (.usageUnknown, used) }
         return (.ready, used)
     }
 
-    /// Quota left in every signed-in slot that read cleanly — the slots a
-    /// profile's number is the mean of. A maxed slot is out, so it has none.
+    /// Runnable headroom in each measured slot. Restrictions and the local
+    /// scheduling reserve contribute zero; missing readings stay unknown.
     private var slotsLeft: [(profile: String, vendor: Vendor, left: Int)] {
         guard let data else { return [] }
         return data.profiles.flatMap { p in
             data.quotaVendors
                 .filter { p.slots[$0.id] != nil && data.snapshot.signedIn[p.name]?[$0.id] != false }
                 .compactMap { v in
-                    usage[v.id]?[p.name].flatMap { u in u.used.map { (p.name, v, u.maxed ? 0 : 100 - $0) } }
+                    usage[v.id]?[p.name].flatMap { u in u.availableRemaining.map { (p.name, v, $0) } }
                 }
         }
     }
 
-    private static func mean(_ values: [Int]) -> Int {
-        Int((Double(values.reduce(0, +)) / Double(values.count)).rounded())
-    }
-
-    /// Each profile's quota left — the mean over its slots — in panel order,
-    /// with how many slots it's taken over. Profiles with no reading are out.
+    /// Each profile's most constrained measured slot. Independent provider
+    /// allowances cannot be averaged into capacity usable by a single task.
     private var profilesLeft: [(name: String, left: Int, slots: Int)] {
         let byProfile = Dictionary(grouping: slotsLeft, by: \.profile)
         return (data?.profiles ?? []).compactMap { p in
-            byProfile[p.name].map { (p.name, Self.mean($0.map(\.left)), $0.count) }
+            guard let measured = byProfile[p.name], let minimum = measured.map(\.left).min() else { return nil }
+            let expected = data?.quotaVendors.filter {
+                p.slots[$0.id] != nil && data?.snapshot.signedIn[p.name]?[$0.id] != false
+            }.count ?? 0
+            guard minimum == 0 || measured.count == expected else { return nil }
+            return (p.name, minimum, measured.count)
         }
     }
 
-    /// Quota left overall, for the menu bar icon: the mean of the profiles'
-    /// numbers, so each profile weighs the same however many labs it holds.
-    /// Nil until a slot has read.
+    /// The icon warns about the most constrained measured slot. The next-agent
+    /// action separately identifies a slot with capacity. Unknown is not zero.
+    var measurementCoverage: (known: Int, expected: Int) {
+        guard let data else { return (0, 0) }
+        let expected = data.profiles.reduce(0) { count, profile in
+            count + data.quotaVendors.filter {
+                profile.slots[$0.id] != nil && data.snapshot.signedIn[profile.name]?[$0.id] != false
+            }.count
+        }
+        return (slotsLeft.count, expected)
+    }
+
     var remaining: Int? {
-        let left = profilesLeft.map(\.left)
-        return left.isEmpty ? nil : Self.mean(left)
+        guard let minimum = slotsLeft.map(\.left).min() else { return nil }
+        let coverage = measurementCoverage
+        return minimum == 0 || coverage.known == coverage.expected ? minimum : nil
+    }
+
+    var capacitySummary: String {
+        let coverage = measurementCoverage
+        let unknown = coverage.expected - coverage.known
+        if unknown > 0 {
+            let warning = remaining == 0 ? "At least one provider has no schedulable headroom. " : "Overall headroom unknown. "
+            return warning + "\(unknown) of \(coverage.expected) provider readings unavailable. Open N2 for account details."
+        }
+        return remaining.map { "Lowest measured headroom: \($0)%. Open N2 for individual accounts." }
+            ?? "Usage unknown. Open N2 for account readings."
     }
 
     /// Low is the icon's orange tier or worse: under 50% left.
@@ -262,7 +510,7 @@ final class PanelModel: ObservableObject {
         let profiles = profilesLeft
         var all: [LowQuota] = []
         if profiles.count > 1, let overall = remaining {
-            all.append(LowQuota(id: "*", title: "Overall", left: overall))
+            all.append(LowQuota(id: "*", title: "Lowest measured headroom", left: overall))
         }
         all += profiles.filter { $0.slots > 1 }.map { LowQuota(id: $0.name, title: $0.name, left: $0.left) }
         all += slotsLeft.map { LowQuota(id: "\($0.profile)/\($0.vendor.id)", title: "\($0.vendor.label) · \($0.profile)", left: $0.left) }
@@ -286,24 +534,27 @@ final class PanelModel: ObservableObject {
         } ?? -1
         var firstBack: [Date] = []
         var sawMaxed = false
+        var sawUnknown = false
         for i in slots.indices {
             let (profile, vendor) = slots[(after + 1 + i) % slots.count]
             guard snap.signedIn[profile]?[vendor.id] != false else { continue }
             guard vendor.hasUsageAPI else { return .slot(profile: profile, vendor: vendor.id, used: nil) }
             guard let rows = usage[vendor.id] else {
                 if usageLoading { return nil }
+                sawUnknown = true
                 continue
             }
-            guard var u = rows[profile] else { continue }
+            guard var u = rows[profile] else { sawUnknown = true; continue }
             if u.note == .sharedLogin, let shared = rows["Default"] { u = shared }
-            guard u.note == .ok else { continue }
             if u.maxed {
                 sawMaxed = true
                 if let back = u.maxedUntil { firstBack.append(back) }
                 continue
             }
+            guard u.note == .ok, u.used != nil else { sawUnknown = true; continue }
             return .slot(profile: profile, vendor: vendor.id, used: u.used)
         }
+        if sawUnknown { return .usageUnavailable }
         return sawMaxed ? .allMaxed(firstBack: firstBack.min()) : .nothingSignedIn
     }
 }

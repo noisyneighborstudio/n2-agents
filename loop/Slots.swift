@@ -14,6 +14,7 @@ struct Slot {
     var quota: String
     /// When a full window frees up, if the lab says.
     var resets: Date? = nil
+    var accountHash: String? = nil
     var key: String { "\(vendor)|\(profile)" }
 }
 
@@ -34,12 +35,12 @@ struct Adapter {
             let (m, e) = model[effort]!
             // auto: Claude's own classifier approves each tool call. Headless
             // prompts must go nowhere, or it waits on a host that isn't there.
-            return ["-p", "--output-format", "text", "--permission-mode", "auto", "--permission-prompts", "none",
+            return ["-p", "--output-format", "json", "--permission-mode", "auto", "--permission-prompts", "none",
                     "--model", m, "--effort", e]
         },
         Adapter(vendor: "codex", strength: [.deep: 3, .standard: 3, .light: 2], promptOnStdin: true) { effort, _ in
             let e: [Effort: String] = [.deep: "high", .standard: "medium", .light: "low"]
-            return ["exec", "--color", "never", "--approve-for-me", "-c", "model_reasoning_effort=\"\(e[effort]!)\"", "-"]
+            return ["exec", "--json", "--color", "never", "--approve-for-me", "-c", "model_reasoning_effort=\"\(e[effort]!)\"", "-"]
         },
         Adapter(vendor: "muse", strength: [.deep: 2, .standard: 2, .light: 2], promptOnStdin: false) { effort, file in
             let e: [Effort: String] = [.deep: "high", .standard: "medium", .light: "low"]
@@ -72,20 +73,24 @@ final class SlotSource {
             }
         }
         for lab in Set(slots.map(\.vendor)) where usageLabs.contains(lab) {
-            let rows = run(cli, ["best", "--porcelain", "--vendor", lab])
+            let rows = run(cli, ["best", "--json", "--vendor", lab])
+            for i in slots.indices where slots[i].vendor == lab { slots[i].quota = "fetch-error" }
+            guard rows.ok else { continue }
+            var seen = Set<String>()
             for row in rows.out.split(separator: "\n") {
-                let f = row.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
-                guard f.count >= 5, let i = slots.firstIndex(where: { $0.vendor == lab && $0.profile == f[0] }) else { continue }
-                slots[i].quota = f[4]
-                let five = Double(f[1]), seven = Double(f[2])
-                slots[i].used = [five, seven].compactMap { $0 }.max()
-                // Resets are UTC minutes: 2026-09-26T08:24.
-                let utc = DateFormatter()
-                utc.locale = Locale(identifier: "en_US_POSIX")
-                utc.timeZone = TimeZone(identifier: "UTC")
-                utc.dateFormat = "yyyy-MM-dd'T'HH:mm"
-                let full = [(five, f[3]), (seven, f.count > 5 ? f[5] : "")].filter { ($0.0 ?? 0) >= 95 }
-                slots[i].resets = full.compactMap { utc.date(from: $0.1) }.max()
+                guard let measurement = SlotMeasurement.parse(String(row)), measurement.provider == lab,
+                      let i = slots.firstIndex(where: { $0.vendor == lab && $0.profile == measurement.profile }) else { continue }
+                guard seen.insert(measurement.profile).inserted else {
+                    slots[i].quota = "fetch-error"
+                    slots[i].used = nil
+                    slots[i].resets = nil
+                    slots[i].accountHash = nil
+                    continue
+                }
+                slots[i].quota = measurement.status
+                slots[i].used = measurement.used
+                slots[i].resets = measurement.resets
+                slots[i].accountHash = measurement.accountHash
             }
         }
         cached = (Date(), slots)
@@ -99,8 +104,12 @@ func unusable(_ s: Slot, cooldowns: [String: Cooldown], now: Date = Date()) -> S
     if let c = cooldowns[s.key], c.until > now { return c.reason }
     switch s.quota {
     case "no-token", "stale-token": return "sign-in expired (\(s.quota))"
-    case "ok": if let u = s.used, u >= 95 { return "\(Int(u))% of quota used" }
-    default: break
+    case "local-reserve": return "at N2 scheduling reserve"
+    case "ok":
+        guard let u = s.used, u.isFinite, u >= 0, u <= 100 else { return "usage unknown" }
+        if u >= 95 { return "\(Int(u))% of quota used (local reserve)" }
+    case "no-usage-api": break
+    default: return "usage unavailable (\(s.quota))"
     }
     return nil
 }
@@ -111,7 +120,7 @@ func unusable(_ s: Slot, cooldowns: [String: Cooldown], now: Date = Date()) -> S
 func pick(_ slots: [Slot], effort: Effort, cooldowns: [String: Cooldown], busy: [String: Int],
           avoidVendors: Set<String> = [], avoidSlots: Set<String> = []) -> Slot? {
     let usable = slots.filter { unusable($0, cooldowns: cooldowns) == nil && !avoidSlots.contains($0.key) }
-    func headroom(_ s: Slot) -> Double { s.quota == "ok" ? 100 - (s.used ?? 0) : 30 }  // unmeasured ranks below healthy
+    func headroom(_ s: Slot) -> Double { s.quota == "ok" ? 100 - (s.used ?? 100) : 30 }  // unmeasured ranks below healthy
     return usable.sorted { a, b in
         let ia = avoidVendors.contains(a.vendor) ? 1 : 0, ib = avoidVendors.contains(b.vendor) ? 1 : 0
         if ia != ib { return ia < ib }
@@ -156,7 +165,9 @@ enum Failure {
     static func classify(_ text: String, now: Date = Date()) -> Failure {
         let t = text.lowercased()
         let quota = ["usage limit", "rate limit", "quota", "out of credits", "insufficient credits",
-                     "limit reached", "too many requests", " 429"]
+                     "limit reached", "too many requests", " 429", "hit your session limit",
+                     "hit your weekly limit", "hit your monthly spend limit", "out of usage credits",
+                     "opus usage limit", "sonnet usage limit"]
         if quota.contains(where: t.contains) { return .quota(until: resetTime(in: text, now: now) ?? now.addingTimeInterval(3600)) }
         let attention = ["action required", "you must run", "review the updated terms", "accept the terms"]
         if attention.contains(where: t.contains) { return .attention }
@@ -165,6 +176,26 @@ enum Failure {
         let outage = [" 500", " 502", " 503", " 504", "overloaded", "internal server error", "service unavailable", "bad gateway"]
         if outage.contains(where: t.contains) { return .outage }
         return .other
+    }
+
+    /// Only complete relative expressions or timezone-qualified ISO timestamps
+    /// can expire durable restrictions. The legacy cooldown parser below is a
+    /// retry hint and must not be treated as provider evidence of recovery.
+    static func reportedResetTime(in text: String, now: Date) -> Date? {
+        guard let range = text.range(of: #"(?i)try again (at|after|in) [^\n]+"#, options: .regularExpression) else { return nil }
+        let phrase = String(text[range]).replacingOccurrences(of: #"(?i)^try again (at|after|in) "#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        if phrase.range(of: #"(?i)^\d+\s+(minutes?|mins?|hours?|hrs?|seconds?|secs?)$"#, options: .regularExpression) != nil {
+            let parts = phrase.split(whereSeparator: { $0.isWhitespace })
+            guard let amount = Double(parts[0]), amount.isFinite, amount > 0 else { return nil }
+            let unit = parts[1].lowercased()
+            let seconds = amount * (unit.hasPrefix("h") ? 3600 : unit.hasPrefix("m") ? 60 : 1)
+            guard seconds.isFinite else { return nil }
+            return now.addingTimeInterval(seconds)
+        }
+        guard phrase.range(of: #"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$"#, options: .regularExpression) != nil,
+              let date = SlotMeasurement.date(phrase), date > now else { return nil }
+        return date
     }
 
     /// "try again at Sep 26th, 2026 11:20 AM" and similar, when the lab says.
@@ -187,4 +218,35 @@ enum Failure {
         }
         return nil
     }
+}
+
+/// Retain only structured execution evidence. Provider output and prompts never
+/// enter the shared journal; unavailable token/account/session fields stay null.
+func recordUsageOutcome(cli: String, slot: String, outcome: String, task: String, effort: Effort, usage: TaskUsage = TaskUsage(), failureText: String = "", startedAt: Date? = nil) {
+    let parts = slot.split(separator: "|", maxSplits: 1).map(String.init)
+    guard parts.count == 2 else { return }
+    let requestedModel: Any = parts[0] == "claude" ? ([Effort.deep: "opus", .standard: "sonnet", .light: "haiku"][effort] ?? "unknown") as Any : NSNull()
+    // Verified execution receipts are authoritative even when their reset is
+    // unknown. Never let model/display text override native terminal evidence.
+    let reported = usage.accountHash != nil ? usage.quotaResetAt : Failure.reportedResetTime(in: failureText, now: Date())
+    let reset = outcome == "quota" ? reported : nil
+    let value: [String: Any] = [
+        "status": outcome == "quota" ? "restricted" : (outcome == "ok" ? "ok" : "execution-failed"), "source": "n2-loop",
+        "identity": usage.accountHash.map { ["status": "verified", "accountHash": $0] } ?? ["status": "unknown"], "session": usage.session as Any? ?? NSNull(), "model": usage.model as Any? ?? NSNull(),
+        "requestedModel": requestedModel, "usageScope": usage.scope,
+        "startedAt": startedAt?.timeIntervalSince1970 as Any? ?? NSNull(),
+        "modelUsage": usage.models.mapValues { $0.counts },
+        "resetKnown": reset != nil, "recheckAt": reset?.timeIntervalSince1970 as Any? ?? NSNull(),
+        "restrictions": outcome == "quota" ? [["scope": "unknown", "reason": "quota-rejected"]] : [],
+        "attribution": ["task": task, "inputTokens": usage.inputTokens as Any? ?? NSNull(), "outputTokens": usage.outputTokens as Any? ?? NSNull(),
+                        "cachedInputTokens": usage.cachedInputTokens as Any? ?? NSNull(),
+                        "cacheCreationInputTokens": usage.cacheCreationInputTokens as Any? ?? NSNull(),
+                        "uncachedInputTokens": usage.uncachedInputTokens as Any? ?? NSNull(),
+                        "totalTokens": usage.totalTokens as Any? ?? NSNull()]
+    ]
+    guard let data = try? JSONSerialization.data(withJSONObject: value),
+          let json = String(data: data, encoding: .utf8) else { return }
+    let result = run(cli, ["usage", "record", "--provider", parts[0], "--profile", parts[1],
+                           "--kind", outcome == "quota" ? "quota-rejected" : (outcome == "ok" ? "execution-succeeded" : "execution-failed"), "--data", json])
+    if !result.ok { fputs("agents: could not retain execution usage observation\n", stderr) }
 }

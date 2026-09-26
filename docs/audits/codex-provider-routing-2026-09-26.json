@@ -1,0 +1,56 @@
+{
+  "recordedAt": "2026-09-26T09:26:02.107287+00:00",
+  "providerCLI": "codex-cli 0.157.1",
+  "scope": "Disposable homes and synthetic endpoint configuration, no credentials supplied, no model turns. Effective config and production measurement routing only; not execution attribution.",
+  "sources": [
+    "https://learn.chatgpt.com/docs/app-server",
+    "https://learn.chatgpt.com/docs/config-file/config-advanced"
+  ],
+  "cases": [
+    {
+      "case": "default",
+      "modelProvider": null,
+      "customProvidersPresent": false,
+      "openaiBaseUrl": null,
+      "chatgptBaseUrl": "https://chatgpt.com/backend-api/",
+      "modelTurnsStarted": 0,
+      "measurementStatus": "no-token"
+    },
+    {
+      "case": "custom-user",
+      "modelProvider": "synthetic",
+      "customProvidersPresent": true,
+      "openaiBaseUrl": null,
+      "chatgptBaseUrl": "https://chatgpt.com/backend-api/",
+      "modelTurnsStarted": 0,
+      "measurementStatus": "no-usage-api"
+    },
+    {
+      "case": "custom-project",
+      "modelProvider": null,
+      "customProvidersPresent": false,
+      "openaiBaseUrl": null,
+      "chatgptBaseUrl": "https://chatgpt.com/backend-api/",
+      "modelTurnsStarted": 0,
+      "measurementStatus": "no-token"
+    },
+    {
+      "case": "openai-base-url",
+      "modelProvider": null,
+      "customProvidersPresent": false,
+      "openaiBaseUrl": "https://example.invalid/v1",
+      "chatgptBaseUrl": "https://chatgpt.com/backend-api/",
+      "modelTurnsStarted": 0,
+      "measurementStatus": "no-usage-api"
+    },
+    {
+      "case": "chatgpt-base-url",
+      "modelProvider": null,
+      "customProvidersPresent": false,
+      "openaiBaseUrl": null,
+      "chatgptBaseUrl": "https://example.invalid/backend-api",
+      "modelTurnsStarted": 0,
+      "measurementStatus": "no-usage-api"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 #!/bin/zsh
 set -euo pipefail
-trap 'print -u2 -- "Test failed at line $LINENO"' ZERR
+TRAPZERR() { print -u2 -- "Test command failed at ${funcfiletrace[1]}"; }
 cd "${0:A:h}/.."
 
 test_root="$PWD/.test-tmp"
@@ -8,8 +8,14 @@ rm -rf "$test_root"
 mkdir -p "$test_root/tmp" "$test_root/cache/clang" "$test_root/cache/swift"
 trap 'rm -rf "$test_root"' EXIT
 export TMPDIR="$test_root/tmp"
+export N2_CODEX_USAGE_URL="file://$test_root/codex-usage.json"
 export CLANG_MODULE_CACHE_PATH="$test_root/cache/clang"
 export SWIFT_MODULECACHE_PATH="$test_root/cache/swift"
+# Provider-path assertions describe the disposable fixture, independent of
+# whichever account/home the host coding agent inherited.
+unset CODEX_HOME CLAUDE_CONFIG_DIR GROK_HOME CURSOR_CONFIG_DIR XDG_CONFIG_HOME TBH_CREDENTIAL_BACKEND
+unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN CLAUDE_SECURESTORAGE_CONFIG_DIR
+
 
 # Fake vendor CLIs. Each echoes the config-dir env var it was handed, which is
 # exactly what the pinning tests need to assert — and it keeps the whole suite
@@ -53,14 +59,15 @@ chmod +x "$fake_bin/security"
 fake_path="$fake_bin:/usr/bin:/bin"
 
 # --- syntax ----------------------------------------------------------------
-sh -n agents vendors.sh shell/agent-as
+sh -n agents vendors.sh fleet.sh fleet-sync.sh fleet-exec.sh scripts/test-fleet-spike.sh scripts/test-exec.sh scripts/test-native-ui.sh shell/agent-as
 zsh -n install.sh uninstall.sh tray/build.sh \
   scripts/release-build.sh scripts/make-appcast.sh scripts/release-prepare.sh \
   scripts/publish-appcast.sh shell/agents.zsh
 bash -n shell/agents.bash
 command -v fish >/dev/null && fish -n shell/agents.fish
 swiftc -typecheck tray/main.swift tray/UpdateChannel.swift tray/Vendors.swift tray/ProfileColor.swift tray/StatusIcon.swift tray/QuotaToast.swift tray/Ink.swift tray/LabMark.swift \
-  tray/PanelModel.swift tray/PanelView.swift tray/SettingsWindowView.swift tray/ProfileSetup.swift tray/GlassWindow.swift tray/ShellPath.swift tray/Hotkey.swift
+  tray/PanelModel.swift tray/UsageDetailsView.swift tray/PanelView.swift tray/SettingsWindowView.swift tray/FleetSyncSettings.swift tray/FleetSettingsLoader.swift tray/ProfileSetup.swift tray/GlassWindow.swift tray/ShellPath.swift tray/Hotkey.swift tray/FleetModel.swift tray/FleetView.swift tray/FleetControl.swift
+sh scripts/test-panel-usage.sh
 swiftc -typecheck scripts/make-icon.swift
 swiftc -typecheck scripts/verify-signature.swift
 channel_test=$(mktemp -d "$TMPDIR/channel.XXXXXX")/update-channel-tests
@@ -69,6 +76,9 @@ swiftc tray/UpdateChannel.swift tests/UpdateChannelTests.swift -o "$channel_test
 path_test=$(mktemp -d "$TMPDIR/shellpath.XXXXXX")/shell-path-tests
 swiftc tray/ShellPath.swift tests/ShellPathTests.swift -o "$path_test"
 "$path_test"
+fleet_settings_test=$(mktemp -d "$TMPDIR/fleetsettings.XXXXXX")/fleet-settings-loader-tests
+swiftc tray/FleetSettingsLoader.swift tray/ShellPath.swift tests/FleetSettingsLoaderTests.swift -o "$fleet_settings_test"
+"$fleet_settings_test"
 icon_test=$(mktemp -d "$TMPDIR/statusicon.XXXXXX")/status-icon-tests
 swiftc tray/StatusIcon.swift tests/StatusIconTests.swift -o "$icon_test"
 "$icon_test"
@@ -193,7 +203,7 @@ usage=$(run_agents best --porcelain --vendor codex)
 print -r -- "$usage" | grep -qx 'Work	-	44	-	ok	2026-09-26T08:24'
 codex_usage 80 true
 usage=$(run_agents best --porcelain --vendor codex)
-print -r -- "$usage" | grep -qx 'Work	-	100	-	ok	2026-09-26T08:24'
+print -r -- "$usage" | grep -qx 'Work	-	80	-	restricted	2026-09-26T08:24'
 rm "$home/.n2-agents/Work/codex/auth.json"
 # Grok has one weekly credit pool: its percent fills the 7d column, reset at
 # the period's end in UTC. Signed in = an auth.x.ai entry in auth.json.
@@ -618,11 +628,12 @@ n2_root=$PWD
 loop_root="$test_root/loop"
 mkdir -p "$loop_root/home" "$loop_root/bin"
 cp tests/fake-loop-agent.sh "$loop_root/bin/codex"
+cp tests/fake-loop-protocol.py "$loop_root/bin/fake-loop-protocol.py"
 cp "$fake_bin/security" "$loop_root/bin/security"
 chmod +x "$loop_root/bin/codex"
 printf '{"rate_limit": {"limit_reached": false, "primary_window": {"used_percent": 10, "limit_window_seconds": 604800, "reset_at": 1790411072}, "secondary_window": null}}' \
   > "$loop_root/usage.json"
-loop_env=(HOME="$loop_root/home" PATH="$loop_root/bin:/usr/bin:/bin" N2_LOOP_HOME="$loop_root/runs"
+loop_env=(LOOP_FAKE_STRUCTURED=1 HOME="$loop_root/home" PATH="$loop_root/bin:/usr/bin:/bin" N2_LOOP_HOME="$loop_root/runs"
           N2_CODEX_USAGE_URL="file://$loop_root/usage.json")
 for p in Work Home; do
   env $loop_env ./agents new $p --vendors codex >/dev/null 2>&1
@@ -631,11 +642,19 @@ done
 loop() { env $loop_env LOOP_FAKE="$loop_fake" "$n2_root/agents" loop "$@" }
 field() { python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$loop_root/runs/$run/state.json" "$1" }
 wait_for() {  # status
-  for _ in {1..300}; do [ "$(field 's["status"]')" = "$1" ] && return 0; sleep 0.2; done
-  echo "loop never reached $1:" >&2; loop status "$run" >&2; cat "$loop_root/runs/$run/controller.log" >&2; return 1
+  python3 scripts/wait-loop-state.py "$loop_root/runs/$run/state.json" "$1"
 }
 # A fresh repository and scenario, planned and approved the way a person would.
 new_loop() {  # scenario files…
+  # Each scenario starts after a synthetic successful invocation on the fixture
+  # routes. Real rejections intentionally survive new loop runs now.
+  fixture_recovery=$(python3 -c 'import json,time; print(json.dumps({"status":"ok","source":"test-fixture","startedAt":time.time()}))')
+  for fixture_profile in Home Work Q1 Q2 Q3 Q4 Q5; do
+    if [ -d "$loop_root/home/.n2-agents/$fixture_profile/codex" ]; then
+      env $loop_env "$n2_root/agents" usage record --provider codex --profile "$fixture_profile" \
+        --kind execution-succeeded --data "$fixture_recovery" >/dev/null
+    fi
+  done
   loop_fake=$(mktemp -d "$loop_root/fake.XXXXXX")
   for f in "$@"; do  # name, or name=contents
     case $f in *=*) echo "${f#*=}" > "$loop_fake/${f%%=*}" ;; *) touch "$loop_fake/$f" ;; esac
@@ -668,17 +687,66 @@ loop list | grep -q "${run[1,8]}  DONE"
 new_loop quota-Home
 wait_for DONE
 [ "$(field 'len([t for t in s["turns"] if t["outcome"] == "quota" and t["slot"] == "codex|Home"])')" -ge 1 ]
+env $loop_env "$n2_root/agents" usage history > "$loop_root/usage-history.json"
+python3 - "$loop_root/usage-history.json" "$run" <<'PYTEST'
+import json,sys
+events=json.load(open(sys.argv[1]))
+matched=[e for e in events if e['kind']=='quota-rejected' and e['data'].get('attribution',{}).get('task','').startswith(sys.argv[2]+'/')]
+assert matched and matched[0]['profile']=='Home'
+assert matched[0]['data']['identity']['status']=='unknown'
+assert matched[0]['data']['resetKnown'] is False, 'timezone-free date is only a local retry hint'
+assert matched[0]['data']['recheckAt'] is None
+assert matched[0]['data']['attribution']['totalTokens'] is None
+successes=[e for e in events if e['kind']=='execution-succeeded' and e['data'].get('attribution',{}).get('task','').startswith(sys.argv[2]+'/')]
+assert successes and successes[0]['data']['attribution']['totalTokens']==60
+assert successes[0]['data']['attribution']['cachedInputTokens']==30
+assert successes[0]['data']['session'].startswith('fixture-')
+PYTEST
+# The fresh reader must report the persisted rejection even though the fake
+# allowance endpoint continues to report headroom.
+env $loop_env "$n2_root/agents" best --json --vendor codex > "$loop_root/effective-usage.jsonl"
+python3 - "$loop_root/effective-usage.jsonl" <<'PYTEST'
+import json,sys
+rows=[json.loads(line) for line in open(sys.argv[1])]
+home=next(row for row in rows if row['profile']=='Home')
+assert home['status']=='restricted'
+assert any(r['reason']=='quota-rejected' for r in home['restrictions'])
+PYTEST
 [ "$(field 's["cooldowns"]["codex|Home"]["until"][:4]')" = 2099 ]   # the reset time the lab stated
 [ "$(field '{c["lastSlot"] for c in s["plan"]["chunks"]}')" = "{'codex|Work'}" ]
 [ "$(field 'max(c["revisions"] for c in s["plan"]["chunks"])')" = 0 ]
 
-# Every slot running dry waits for the stated reset and carries on by itself —
-# however many quota failures that takes, it never turns into a pause.
-new_loop worker-quota-Home=4 worker-quota-Work=4
+# Repeated recovery has an exact global budget, independent of slot allocation.
+# A short cooldown can expire during journal I/O, so prove WAITING separately.
+quota_proof() {
+  python3 - "$loop_root/runs/$run/state.json" "$loop_fake/worker-quota-total" "$1" "$2" <<'QUOTA'
+import json,sys
+s=json.load(open(sys.argv[1]));remaining=int(open(sys.argv[2]).read())
+quota=[t for t in s['turns'] if t['outcome']=='quota']
+capacity=[e['detail'] for e in s['events'] if e['kind']=='capacity']
+try:
+    assert s['status']=='DONE' and remaining==0
+    assert len(quota)==int(sys.argv[3])
+    assert not any(e['kind']=='paused' for e in s['events'])
+    if sys.argv[4]=='waiting':
+        assert any('out of quota or cooling down; retrying at' in e for e in capacity)
+        assert 'retrying now' in capacity
+    print('quota recovery verified:', len(quota), 'rejections, exhausted budget, DONE,', sys.argv[4])
+except AssertionError:
+    print(json.dumps({'remainingBudget':remaining,'state':s}),file=sys.stderr)
+    raise
+QUOTA
+}
+new_loop worker-quota-total=8
 wait_for DONE
-[ "$(field 'len([t for t in s["turns"] if t["outcome"] == "quota"])')" = 8 ]
-field '[e["detail"] for e in s["events"] if e["kind"] == "capacity"]' | grep -q "out of quota or cooling down; retrying at"
-[ "$(field 'len([e for e in s["events"] if e["kind"] == "paused"])')" = 0 ]
+quota_proof 8 recovery
+
+# Hold both slots long enough to observe WAITING, then let the real controller
+# retry at the stated reset and finish without a user resume or changed clock.
+new_loop worker-quota-total=2 worker-retry-seconds=30
+wait_for WAITING
+wait_for DONE
+quota_proof 2 waiting
 
 # Pause stops running agents at once and keeps their work; resume finishes.
 new_loop slow
@@ -687,7 +755,7 @@ pgids=(${(f)"$(field '"\n".join(str(t["pgid"]) for t in s["turns"] if t["role"] 
 loop pause "$run" >/dev/null
 [ "$(field 's["status"]')" = PAUSED ]
 [[ "$(field 's["reason"]')" == "paused by you"* ]]
-[ "$(field '{t["outcome"] for t in s["turns"] if t["role"] == "worker"}')" = "{'interrupted'}" ]
+[ "$(field '{t["outcome"] for t in s["turns"] if t["role"] == "worker"}')" = "{'interrupted'}" ] || { field '[{k: t.get(k) for k in ("id", "role", "outcome", "note", "startedAt", "endedAt", "pgid")} for t in s["turns"] if t["role"] == "worker"]' >&2; exit 1; }
 for g in $pgids; do ! kill -0 -"$g" 2>/dev/null; done
 rm "$loop_fake/slow"
 loop resume "$run" >/dev/null
@@ -707,6 +775,33 @@ new_loop fail-b-once liar
 wait_for PAUSED
 [[ "$(field 's["reason"]')" == *"doesn't hold"* ]]
 
+# More than four exhausted slots must not hide the healthy planner after them.
+for p in Q1 Q2 Q3 Q4 Q5; do
+  env $loop_env ./agents new $p --vendors codex >/dev/null 2>&1
+  echo "$codex_auth" > "$loop_root/home/.n2-agents/$p/codex/auth.json"
+done
+new_loop quota-Home quota-Q1 quota-Q2 quota-Q3 quota-Q4 quota-Q5
+wait_for DONE
+[ "$(field 'len([t for t in s["turns"] if t["role"] == "planner" and t["outcome"] == "quota"])')" -ge 5 ]
+
 run_agents help | grep -Fq 'agents loop "goal"'
+
+sh scripts/test-usage.sh
+python3 scripts/test-bound-planner.py
+python3 scripts/test-profile-metadata.py
+python3 scripts/test-profile-routing.py
+python3 scripts/test-fleet-auth-response.py
+python3 scripts/test-fleet-auth-transport.py
+python3 scripts/test-fleet-auth-owner.py
+python3 scripts/test-fleet-auth-native.py
+python3 scripts/test-fleet-auth-server.py
+python3 scripts/test-fleet-auth-binding.py
+python3 scripts/test-fleet-auth-client.py
+python3 scripts/test-fleet-auth-manage.py
+python3 scripts/test-fleet-auth-login-wire.py
+python3 scripts/test-fleet-auth-login.py
+python3 scripts/test-fleet-auth-migration.py
+python3 scripts/test-fleet-auth-bridge.py
+python3 scripts/test-fleet-auth-websocket.py
 
 echo "All tests passed"

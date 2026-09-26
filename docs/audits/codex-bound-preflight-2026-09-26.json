@@ -1,0 +1,20 @@
+{
+  "probe": "native-bound-turn-preflight",
+  "modelTurnsStarted": 0,
+  "status": "preflight-verified",
+  "identity": {
+    "status": "verified",
+    "accountHash": "2ddea33d1f4be9e891cdb1032ff57c19840d359bd5aaf1e21f9d8a48b5ea87af"
+  },
+  "effectiveExecution": {
+    "modelProvider": "openai",
+    "approvalPolicy": "on-request",
+    "approvalsReviewer": "auto_review"
+  },
+  "sandboxType": "workspaceWrite",
+  "isolatedAuthFileCreated": false,
+  "canonicalCredentialUnchanged": true,
+  "recordedAt": "2026-09-26T09:41:51.197070+00:00",
+  "providerCLI": "codex-cli 0.157.1",
+  "scope": "Isolated home, existing access token, production account pin and bound-thread preflight. Intercepted turn/start before sending it. No model work, live token accounting, canonical-home authentication or renewal tested."
+}

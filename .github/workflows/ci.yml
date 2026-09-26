@@ -1,0 +1,25 @@
+name: Verify slices
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Formatting
+        run: scripts/check.sh format
+      - name: Lint with compiler warnings as errors
+        run: scripts/check.sh lint
+      - name: Tests
+        run: scripts/test.sh
+      - name: Smoke
+        run: scripts/smoke.sh

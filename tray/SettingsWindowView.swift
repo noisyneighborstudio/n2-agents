@@ -26,6 +26,10 @@ struct SettingsWindowView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
+                    if Bundle.main.object(forInfoDictionaryKey: "N2FleetQA") as? Bool == true {
+                        FleetSyncSettings()
+                    }
+
                     section("GENERAL", subtitle: "Choose where N2 Agents opens your sessions.") {
                         if let terminals = model.data?.terminals, !terminals.isEmpty {
                             VStack(spacing: 0) {
