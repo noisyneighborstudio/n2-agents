@@ -13,7 +13,7 @@ A slice is complete only after these commands pass locally and CI passes on its 
 
 ## Queue
 
-1. **Terminal cleanup** (`terminal-parent-cleanup`). Behavior: killing the owner bridge also stops its native frontend. Proof: a disposable PTY test kills the bridge and observes frontend exit through process completion. Scope: no protocol expansion or session migration.
+1. **Terminal state recovery** (`terminal-state-recovery`). Behavior: a killed bridge leaves the terminal settings usable after its frontend exits. Proof: a disposable PTY frontend changes terminal flags, then bridge SIGKILL must restore the initial flags after supervisor exit; ordinary exit still works. Scope: terminal modes only, no protocol changes or descendant process-tree expansion. Establish the failing proof before adding restoration.
 2. **Ownership completion spike** (`ownership-completion-spike`). Knowledge: identify the next missing observable migration behavior from the existing acceptance checklist. Proof: run the existing isolated migration CLI tests and record the command, fixture result, and exact uncovered acceptance criterion; replace this entry with one bounded implementation slice. Scope: notes and recorded fixtures only; discard exploratory code. No real credentials, grant retirement, or live enrollment.
 
 3. **Cross-machine history spike** (`session-transfer-spike`). Knowledge: determine the minimum provider history needed to resume an owner-bound session on another machine. Proof: record an isolated two-home native resume experiment, its fixture and the required artifacts; turn the result into one implementation brief. Scope: recorded evidence only, no live credentials, deployment, or speculative transfer code.

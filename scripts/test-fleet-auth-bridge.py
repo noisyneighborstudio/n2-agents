@@ -11,6 +11,9 @@ import unittest
 import time
 import tempfile
 import select
+import pty
+import signal
+import sys
 
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('bridge',ROOT/'fleet-auth-bridge.py')
@@ -498,5 +501,105 @@ class BridgeIntegrationTests(unittest.TestCase):
         self.assertNotEqual(result.returncode,0)
         self.assertEqual(result.stdout,'')
         self.assertFalse((self.root/'Work/codex/auth.json').exists())
+
+
+class TerminalLifetimeTests(unittest.TestCase):
+    def test_supervisor_preserves_terminal_sigint_and_frontend_exit_code(self):
+        with tempfile.TemporaryDirectory() as directory:
+            frontend = Path(directory) / 'frontend'
+            frontend.write_text("""#!/usr/bin/env python3
+import signal, sys
+signal.signal(signal.SIGINT, lambda *_: sys.exit(17))
+print('ready', flush=True)
+while True: signal.pause()
+""")
+            frontend.chmod(0o700)
+            lifetime_reader, lifetime_writer = os.pipe()
+            master, slave = pty.openpty()
+            # Deliver SIGINT after fork but before Popen returns to the
+            # supervisor. The guardian must survive this startup boundary.
+            code = """
+import importlib.util, os, signal, sys
+spec = importlib.util.spec_from_file_location('bridge', sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+spawn = m.subprocess.Popen
+def interrupt_after_spawn(*args, **kwargs):
+    child = spawn(*args, **kwargs)
+    os.kill(os.getpid(), signal.SIGINT)
+    return child
+m.subprocess.Popen = interrupt_after_spawn
+sys.argv = [sys.argv[1], '--terminal-supervisor', *sys.argv[2:]]
+sys.exit(m.terminal_supervisor())
+"""
+            supervisor = subprocess.Popen(
+                [sys.executable, '-c', code, str(ROOT / 'fleet-auth-bridge.py'),
+                 str(lifetime_reader), str(frontend)],
+                stdin=slave, stdout=slave, stderr=slave, start_new_session=True,
+                pass_fds=(lifetime_reader,))
+            os.close(slave)
+            os.close(lifetime_reader)
+            try:
+                self.assertTrue(select.select([master], [], [], 5)[0], 'frontend startup receipt missing')
+                self.assertIn(b'ready', os.read(master, 4096))
+                os.killpg(supervisor.pid, signal.SIGINT)
+                self.assertEqual(supervisor.wait(timeout=5), 17)
+            finally:
+                try:
+                    os.killpg(supervisor.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                except PermissionError:
+                    if supervisor.poll() is None:raise
+                supervisor.wait(timeout=5)
+                os.close(lifetime_writer)
+                os.close(master)
+
+    def test_bridge_sigkill_stops_frontend_attached_to_pty(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            events = base / 'events'
+            os.mkfifo(events, 0o600)
+            reader = os.open(events, os.O_RDONLY | os.O_NONBLOCK)
+            frontend = base / 'frontend'
+            frontend.write_text(r"""#!/usr/bin/env python3
+import json, os, signal, sys
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+fd = os.open(sys.argv[-1], os.O_WRONLY)
+os.write(fd, json.dumps({'pid': os.getpid(), 'group': os.getpgrp(),
+                        'tty': all(os.isatty(n) for n in (0, 1, 2))}).encode())
+while True: signal.pause()
+""")
+            frontend.chmod(0o700)
+            code = """
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('bridge', sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+m.terminal(None, sys.argv[2], sys.argv[3], [sys.argv[4]])
+"""
+            master, slave = pty.openpty()
+            bridge = subprocess.Popen(
+                [sys.executable, '-c', code, str(ROOT / 'fleet-auth-bridge.py'),
+                 directory, str(frontend), str(events)],
+                stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
+            os.close(slave)
+            try:
+                self.assertTrue(select.select([reader], [], [], 5)[0], 'frontend startup receipt missing')
+                receipt = json.loads(os.read(reader, 4096))
+                self.assertTrue(receipt['tty'], 'frontend lost its terminal streams')
+                self.assertEqual(receipt['group'], bridge.pid, 'frontend left the terminal process group')
+                bridge.kill()
+                bridge.wait(timeout=5)
+                self.assertTrue(select.select([reader], [], [], 5)[0], 'frontend survived bridge SIGKILL')
+                self.assertEqual(os.read(reader, 4096), b'', 'frontend lifetime pipe must close')
+            finally:
+                try:
+                    os.killpg(bridge.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                bridge.wait(timeout=5)
+                os.close(reader)
+                os.close(master)
 
 if __name__=='__main__':unittest.main()

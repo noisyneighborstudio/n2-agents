@@ -1018,3 +1018,21 @@ them. All 33 RPC tests and the full repository suite pass; formatting, lint,
 and smoke also pass locally. Independent correctness review verified the graceful
 shutdown fix. Native frontend hard-kill cleanup remains the next slice. These
 checks use synthetic providers and disposable state, not live-provider evidence.
+
+## Terminal frontend lifetime
+
+A child supervisor now watches the bridge lifetime pipe and reaps its native
+frontend after bridge SIGKILL. It keeps the frontend in the terminal process
+group and preserves standard streams, Ctrl-C delivery, and frontend exit status.
+Signal handlers are installed before spawn; a deterministic SIGINT injection
+checks the boundary immediately after child creation.
+
+`python3 scripts/test-fleet-auth-bridge.py TerminalLifetimeTests` proves cleanup
+with a disposable PTY and startup/exit receipts. The expanded smoke gate rejects
+the original unsupervised launch in its negative control. The installed Codex
+frontend also passes the synthetic-owner start/resume round trip, renders both
+responses, records two tasks with 60 known fresh-turn tokens, and exits zero.
+All 39 bridge tests and the full repository suite pass, along with formatting,
+lint, and smoke. Independent correctness review verified the startup-signal fix.
+This does not establish live-provider acceptance. Terminal-mode restoration
+after an abrupt frontend kill is the next bounded check.

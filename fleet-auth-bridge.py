@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import queue
 import re
+import select
 import signal
 import socket
 import subprocess
@@ -435,12 +436,20 @@ def terminal(provider,home,executable,arguments,receipts=None,sessions=None,reco
     with tempfile.TemporaryDirectory(prefix='n2-tui-',dir='/tmp') as directory:
         path=str(Path(directory)/'socket');listener=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
         process=None;stream=None;connection=None;previous=signal.getsignal(signal.SIGINT)
+        lifetime_writer=None
         try:
             listener.bind(path);os.chmod(path,0o600);listener.listen(1);listener.settimeout(.2)
             environment=client.native.environment(home);environment['CODEX_HOME']=home
             for key in ('TERM','COLORTERM','TERM_PROGRAM'):
                 if key in os.environ:environment[key]=os.environ[key]
-            process=subprocess.Popen([executable,'--remote','unix://'+path,*arguments],env=environment)
+            lifetime_reader,lifetime_writer=os.pipe()
+            try:
+                process=subprocess.Popen(
+                    [sys.executable,str(ROOT/'fleet-auth-bridge.py'),'--terminal-supervisor',
+                     str(lifetime_reader),executable,'--remote','unix://'+path,*arguments],
+                    env=environment,pass_fds=(lifetime_reader,))
+            finally:
+                os.close(lifetime_reader)
             signal.signal(signal.SIGINT,signal.SIG_IGN)
             deadline=time.monotonic()+15
             while True:
@@ -456,10 +465,13 @@ def terminal(provider,home,executable,arguments,receipts=None,sessions=None,reco
             signal.signal(signal.SIGINT,previous);listener.close()
             if stream is not None:stream.close()
             elif connection is not None:connection.close()
-            if process is not None and process.poll() is None:
-                process.terminate()
-                try:process.wait(timeout=3)
-                except subprocess.TimeoutExpired:process.kill();process.wait()
+            try:
+                if process is not None and process.poll() is None:
+                    process.terminate()
+                    try:process.wait(timeout=3)
+                    except subprocess.TimeoutExpired:process.kill();process.wait()
+            finally:
+                if lifetime_writer is not None:os.close(lifetime_writer)
 
 
 def main():
@@ -513,4 +525,29 @@ def main():
     except (Exception,KeyboardInterrupt):
         print('agents: account-bound app-server unavailable',file=sys.stderr);return 2 if args.list_sessions or args.find_session is not None else 1
 
-if __name__=='__main__':sys.exit(main())
+def terminal_supervisor():
+    # Keep the native frontend in the terminal's process group. This supervisor
+    # owns and reaps only its child; it must not signal the caller's whole group.
+    if len(sys.argv)<4:raise SystemExit(2)
+    descriptor=int(sys.argv[2]);os.fstat(descriptor)
+    child=None;stopping=threading.Event()
+    signal.signal(signal.SIGTERM,lambda *_:stopping.set())
+    # A caught handler resets on exec; SIG_IGN would disable frontend Ctrl-C.
+    signal.signal(signal.SIGINT,lambda *_:None)
+    try:
+        child=subprocess.Popen(sys.argv[3:],close_fds=True)
+        while child.poll() is None:
+            if stopping.is_set():
+                child.terminate()
+                try:return child.wait(timeout=2)
+                except subprocess.TimeoutExpired:break
+            if select.select([descriptor],[],[],.1)[0]:break
+        if child.poll() is None:child.kill()
+        return child.wait()
+    finally:
+        if child is not None and child.poll() is None:child.kill();child.wait()
+        os.close(descriptor)
+
+
+if __name__=='__main__':
+    sys.exit(terminal_supervisor() if len(sys.argv)>1 and sys.argv[1]=='--terminal-supervisor' else main())
