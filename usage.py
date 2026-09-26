@@ -277,6 +277,8 @@ def codex_native_row(data):
 
 
 def codex(name, cfg):
+    if os.path.lexists(os.path.join(cfg,'.n2-migration.json')):
+        return 'migration-pending', None
     spec=importlib.util.spec_from_file_location('n2_usage_binding',os.path.join(os.path.dirname(__file__),'fleet-auth-binding.py'))
     binding=importlib.util.module_from_spec(spec);spec.loader.exec_module(binding)
     if binding.has_intent(os.environ.get('N2_USAGE_ROOT'),name,cfg):

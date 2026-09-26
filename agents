@@ -619,6 +619,7 @@ cmd_run() {
 
   cfg=$(config_dir "$name" "$v")
   [ -d "$cfg" ] || die "profile '$name' has no $v slot — create it: agents new $name --vendors $v"
+  migration_launch_guard "$v" "$cfg"
 
   if [ -n "$bound_account" ]; then
     [ "$v" = codex ] && [ -z "$sess" ] && [ $# -eq 0 ] || die "bound turns require Codex, a fresh session and no vendor arguments"
@@ -664,8 +665,16 @@ resume_flag() {
 
 # Launch a vendor CLI pinned to a config dir through its env var (and any
 # extra the lab needs to keep its login in the slot).
+migration_launch_guard() {
+  [ "$1" = codex ] || return 0
+  if [ -e "$2/.n2-migration.json" ] || [ -L "$2/.n2-migration.json" ]; then
+    die "Codex profile migration is pending; inspect agents fleet auth migration-status before running or logging in"
+  fi
+}
+
 exec_vendor() {  # vendor, profile, cfg, cli, args...
   ev_vendor=$1 ev_profile=$2 ev_cfg=$3; shift 3
+  migration_launch_guard "$ev_vendor" "$ev_cfg"
   # shellcheck disable=SC2046
   exec env "$(vendor_env "$ev_vendor")=$(vendor_env_value "$ev_vendor" "$ev_cfg")" \
     $(vendor_env_extra "$ev_vendor" "$ev_profile") "$@"
@@ -698,6 +707,7 @@ cmd_login() {
     die "$(vendor_label "$v") CLI not found — install it: $(vendor_install_hint "$v")"
   cfg=$(config_dir "$name" "$v")
   [ -d "$cfg" ] || die "profile '$name' has no $v slot — create it: agents new $name --vendors $v"
+  migration_launch_guard "$v" "$cfg"
 
   out_args=$(vendor_logout "$v")
   if vendor_authed "$v" "$cfg" "$name"; then authed=0; else authed=$?; fi

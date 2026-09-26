@@ -759,5 +759,6 @@ python3 scripts/test-fleet-auth-client.py
 python3 scripts/test-fleet-auth-manage.py
 python3 scripts/test-fleet-auth-login-wire.py
 python3 scripts/test-fleet-auth-login.py
+python3 scripts/test-fleet-auth-migration.py
 
 echo "All tests passed"

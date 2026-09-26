@@ -78,6 +78,10 @@ def consent(root,name,config,peer,allowed,login_management=False):
 
 def status(root,name,config):
     root=Path(root).resolve(strict=True)
+    migration=load('n2_migration','fleet-auth-migration.py').pending(root,name,config)
+    if migration:
+        return {'status':'migration-pending' if migration['state']=='pending' else 'migration-invalid',
+                'binding':None,'revision':None}
     if binding.conflicted(root,name):
         return {'status':'conflicting','binding':None,'revision':None}
     record,revision=binding.read(config,profile(root,name))
@@ -144,6 +148,7 @@ def login(root,name,config,expected_revision=None,replace_account=False,timeout=
     profile_id=profile(root,name)
     if binding.conflicted(root,name):raise ValueError('resolve ownership conflict first')
     binding.controlled_directory(config)
+    if os.path.lexists(config/'.n2-migration.json'):raise ValueError('profile migration pending')
     for file in ('auth.json','.credentials.json','oauth_creds.json','credentials.json'):
         if os.path.lexists(config/file):raise ValueError('legacy credentials require migration')
     if type(timeout) not in (int,float) or not math.isfinite(timeout) or not 1<=timeout<=900:
@@ -196,6 +201,7 @@ def validate_incoming(root,name,config,payload):
     config=Path(config)
     if config.exists():
         binding.controlled_directory(config)
+    if os.path.lexists(config/'.n2-migration.json'):raise ValueError('profile migration pending')
     for file in ('auth.json','.credentials.json','oauth_creds.json','credentials.json'):
         if (config/file).exists() or (config/file).is_symlink():
             raise ValueError('legacy credentials require migration')
@@ -206,7 +212,7 @@ def validate_incoming(root,name,config,payload):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action',choices=('register','status','allow','deny','login','reconcile','retire','grants','allow-login','deny-login','validate-incoming'))
+    parser.add_argument('action',choices=('register','status','allow','deny','login','reconcile','retire','grants','allow-login','deny-login','validate-incoming','migration-status','migration-begin'))
     parser.add_argument('root');parser.add_argument('profile');parser.add_argument('config')
     parser.add_argument('--replace-account',action='store_true');parser.add_argument('--timeout',type=float,default=600)
     parser.add_argument('--login-operation');parser.add_argument('--expected-config');parser.add_argument('--payload');parser.add_argument('--grant');parser.add_argument('--peer');parser.add_argument('--expected-revision')
@@ -228,6 +234,10 @@ def main():
         elif args.action=='register':
             if not args.grant or args.peer:raise ValueError('register requires grant')
             result=register(args.root,args.profile,args.config,args.grant,args.expected_revision,args.login_operation)
+        elif args.action in ('migration-status','migration-begin'):
+            if args.grant or args.peer or args.expected_revision:raise ValueError('invalid migration options')
+            migration=load('n2_migration','fleet-auth-migration.py')
+            result=(migration.begin if args.action=='migration-begin' else migration.inventory)(args.root,args.profile,args.config)
         elif args.action in ('reconcile','grants'):
             if args.grant or args.peer or args.expected_revision:raise ValueError('invalid recovery options')
             result=reconcile(args.root,args.profile,args.config) if args.action=='reconcile' else inventory(args.root,args.profile)

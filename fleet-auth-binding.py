@@ -29,7 +29,7 @@ def conflicted(root, name):
 
 
 def has_intent(root, name, directory):
-    return os.path.lexists(Path(directory)/MARKER) or conflicted(root,name)
+    return os.path.lexists(Path(directory)/MARKER) or os.path.lexists(Path(directory)/'.n2-migration.json') or conflicted(root,name)
 
 
 def validate(record, profile_id):
@@ -67,6 +67,8 @@ def controlled_directory(directory):
 def read(directory, profile_id):
     # The resource is public, but require private ownership to avoid letting a
     # permissive replacement silently redirect a local profile's account route.
+    if os.path.lexists(Path(directory)/'.n2-migration.json'):
+        raise ValueError('profile migration pending')
     path=controlled_directory(directory)/MARKER
     raw=owner.private_file(path,MAX_BYTES)
     record=json.loads(raw,object_pairs_hook=owner.unique)
@@ -82,6 +84,7 @@ def publish(directory, record, profile_id, expected_revision=None):
     """
     validate(record,profile_id)
     directory=controlled_directory(directory)
+    if os.path.lexists(directory/'.n2-migration.json'):raise ValueError('profile migration pending')
     path=directory/MARKER
     try:
         raw=owner.private_file(path,MAX_BYTES)

@@ -349,7 +349,7 @@ sync_auth_support() {  # sync_auth_support <vendor> -> partial|unsupported|unver
 
 sync_auth_reason() {
   case $1 in
-    codex) echo "file snapshots only: auth.json edits replicate with file-conflict detection. Copied credentials passed a receiving-Mac read on 2026-09-25. OpenAI advises against sharing one managed auth.json across concurrent jobs or machines; file conflicts do not coordinate token refresh. N2 has no renewal owner yet. NOT verified: copied-grant renewal or revocation. keyring/ephemeral credentials are not exported" ;;
+    codex) echo "file snapshots only: auth.json edits replicate with file-conflict detection. Copied credentials passed a receiving-Mac read on 2026-09-25. OpenAI advises against sharing one managed auth.json across concurrent jobs or machines; file conflicts do not coordinate token refresh. Legacy snapshot sync has no renewal owner; registered owner bindings use the separate broker. NOT verified: copied-grant renewal or revocation. keyring/ephemeral credentials are not exported" ;;
     opencode) echo "credentials live OUTSIDE the isolated slot: the binary resolves \$XDG_DATA_HOME/opencode/auth.json (else ~/.local/share/opencode/auth.json), while profile isolation only repoints XDG_CONFIG_HOME — so opencode auth is machine-wide, shared by every profile, and nothing under the synced config slot carries it. Opting in would be inert, so it is refused rather than accepted and silently ignored. Lifting this needs XDG_DATA_HOME isolation, a change to the isolation tier" ;;
     claude) echo "profile-scoped keychain logins need an explicit export; file credentials replicate. Copied credentials passed receiving-Mac usage checks on 2026-09-25. Continuous keychain sync, concurrent refresh, and provider-wide logout are not verified" ;;
     cursor) echo "credential-bearing settings and MCP configuration can replicate with opt-in. The CLI login is machine-wide in keychain; CURSOR_CONFIG_DIR does not isolate it and N2 does not export or replace that login" ;;
@@ -536,6 +536,7 @@ sync_owner_managed() {  # profile vendor; malformed records still fence credenti
     [ -e "$som_stage" ] || [ -L "$som_stage" ] && return 0
   done
   som_slot=$(sync_slot "$1" "$2") || return 1
+  [ -e "$som_slot/.n2-migration.json" ] || [ -L "$som_slot/.n2-migration.json" ] && return 0
   [ -e "$som_slot/.n2-owner.json" ] || [ -L "$som_slot/.n2-owner.json" ]
 }
 

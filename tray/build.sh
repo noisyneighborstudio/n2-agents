@@ -56,7 +56,7 @@ if [[ ${N2_FLEET_QA:-} == 1 ]]; then
   touch "$app/Contents/Resources/fleet-qa"
 fi
 echo "Version: $ver ($build_ver)"
-cp ../agents ../workspace-pack.py ../usage.py ../codex-rpc.py ../codex-run.py ../usage-store.py ../vendors.sh ../fleet.sh ../fleet-sync.sh ../fleet-exec.sh ../fleet-qa-import.py ../fleet-manifest.py ../profile-metadata.py ../fleet-auth-response.py ../fleet-auth-transport.py ../fleet-auth-owner.py ../fleet-auth-native.py ../fleet-auth-server.py ../fleet-auth-binding.py ../fleet-auth-client.py ../fleet-auth-manage.py ../fleet-auth-login-wire.py ../fleet-auth-login.py "$bin_dir/n2-loop" "$app/Contents/Resources/"
+cp ../agents ../workspace-pack.py ../usage.py ../codex-rpc.py ../codex-run.py ../usage-store.py ../vendors.sh ../fleet.sh ../fleet-sync.sh ../fleet-exec.sh ../fleet-qa-import.py ../fleet-manifest.py ../profile-metadata.py ../fleet-auth-response.py ../fleet-auth-transport.py ../fleet-auth-owner.py ../fleet-auth-native.py ../fleet-auth-server.py ../fleet-auth-binding.py ../fleet-auth-client.py ../fleet-auth-manage.py ../fleet-auth-login-wire.py ../fleet-auth-login.py ../fleet-auth-migration.py "$bin_dir/n2-loop" "$app/Contents/Resources/"
 cp ../shell/agents.zsh ../shell/agents.bash ../shell/agents.fish ../shell/agent-as "$app/Contents/Resources/"
 ditto logos "$app/Contents/Resources/logos"
 chmod +x "$app/Contents/Resources/agents" "$app/Contents/Resources/agent-as"

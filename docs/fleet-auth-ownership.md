@@ -544,3 +544,33 @@ After owner completion, the client runs ordinary fleet sync and reports
 reports `owner-completed` with `localBinding: pending-sync`. No credential is
 copied into the requester profile. Live-provider and restart acceptance and independent security review remain
 required before overall readiness.
+
+
+## Migration inventory and pending barrier
+
+`agents fleet auth migration-status Profile` reports known top-level credential
+files, retained settings/auth/MCP conflict snapshots, and enrolled peers whose
+copies have not been observed. It reads metadata only. Credential bytes and
+token digests never appear in the result. Keychain storage, embedded credentials,
+unmanaged processes and provider revocation remain explicit unknowns; this
+inventory never claims completion or infers that an offline peer is clean.
+
+`agents fleet auth migration-begin Profile` creates a private, durable local
+pending marker under the same slot gate used by credential sync. Repeating it
+keeps the original migration ID. Legacy bytes stay in place. Ordinary N2 Codex
+launch/login, bound execution, usage polling, owner registration and incoming
+credential/settings writes refuse the pending profile. Public routing revisions
+are withheld. Malformed or dangling markers also block fallback. Already-running
+unmanaged processes are not stopped or proven fenced by this operation.
+
+The marker is local recovery state, not a replicated completion assertion. Peer
+acknowledgements, keychain lifecycle, archival/retirement, fresh-grant activation
+and an explicit completion/repair transition remain required. Do not begin a
+migration on a live profile until that recovery/completion workflow is available.
+These changes have only been exercised on disposable profiles.
+
+The official [credential-storage documentation](https://learn.chatgpt.com/docs/auth)
+explains why missing file credentials cannot prove there is no cached login:
+keyring and automatic storage can use the operating-system credential store.
+The [managed-auth guidance](https://learn.chatgpt.com/docs/auth/ci-cd-auth)
+requires serialized ownership of refreshable file credentials across automation.

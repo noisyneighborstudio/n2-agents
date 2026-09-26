@@ -105,6 +105,8 @@ def report(root, machine):
 
 def owner_route(root, name, directory):
     """Capture public owner intent, without reading credentials or contacting it."""
+    if os.path.lexists(Path(directory) / '.n2-migration.json'):
+        return {'status': 'migration-pending'}
     marker = Path(directory) / '.n2-owner.json'
     address = 'settings|' + name + '|codex|.n2-owner.json'
     conflict = Path(root) / 'fleet/sync/conflicts' / hashlib.sha256(address.encode()).hexdigest()[:12]
@@ -180,7 +182,7 @@ def routing_inventory(root):
             route['status'] = 'invalid'
         if vendor == 'codex':
             route['ownerBinding'] = owner_route(root, name, home)
-            if route['ownerBinding']['status'] in ('invalid', 'conflicting'):
+            if route['ownerBinding']['status'] in ('invalid', 'conflicting', 'migration-pending'):
                 route['status'] = 'invalid-owner-binding'
         key = (name, vendor)
         if key in routes:

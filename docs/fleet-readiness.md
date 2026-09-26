@@ -754,3 +754,22 @@ The ad-hoc QA bundle passes the same 37 remote-login, wire and management
 tests using byte-matched bundled helpers and disposable fixture homes. The first
 packaged staging attempt omitted the synthetic provider fixture; correcting the
 test staging allowed all checks to run. No app was installed or deployed.
+
+
+### Migration inventory and local pending state
+
+The CLI now inventories top-level credential-file presence, retained sync conflict
+copies and unobserved peer copies without opening credential contents. It reports
+keychain, unmanaged processes and revocation as unknown. A durable local pending
+marker preserves legacy files while blocking N2 Codex launches, login, bound
+execution, measurements, routing admission and credential-bearing sync writes.
+Five integration tests cover these paths, repeat initiation, corrupt/dangling
+markers, retained conflicts and existing-owner refusal. This is an incomplete
+migration workflow: fleet acknowledgements, retirement/archive, keychain handling
+and completion/repair are still required, and no live profile has been migrated.
+
+Validation for this checkpoint: all 5 migration, 9 routing, 27 usage-reader,
+19 account-management and 26 usage-journal tests pass. The ad-hoc QA bundle
+builds and passes the 5 migration tests with matching helper bytes and disposable
+homes. Shell syntax and diff checks pass. No live credential changes, installation
+or deployment occurred.
