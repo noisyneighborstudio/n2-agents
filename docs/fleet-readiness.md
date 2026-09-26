@@ -773,3 +773,18 @@ Validation for this checkpoint: all 5 migration, 9 routing, 27 usage-reader,
 builds and passes the 5 migration tests with matching helper bytes and disposable
 homes. Shell syntax and diff checks pass. No live credential changes, installation
 or deployment occurred.
+
+
+### Explicit migration abandonment
+
+A pending migration now has a revision-checked abandonment command with explicit
+legacy-access acknowledgement. It preserves credentials and a private atomic
+history record, reports `legacy-unmanaged`, and refuses newer state or owner
+intent. Eight migration tests pass, including interruption before and after
+barrier removal and idempotent retry. Successful migration completion, malformed
+state repair, peer acknowledgement, keychain handling and retirement remain
+unfinished. No live migration or abandonment was performed.
+
+The ad-hoc QA bundle passes all eight migration tests with byte-matched helpers
+and disposable homes. Nineteen existing account-management tests also pass from
+source. Syntax and diff checks pass; nothing was installed or deployed.

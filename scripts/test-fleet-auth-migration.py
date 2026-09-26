@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 ROOT=Path(__file__).resolve().parents[1]
 def load(name,path):
@@ -83,6 +84,55 @@ class MigrationTests(unittest.TestCase):
         self.assertNotIn('private-old-grant',json.dumps(result))
         (directory/'meta').write_text('malformed')
         self.assertIn('conflict-metadata-unavailable',self.fixture.command('migration-status')['unknowns'])
+    def test_explicit_abandon_preserves_credentials_and_can_reconcile_a_retry(self):
+        secret=b'untouched-private-login';(self.slot/'auth.json').write_bytes(secret)
+        initial=self.fixture.command('migration-begin');revision=initial['migrationRevision']
+        self.fixture.command('migration-abandon','--expected-revision',revision,success=False)
+        self.fixture.command('migration-abandon','--allow-legacy','--expected-revision','0'*64,success=False)
+        self.assertEqual(self.fixture.command('status')['status'],'migration-pending')
+        result=self.fixture.command('migration-abandon','--allow-legacy','--expected-revision',revision)
+        self.assertEqual(result['status'],'legacy-unmanaged');self.assertFalse(result['migrationComplete'])
+        self.assertEqual((self.slot/'auth.json').read_bytes(),secret)
+        self.assertFalse((self.slot/migration.MARKER).exists())
+        self.assertEqual(self.fixture.command('migration-abandon','--allow-legacy','--expected-revision',revision),result)
+        history=self.root/'fleet/auth-migration-history'/(revision+'.json')
+        self.assertNotIn(secret.decode(),history.read_text())
+        self.assertEqual(history.stat().st_mode & 0o777,0o600)
+        newer=self.fixture.command('migration-begin')
+        self.assertNotEqual(newer['migrationRevision'],revision)
+        self.fixture.command('migration-abandon','--allow-legacy','--expected-revision',revision,success=False)
+        self.assertEqual(self.fixture.command('migration-status')['migrationRevision'],newer['migrationRevision'])
+
+    def test_abandon_recovers_interruption_before_and_after_barrier_removal(self):
+        initial=self.fixture.command('migration-begin');revision=initial['migrationRevision']
+        original_sync=migration.manage.binding.owner.sync_directory
+        def fail_before_removal(path):
+            if Path(path).name=='auth-migration-history':raise OSError('interrupted after history publication')
+            return original_sync(path)
+        with patch.object(migration.manage.binding.owner,'sync_directory',side_effect=fail_before_removal):
+            with self.assertRaises(OSError):migration.abandon(self.root,'Work',self.slot,revision,True)
+        self.assertTrue((self.slot/migration.MARKER).exists())
+        history=self.root/'fleet/auth-migration-history'/(revision+'.json')
+        self.assertEqual(history.stat().st_nlink,1)
+        def fail_after_removal(path):
+            if Path(path).resolve()==self.slot.resolve():raise OSError('interrupted after barrier removal')
+            return original_sync(path)
+        with patch.object(migration.manage.binding.owner,'sync_directory',side_effect=fail_after_removal):
+            with self.assertRaises(OSError):migration.abandon(self.root,'Work',self.slot,revision,True)
+        self.assertFalse((self.slot/migration.MARKER).exists())
+        self.assertEqual(self.fixture.command('migration-abandon','--allow-legacy','--expected-revision',revision)['status'],'legacy-unmanaged')
+
+    def test_abandon_refuses_corrupt_marker_and_new_owner_intent(self):
+        initial=self.fixture.command('migration-begin');revision=initial['migrationRevision']
+        marker=self.slot/migration.MARKER;raw=marker.read_bytes()
+        marker.write_text('{}')
+        self.fixture.command('migration-abandon','--allow-legacy','--expected-revision',revision,success=False)
+        self.assertEqual(marker.read_text(),'{}')
+        marker.write_bytes(raw)
+        (self.slot/'.n2-owner.json').write_text('{}')
+        self.fixture.command('migration-abandon','--allow-legacy','--expected-revision',revision,success=False)
+        self.assertEqual(marker.read_bytes(),raw)
+
     def test_registered_profile_cannot_enter_legacy_migration(self):
         self.fixture.register()
         self.fixture.command('migration-begin',success=False)

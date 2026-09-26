@@ -212,12 +212,14 @@ def validate_incoming(root,name,config,payload):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action',choices=('register','status','allow','deny','login','reconcile','retire','grants','allow-login','deny-login','validate-incoming','migration-status','migration-begin'))
+    parser.add_argument('action',choices=('register','status','allow','deny','login','reconcile','retire','grants','allow-login','deny-login','validate-incoming','migration-status','migration-begin','migration-abandon'))
     parser.add_argument('root');parser.add_argument('profile');parser.add_argument('config')
+    parser.add_argument('--allow-legacy',action='store_true')
     parser.add_argument('--replace-account',action='store_true');parser.add_argument('--timeout',type=float,default=600)
     parser.add_argument('--login-operation');parser.add_argument('--expected-config');parser.add_argument('--payload');parser.add_argument('--grant');parser.add_argument('--peer');parser.add_argument('--expected-revision')
     args=parser.parse_args()
     try:
+        if args.allow_legacy and args.action!='migration-abandon':raise ValueError('invalid legacy recovery option')
         if args.login_operation is not None and args.action!='register':raise ValueError('invalid operation option')
         if args.expected_config is not None and (args.action!='register' or str(Path(args.config).resolve(strict=True))!=args.expected_config):
             raise ValueError('profile route changed')
@@ -234,6 +236,9 @@ def main():
         elif args.action=='register':
             if not args.grant or args.peer:raise ValueError('register requires grant')
             result=register(args.root,args.profile,args.config,args.grant,args.expected_revision,args.login_operation)
+        elif args.action=='migration-abandon':
+            if args.grant or args.peer:raise ValueError('invalid migration options')
+            result=load('n2_migration','fleet-auth-migration.py').abandon(args.root,args.profile,args.config,args.expected_revision,args.allow_legacy)
         elif args.action in ('migration-status','migration-begin'):
             if args.grant or args.peer or args.expected_revision:raise ValueError('invalid migration options')
             migration=load('n2_migration','fleet-auth-migration.py')

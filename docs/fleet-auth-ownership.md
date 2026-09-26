@@ -565,8 +565,8 @@ unmanaged processes are not stopped or proven fenced by this operation.
 
 The marker is local recovery state, not a replicated completion assertion. Peer
 acknowledgements, keychain lifecycle, archival/retirement, fresh-grant activation
-and an explicit completion/repair transition remain required. Do not begin a
-migration on a live profile until that recovery/completion workflow is available.
+and an explicit verified completion transition remain required. Abandonment is
+available as described below; a completed migration is not yet available.
 These changes have only been exercised on disposable profiles.
 
 The official [credential-storage documentation](https://learn.chatgpt.com/docs/auth)
@@ -574,3 +574,19 @@ explains why missing file credentials cannot prove there is no cached login:
 keyring and automatic storage can use the operating-system credential store.
 The [managed-auth guidance](https://learn.chatgpt.com/docs/auth/ci-cd-auth)
 requires serialized ownership of refreshable file credentials across automation.
+
+
+### Abandon a pending migration
+
+`agents fleet auth migration-abandon Profile --expected-revision REVISION
+--allow-legacy` explicitly restores the legacy route. Obtain `REVISION` from
+`migration-status`. The command returns `legacy-unmanaged` and
+`migrationComplete: false`; it does not claim that copied grants, offline peers
+or keychain credentials are safe or retired.
+
+Only the same machine can abandon its valid pending marker. The exact revision
+must still match, and an owner binding or ownership conflict prevents rollback.
+An atomic private history record is persisted before barrier removal. A retry
+reconciles interruption before or after removal, while an older request cannot
+clear a newly started migration. Credential files are never opened or modified.
+Malformed migration state remains blocked and requires a separate repair path.

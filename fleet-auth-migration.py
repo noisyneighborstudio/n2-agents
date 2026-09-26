@@ -5,6 +5,7 @@ No credentials are opened, exported, moved, deleted or fingerprinted here.
 An inventory is evidence of known copies, never proof that other copies do not exist.
 """
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -99,9 +100,12 @@ def inventory(root,name,config):
             except (OSError,ValueError,TypeError):unknown.append('conflict-metadata-unavailable')
     except (OSError,ValueError):unknown.append('conflict-inventory-incomplete')
     migration=pending(root,name,config)
+    revision=None
+    if migration and migration['state']=='pending':
+        revision=hashlib.sha256(manage.binding.owner.private_file(config/MARKER,4096)).hexdigest()
     return {'schemaVersion':1,'profileId':profile_id,'machine':me,'observedAt':int(time.time()),
             'status':'migration-pending' if migration and migration['state']=='pending' else 'migration-invalid' if migration else 'inventory-only',
-            'migration':migration,'credentialFiles':files,'retainedSyncCopies':copies,'peers':peers,
+            'migration':migration,'migrationRevision':revision,'credentialFiles':files,'retainedSyncCopies':copies,'peers':peers,
             'keychain':'not-inspected','embeddedCredentials':'not-inspected','unmanagedProcesses':'unknown',
             'providerRevocation':'unconfirmed','inventoryScope':'top-level-credential-files-and-sync-conflicts','inventoryComplete':False,'unknowns':sorted(set(unknown))}
 
@@ -125,3 +129,54 @@ def begin(root,name,config):
     finally:
         if os.path.exists(temporary):os.unlink(temporary)
     return inventory(root,name,config)
+
+
+def abandon(root,name,config,expected_revision,allow_legacy=False):
+    """Explicit rollback of local intent, not successful credential migration.
+
+    Caller holds profile/resource/slot locks. Preserve an atomic audit record
+    before clearing the barrier; retry can reconcile interruption after unlink.
+    """
+    root=Path(root).resolve(strict=True);config=Path(config).resolve(strict=True)
+    manage.binding.controlled_directory(config)
+    if not allow_legacy or not manage.binding.owner.hash_value(expected_revision):
+        raise ValueError('abandon requires exact revision and explicit legacy access')
+    me=manage.identity(root);profile_id=manage.profile(root,name)
+    if os.path.lexists(config/manage.binding.MARKER) or manage.binding.conflicted(root,name):
+        raise ValueError('owner intent prevents legacy recovery')
+    directory=root/'fleet/auth-migration-history'
+    manage.binding.owner.private_directory(directory,create=True)
+    manage.binding.owner.sync_directory(directory.parent)
+    history=directory/(expected_revision+'.json')
+    current=pending(root,name,config)
+    previous=None
+    if os.path.lexists(history):
+        previous=json.loads(manage.binding.owner.private_file(history,8192),object_pairs_hook=manage.binding.owner.unique)
+        if (not isinstance(previous,dict) or set(previous)!={'schemaVersion','outcome','migration','revision'}
+                or previous['schemaVersion']!=1 or previous['outcome']!='abandoned'
+                or previous['revision']!=expected_revision or not isinstance(previous['migration'],dict)
+                or previous['migration'].get('profileId')!=profile_id or previous['migration'].get('machine')!=me):
+            raise ValueError('invalid migration history')
+    if current is None:
+        if previous is None:raise ValueError('no matching migration to abandon')
+        return {'status':'legacy-unmanaged','migrationId':previous['migration']['migrationId'],'migrationComplete':False}
+    if current['state']!='pending' or current['machine']!=me:
+        raise ValueError('migration cannot be abandoned here')
+    raw=manage.binding.owner.private_file(config/MARKER,4096)
+    if hashlib.sha256(raw).hexdigest()!=expected_revision:raise ValueError('migration changed')
+    record={'schemaVersion':1,'outcome':'abandoned','migration':current,'revision':expected_revision}
+    if previous is not None and previous!=record:raise ValueError('migration history changed')
+    if previous is None:
+        fd,temporary=tempfile.mkstemp(prefix='.history-',dir=directory)
+        try:
+            with os.fdopen(fd,'wb') as out:
+                out.write(json.dumps(record,sort_keys=True,separators=(',',':')).encode()+b'\n')
+                out.flush();os.fsync(out.fileno())
+            # The profile/slot locks serialize this operation. Rename keeps
+            # the private file single-linked even if the process dies here.
+            os.replace(temporary,history);manage.binding.owner.sync_directory(directory)
+        finally:
+            if os.path.exists(temporary):os.unlink(temporary)
+    if manage.binding.owner.private_file(config/MARKER,4096)!=raw:raise ValueError('migration changed')
+    os.unlink(config/MARKER);manage.binding.owner.sync_directory(config)
+    return {'status':'legacy-unmanaged','migrationId':current['migrationId'],'migrationComplete':False}
