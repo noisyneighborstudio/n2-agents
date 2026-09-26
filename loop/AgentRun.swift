@@ -66,7 +66,11 @@ func spawnAndWait(_ argv: [String], cwd: String, stdin: String, stdout: String, 
     var attr: posix_spawnattr_t? = nil
     posix_spawnattr_init(&attr)
     defer { posix_spawnattr_destroy(&attr) }
-    if detach { posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSID)) }
+    // A worker must not hold the controller's command pipes or lock open.
+    // Only descriptors explicitly configured above belong in the child.
+    var flags = Int16(POSIX_SPAWN_CLOEXEC_DEFAULT)
+    if detach { flags |= Int16(POSIX_SPAWN_SETSID) }
+    posix_spawnattr_setflags(&attr, flags)
 
     var pid: pid_t = 0
     let cargs = argv.map { strdup($0) } + [nil]
