@@ -507,3 +507,24 @@ persistence during store/grant creation. All 15 owner tests pass from source and
 from the ad-hoc QA package, with helper byte parity verified. The adjacent 12
 codec and seven transport tests also pass. No app was installed and no live
 credential was read or renewed for this state-layer verification.
+
+### Native owner renewal and verification
+
+The owner adapter now invokes Codex's managed `account/read` refresh operation
+inside the private grant home. It closes that process, syncs the saved credential,
+then independently verifies the exact access token in an ephemeral app-server.
+Only the same verified account and credential revision can activate a replacement
+generation. Inherited authentication, endpoint and proxy variables are excluded.
+
+Eight synthetic subprocess tests cover activation, renewal, stale requests,
+account mismatch, failed verification, uncertain persisted outcomes, unchanged
+tokens, wrong provider, timeouts and actual owner SIGKILL. The managed process's
+supervisor retains the grant lock after owner death until completion or the
+original deadline, preventing reconciliation alongside an orphaned refresh.
+These fixtures do not establish live provider renewal. Login/reset, migration,
+the authenticated owner endpoint and production runner wiring remain required.
+
+Scoped correctness/security review is clear after fixing lock lifetime across
+owner death. All eight native tests pass against source and packaged helpers,
+with byte parity verified. The 31 existing protocol tests, 12 bound-runner tests
+and 15 grant-state tests pass. The ad-hoc QA build succeeds and was not installed.

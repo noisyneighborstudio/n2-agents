@@ -271,3 +271,42 @@ perform provider verification, invoke native refresh, implement login/reset,
 serve `auth-token`, or connect production execution to renewal. Those integration
 steps remain required. The tests use disposable credentials and synthetic
 verification results, including concurrent processes and abrupt process death.
+
+## Native owner integration
+
+`fleet-auth-native.py` connects the locked store to the installed Codex
+app-server. A request first checks grant consent, ownership, account and token
+generation. When renewal is required, the durable state changes to `renewing`
+before starting Codex with the owner's private home and file credential store.
+The helper requests `account/read` with `refreshToken: true`, then closes that
+process. It does not implement an OAuth endpoint or refresh-token algorithm.
+
+The [official app-server documentation](https://learn.chatgpt.com/docs/app-server)
+and Codex 0.157.1's generated `GetAccountParams` schema describe this flag as the
+managed token-refresh operation. External token mode ignores the flag. The
+owner therefore uses managed file authentication for this operation and a
+separate ephemeral process for verification.
+
+After Codex finishes, the helper syncs its credential file and directory. It
+passes only the saved access token and account ID to an isolated ephemeral
+app-server, reads authenticated allowance/account information, and computes the
+same account hash used by N2 measurements. Completion must match the expected
+account and exact verified credential revision before a token can be returned.
+The environment excludes inherited authentication, endpoint and proxy overrides;
+HOME and CODEX_HOME point at the operation's private home.
+
+An explicit reconciliation call verifies a saved result without invoking refresh.
+A failed or timed-out renewal remains uncertain until reconciliation succeeds or
+reauthentication is required. Errors use fixed messages rather than provider
+diagnostics. These methods are internal and require the caller to hold the grant
+lock. Fleet approval checks and authenticated request dispatch still belong to
+the unimplemented owner endpoint. Login/reset, migration and production runner
+wiring also remain required.
+
+Managed renewal runs under a dedicated supervisor that inherits the held grant
+lock. If the requesting owner process dies, the supervisor retains that lock
+until the native process exits or the original operation deadline expires. It
+kills the process group before exiting, so recovery cannot acquire the lock
+while the prior native operation remains active. The process-death fixture kills
+the owner after credential persistence, confirms recovery is blocked during the
+native operation, and then verifies the saved replacement without another refresh.

@@ -15,6 +15,7 @@ import queue
 import select
 import signal
 import subprocess
+import sys
 import threading
 import time
 
@@ -59,7 +60,7 @@ def reported_quota_reset(error, now):
 
 
 class CodexRPC:
-    def __init__(self, cfg, cwd, timeout=15, executable='codex', ephemeral_auth=False, own_process_group=True):
+    def __init__(self, cfg, cwd, timeout=15, executable='codex', ephemeral_auth=False, own_process_group=True, environment=None, managed_file_auth=False, lifetime_lock_fd=None, lifetime_deadline=None):
         self.timeout = timeout
         self.executable = executable
         self.ephemeral_auth = ephemeral_auth
@@ -78,16 +79,28 @@ class CodexRPC:
         self._bound_account = None
         self._bound_generation = None
         self._binding_failed = False
-        child_env = dict(os.environ, CODEX_HOME=cfg)
+        if ephemeral_auth and managed_file_auth:
+            raise ValueError("conflicting Codex credential stores")
+        child_env = dict(os.environ if environment is None else environment, CODEX_HOME=cfg)
         self._custom_openai_endpoint = bool(child_env.get('OPENAI_BASE_URL'))
         argv = [executable]
         if ephemeral_auth:
             argv += ['-c', 'cli_auth_credentials_store="ephemeral"']
+        if managed_file_auth:
+            argv += ['-c', 'cli_auth_credentials_store="file"']
         argv += ['app-server']
+        pass_fds = ()
+        if lifetime_lock_fd is not None:
+            if not own_process_group or type(lifetime_lock_fd) is not int or lifetime_lock_fd < 3:
+                raise ValueError('invalid process lifetime lock')
+            if type(lifetime_deadline) not in (int, float) or not math.isfinite(lifetime_deadline) or lifetime_deadline <= time.monotonic():
+                raise ValueError('invalid process lifetime deadline')
+            pass_fds = (lifetime_lock_fd,)
+            argv = [sys.executable, os.path.abspath(__file__), '--lock-supervisor', str(lifetime_lock_fd), str(lifetime_deadline)] + argv
         self.process = subprocess.Popen(
             argv, cwd=cwd, env=child_env,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            start_new_session=own_process_group, bufsize=0)
+            start_new_session=own_process_group, pass_fds=pass_fds, bufsize=0)
         os.set_blocking(self.process.stdin.fileno(), False)
         os.set_blocking(self.process.stdout.fileno(), False)
         self.reader = threading.Thread(target=self._read, daemon=True)
@@ -570,3 +583,34 @@ class CodexRPC:
 
     def __exit__(self, *_):
         self.close()
+
+
+def _lock_supervisor():
+    """Retain the inherited flock while the native process can mutate its home.
+
+    This dedicated session survives a killed RPC caller. On child exit it kills
+    its whole group before releasing the lock, including any pipe-owning child.
+    TERM does not release the lock early; the caller escalates the whole group.
+    """
+    if len(sys.argv) < 6 or sys.argv[1] != '--lock-supervisor':
+        raise SystemExit(2)
+    fd = int(sys.argv[2])
+    os.fstat(fd)
+    deadline = float(sys.argv[3])
+    if not math.isfinite(deadline):
+        raise SystemExit(2)
+    if os.getpgrp() != os.getpid():
+        raise SystemExit(2)
+    signal.signal(signal.SIGTERM, lambda *_: None)
+    try:
+        child = subprocess.Popen(sys.argv[4:], stdin=sys.stdin.buffer, stdout=sys.stdout.buffer,
+                                 stderr=subprocess.DEVNULL, close_fds=True)
+        child.wait(timeout=max(0, deadline-time.monotonic()))
+    except subprocess.TimeoutExpired:
+        pass
+    finally:
+        os.killpg(os.getpid(), signal.SIGKILL)
+
+
+if __name__ == '__main__':
+    _lock_supervisor()

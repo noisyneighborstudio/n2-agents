@@ -164,7 +164,7 @@ class OwnerStore:
             validate(state)
             if state['grantId'] != grant_id or state['owner'] != self.owner:
                 raise ValueError('owner grant identity mismatch')
-            session = Grant(directory, state, deadline)
+            session = Grant(directory, state, deadline, fd)
             yield session
         finally:
             if session is not None:
@@ -173,7 +173,8 @@ class OwnerStore:
 
 
 class Grant:
-    def __init__(self, directory, state, deadline):
+    def __init__(self, directory, state, deadline, lock_fd):
+        self._lock_fd = lock_fd
         self.directory, self.state, self.deadline = directory, state, deadline
         self.closed = False
 
@@ -205,6 +206,11 @@ class Grant:
         self._check()
         return {key: self.state[key] for key in ('schemaVersion', 'grantId', 'profileId', 'owner',
                 'ownershipGeneration', 'accountHash', 'state', 'tokenGeneration', 'revision')}
+
+    @property
+    def lifetime_lock_fd(self):
+        self._check()
+        return self._lock_fd
 
     @property
     def provider_home(self):
