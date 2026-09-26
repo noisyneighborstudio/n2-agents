@@ -337,26 +337,15 @@ sync_categories() {
 
 # --- auth opt-in -----------------------------------------------------------
 
-# Provider support is evidence-based; see the auth matrix in the design doc.
-# `unsupported` and `unverified` are reported with their reason rather than
-# quietly omitted, because a silently missing provider looks like a bug.
-#
-# The tiers mean: `partial` - the file material is portable and replication is
-# implemented and tested with synthetic secrets, but no live provider sign-in
-# was ever demonstrated from synced state; `unsupported` - a structural reason
-# prevents replication at all, so opt-in is refused rather than accepted and
-# silently ignored; `unverified` - not inspected, so absence of evidence is
-# reported rather than assumed to match another provider.
-# A provider whose credential sits outside the isolated slot is `unsupported`,
-# not `partial`: `partial` asserts that replication is implemented, and an
-# opt-in that carries nothing is a false affordance, not a partial one.
-# No provider is `supported`. The design doc sets the bar for that word: an
-# actual authenticated call succeeding on the receiving machine from synced
-# state. Development is forbidden from making that call against real
-# credentials, so the bar is unmet everywhere and nothing may claim it.
+# Provider support and evidence are recorded in docs/fleet-authentication.md.
+# Partial means the supported file route replicates, with explicit lifecycle or
+# storage limits. It does not promise portable Keychain sessions, concurrent
+# refresh safety, or provider-side revocation. Unsupported routes refuse opt-in;
+# unverified routes state the missing evidence. No provider has a verified full
+# fleet authentication lifecycle yet.
 sync_auth_support() {  # sync_auth_support <vendor> -> partial|unsupported|unverified
   case $1 in
-    codex|claude|grok|muse) echo partial ;;
+    codex|claude|grok|muse|cursor) echo partial ;;
     gemini|opencode) echo unsupported ;;
     *) echo unverified ;;
   esac
@@ -364,9 +353,10 @@ sync_auth_support() {  # sync_auth_support <vendor> -> partial|unsupported|unver
 
 sync_auth_reason() {
   case $1 in
-    codex) echo "file-portable and refresh-conflict aware: auth.json carries tokens + last_refresh, and two independent refreshes are raised as a conflict instead of clobbering. NOT verified: that a transplanted token is accepted by the provider on the receiving machine - proving that needs a live authenticated call, which this work is not permitted to make against real credentials" ;;
+    codex) echo "file-portable and refresh-conflict aware: auth.json changes replicate and concurrent edits require resolution. Copied credentials passed a read-only live authenticated call on a receiving Mac on 2026-09-25. NOT verified: concurrent provider refresh or revocation of other copies. keyring/ephemeral credentials are not exported" ;;
     opencode) echo "credentials live OUTSIDE the isolated slot: the binary resolves \$XDG_DATA_HOME/opencode/auth.json (else ~/.local/share/opencode/auth.json), while profile isolation only repoints XDG_CONFIG_HOME — so opencode auth is machine-wide, shared by every profile, and nothing under the synced config slot carries it. Opting in would be inert, so it is refused rather than accepted and silently ignored. Lifting this needs XDG_DATA_HOME isolation, a change to the isolation tier" ;;
-    claude) echo "profile-scoped keychain logins need an explicit export; file credentials and API keys replicate. Cross-machine sign-in is not yet verified" ;;
+    claude) echo "profile-scoped keychain logins need an explicit export; file credentials replicate. Copied credentials passed receiving-Mac usage checks on 2026-09-25. Continuous keychain sync, concurrent refresh, and provider-wide logout are not verified" ;;
+    cursor) echo "credential-bearing settings and MCP configuration can replicate with opt-in. The CLI login is machine-wide in keychain; CURSOR_CONFIG_DIR does not isolate it and N2 does not export or replace that login" ;;
     grok|muse) echo "profile auth.json is file-portable; cross-machine provider acceptance and refresh behavior are not yet verified" ;;
     gemini) echo "swap-tier isolation: config dir is a source constant, not isolatable per process" ;;
     *) echo "not inspected; absence of evidence is reported as unverified, not assumed portable" ;;

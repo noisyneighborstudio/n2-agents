@@ -1,6 +1,7 @@
 > Historical design record recovered from draft PR #3. For the current-main QA
 > spike, deployment instructions, provider evidence and limitations, see
-> [fleet-spike.md](fleet-spike.md). Some vendor observations below predate main.
+> [fleet-spike.md](fleet-spike.md) and [fleet authentication](fleet-authentication.md).
+> Some vendor observations below predate main.
 
 # Fleet design — identity, enrollment, transport
 

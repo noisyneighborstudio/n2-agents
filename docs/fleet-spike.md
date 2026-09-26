@@ -1,3 +1,6 @@
+Current provider support and lifecycle limits are maintained in
+[fleet authentication](fleet-authentication.md).
+
 # Fleet profile sync QA spike
 
 Based on current main (`436b861`), with transport and replication recovered from

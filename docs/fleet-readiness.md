@@ -16,7 +16,7 @@ Work in progress for PR #3, followed by the T3 adapter in PR #26. This checklist
 ## Fleet completion
 
 - [x] Reverify enrollment and transport: 339 passed, zero failures/skips, live SSH required.
-- [x] Reverify profile/configuration/credential sync, conflicts and machine exceptions: 635 checks pass across all 75 sections.
+- [x] Reverify profile/configuration/credential sync, conflicts and machine exceptions: 639 checks pass across all 75 sections.
 - [ ] Complete provider-specific authentication lifecycle evidence and explicit limitations.
 - [x] Reverify managed-tool authorization, replication and safe update deferral, including a barrier test of preparation versus disruptive installation.
 - [ ] Complete dispatch eligibility, preferences and expected-completion ranking.
@@ -133,3 +133,10 @@ The full regression suite passes with the authenticated measurement reader.
 Independent correctness and security reviews report no actionable findings in
 this change. Successful live authenticated identity and launch attribution are
 not claimed by those synthetic checks.
+
+Provider lifecycle diagnostics now distinguish receiving-Mac snapshot acceptance
+from unverified refresh coordination and revocation. The current contract is in
+[fleet authentication](fleet-authentication.md). Cursor preserves opted-in MCP
+and settings sharing while explicitly excluding its machine-wide login. All 639
+sync checks across 75 sections pass, including a two-peer Cursor MCP regression.
+Independent correctness and security reviews are clear for this correction.

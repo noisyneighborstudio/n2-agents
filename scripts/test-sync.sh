@@ -579,16 +579,27 @@ check "auth matrix: the refusal says why"                     "cannot be replica
 check "auth matrix: the refusal names the real location"      ".local/share/opencode/auth.json" "$out"
 refute "auth matrix: a refused opt-in is not recorded" "opencode" "$(peer alpha fleet sync auth list 2>&1 | awk -F'\t' '$3=="opted-in"{print $1}')"
 
-# No provider may claim the word `supported`. The design doc sets that bar at an
-# authenticated call succeeding on the receiving machine from synced state, and
-# development is not permitted to make that call against real credentials. A
-# copied auth.json is evidence of file portability and nothing more, so codex -
-# the provider with the cleanest file shape - must say what it has NOT shown.
+# Live snapshot acceptance is narrower than a supported fleet lifecycle.
+# Keep refresh/revocation gaps and unsupported credential stores explicit.
 refute "auth matrix: no provider claims the unearned word" "	supported	" "$am"
 check  "auth matrix: codex is reported partial"            "codex	partial" "$am"
 check  "auth matrix: codex names its conflict behaviour"   "refresh-conflict aware" "$am"
 check  "auth matrix: codex states what was not verified"   "NOT verified" "$am"
-check  "auth matrix: it says file copying is not sign-in"  "live authenticated call" "$am"
+check  "auth matrix: live acceptance is scoped and dated" "2026-09-25" "$am"
+check  "auth matrix: credential store limits remain explicit" "keyring/ephemeral" "$am"
+check  "auth matrix: Cursor sharing is explicitly partial" "cursor	partial" "$am"
+check  "auth matrix: Cursor login limitation is explicit" "does not export or replace that login" "$am"
+# MCP sharing is independent of exporting the vendor's machine-wide login.
+for who in alpha beta; do peer "$who" fleet sync auth enable cursor >/dev/null 2>&1; done
+mkdir -p "$base/alpha/.n2-agents/Work/cursor"
+printf '{"mcpServers":{"fixture":{"command":"synthetic-mcp"}}}\n' > "$base/alpha/.n2-agents/Work/cursor/mcp.json"
+peer alpha fleet sync now >/dev/null
+if cmp -s "$base/alpha/.n2-agents/Work/cursor/mcp.json" "$base/beta/.n2-agents/Work/cursor/mcp.json"; then
+  ok "auth matrix: Cursor MCP still replicates with explicit opt-in"
+else
+  bad "auth matrix: Cursor MCP still replicates with explicit opt-in" "missing or changed MCP configuration"
+fi
+for who in alpha beta; do peer "$who" fleet sync auth disable cursor >/dev/null 2>&1; done
 out=$(peer alpha fleet sync auth enable codex 2>&1)
 check "auth matrix: codex opt-in warns too" "partially portable" "$out"
 peer alpha fleet sync auth disable codex >/dev/null 2>&1
