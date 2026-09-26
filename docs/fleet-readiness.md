@@ -99,3 +99,11 @@ bounds, concurrent staging replacement and snapshot consistency. Independent
 correctness and security follow-ups are clear. The full regression, release
 packaging and all 635 sync checks across 75 sections pass. Packaging used ad-hoc
 signing and did not install the app.
+
+Pre-enrollment observations now transfer with their original IDs, origins and
+timestamps. Snapshot schema 2 records the approved sender's ownership assertion
+for its previous local UUID, atomically with complete publication. Signed
+three-peer tests verify enrollment, single token attribution and later recovery.
+Twenty-six journal tests pass, and independent correctness and security reviews
+are clear. Full regression, release packaging and all 635 sync checks across 75
+sections pass. Packaging used ad-hoc signing without installation.

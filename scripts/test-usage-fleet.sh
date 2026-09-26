@@ -48,3 +48,34 @@ assert len(rows)==8106, 'all durable restrictions must arrive across pages'
 assert all(row['origin']==sys.argv[2] for row in rows)
 PY
 echo 'ok paginated signed exchange publishes all 8106 durable restrictions across bounded ticks'
+# A machine joining later keeps its original observation origin and IDs.
+mkdir -p "$base/c"
+printf '%s\n' '{"status":"restricted"}' |
+  peer c usage record --provider codex --profile Default --kind quota-rejected > "$base/pre-enrollment"
+printf '%s\n' '{"status":"ok","attribution":{"task":"before-enrollment","totalTokens":42}}' |
+  peer c usage record --provider codex --profile Tokens --kind execution-succeeded >/dev/null
+c=$(peer c fleet init --machine c | cut -f2)
+peer c fleet pair --home "$base/b" --code "$(peer b fleet invite --peer "$c" 2>/dev/null)" >/dev/null
+peer b fleet sync tick --interval 1 >/dev/null
+peer b usage restrictions > "$base/enrolled-restrictions"
+peer b usage summary > "$base/enrolled-summary"
+python3 - "$base/pre-enrollment" "$base/enrolled-restrictions" "$base/enrolled-summary" "$c" <<'PY'
+import json,sys
+original=json.load(open(sys.argv[1]))
+assert original['origin'].startswith('local:')
+assert original in json.load(open(sys.argv[2])), 'enrollment must not rewrite original observation identity'
+summary=json.load(open(sys.argv[3]))
+groups=[g for g in summary['groups'] if g['reportedTotalTokens']==42]
+assert len(groups)==1
+assert groups[0]['bindings']==[{'origin':sys.argv[4],'profile':'Tokens','observationOrigin':original['origin']}]
+PY
+recovery=$(python3 -c 'import json,time; print(json.dumps({"status":"ok","startedAt":time.time()}))')
+peer c usage record --provider codex --profile Default --kind execution-succeeded --data "$recovery" >/dev/null
+peer b fleet sync tick --interval 1 >/dev/null
+peer b usage restrictions > "$base/recovered-restrictions"
+python3 - "$base/pre-enrollment" "$base/recovered-restrictions" <<'PY'
+import json,sys
+original=json.load(open(sys.argv[1]))
+assert original not in json.load(open(sys.argv[2])), 'post-enrollment recovery must resolve the earlier local rejection'
+PY
+echo 'ok signed enrollment preserves earlier observations, token attribution and recovery'

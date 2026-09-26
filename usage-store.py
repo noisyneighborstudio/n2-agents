@@ -176,6 +176,7 @@ class Journal:
         os.close(fd)
         os.chmod(path, 0o600)
         self.db = sqlite3.connect(path, timeout=10)
+        self.db.execute('BEGIN IMMEDIATE')
         self.db.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
         self.db.execute('CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, origin TEXT NOT NULL, at REAL NOT NULL, provider TEXT NOT NULL, profile TEXT NOT NULL, body TEXT NOT NULL)')
         self.db.execute('CREATE INDEX IF NOT EXISTS events_binding ON events(origin, provider, profile, at)')
@@ -183,6 +184,10 @@ class Journal:
         self.db.execute('CREATE TABLE IF NOT EXISTS export_items (token TEXT NOT NULL, position INTEGER NOT NULL, event_id TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(token, position), UNIQUE(token, event_id))')
         self.db.execute('CREATE TABLE IF NOT EXISTS import_snapshots (source TEXT PRIMARY KEY, token TEXT NOT NULL, next_position INTEGER NOT NULL, total INTEGER NOT NULL, created REAL NOT NULL)')
         self.db.execute('CREATE TABLE IF NOT EXISTS import_items (source TEXT NOT NULL, position INTEGER NOT NULL, event_id TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(source, position), UNIQUE(source, event_id))')
+        self.db.execute('CREATE TABLE IF NOT EXISTS origin_owners (origin TEXT PRIMARY KEY, owner TEXT NOT NULL)')
+        for table in ('export_snapshots', 'import_snapshots'):
+            if 'aliases' not in {row[1] for row in self.db.execute('PRAGMA table_info(' + table + ')')}:
+                self.db.execute("ALTER TABLE " + table + " ADD COLUMN aliases TEXT NOT NULL DEFAULT '[]'")
         self.db.execute('DELETE FROM export_items WHERE token IN (SELECT token FROM export_snapshots WHERE created < ?)', (time.time() - 3600,))
         self.db.execute('DELETE FROM export_snapshots WHERE created < ?', (time.time() - 3600,))
         self.db.execute('DELETE FROM import_items WHERE source IN (SELECT source FROM import_snapshots WHERE created < ?)', (time.time() - 3600,))
@@ -208,13 +213,46 @@ class Journal:
         identity = data.get('identity', {})
         return identity.get('accountHash') if identity.get('status') == 'verified' else None
 
+    def owner_origin(self, origin):
+        if origin == self.local_origin:
+            return self.origin
+        row = self.db.execute('SELECT owner FROM origin_owners WHERE origin=?', (origin,)).fetchone()
+        return row[0] if row else origin
+
+    def check_aliases(self, aliases, source):
+        if not isinstance(aliases, list) or len(aliases) > 1:
+            raise ValueError('invalid local origin aliases')
+        for alias in aliases:
+            if (not isinstance(alias, str) or
+                    not re.fullmatch(r'local:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', alias) or
+                    alias == source or (alias == self.local_origin and source != self.origin)):
+                raise ValueError('invalid local origin claim')
+            owner = self.db.execute('SELECT owner FROM origin_owners WHERE origin=?', (alias,)).fetchone()
+            if owner and owner[0] != source:
+                raise ValueError('local origin already belongs to another peer')
+
+    def register_aliases(self, aliases, source):
+        self.check_aliases(aliases, source)
+        for alias in aliases:
+            self.db.execute('INSERT OR IGNORE INTO origin_owners VALUES (?, ?)', (alias, source))
+        # Older direct imports may have stored the local origin before ownership
+        # was known. Re-key the projection without changing immutable events.
+        if aliases:
+            for binding, kind, body in self.db.execute('SELECT binding, kind, body FROM execution_state').fetchall():
+                event = json.loads(body)
+                if event['origin'] in aliases and binding != self.execution_binding(event):
+                    self.db.execute('DELETE FROM execution_state WHERE binding=? AND kind=?', (binding, kind))
+                    self._retain_execution(event)
+
     def execution_binding(self, event):
         data = event['data']
         # Success clears only the issuing machine's matching route/account and
         # model choice. A different peer's clock or model cannot erase evidence.
         model = (['requested', data['requestedModel']] if data.get('requestedModel') else
                  ['reported', data['model']] if data.get('model') else ['default'])
-        origin = self.local_origin if event['origin'] == self.origin else event['origin']
+        origin = self.owner_origin(event['origin'])
+        if origin == self.origin:
+            origin = self.local_origin
         return canonical([origin, event['provider'], event['profile'], Journal.account(data), model])
 
     def _retain_execution(self, event):
@@ -344,21 +382,22 @@ class Journal:
                 for row in old:
                     self.db.execute('DELETE FROM export_items WHERE token=?', row)
                     self.db.execute('DELETE FROM export_snapshots WHERE token=?', row)
-                self.db.execute('INSERT INTO export_snapshots VALUES (?, ?, ?, 0)', (token, recipient, time.time()))
+                aliases = [] if self.origin == self.local_origin else [self.local_origin]
+                self.db.execute('INSERT INTO export_snapshots(token, recipient, created, total, aliases) VALUES (?, ?, ?, 0, ?)', (token, recipient, time.time(), canonical(aliases)))
                 position = 0
                 for row in self.db.execute('SELECT body FROM execution_state ORDER BY id'):
                     event = json.loads(row[0])
-                    if event['origin'] != self.origin:
+                    if event['origin'] not in (self.origin, self.local_origin):
                         continue
                     self.db.execute('INSERT INTO export_items VALUES (?, ?, ?, ?)', (token, position, event['id'], row[0]))
                     position += 1
-                for event_id, body in self.db.execute('SELECT id, body FROM events WHERE origin=? ORDER BY id', (self.origin,)):
+                for event_id, body in self.db.execute('SELECT id, body FROM events WHERE origin IN (?, ?) ORDER BY id', (self.origin, self.local_origin)):
                     if self.db.execute('SELECT 1 FROM export_items WHERE token=? AND event_id=?', (token, event_id)).fetchone():
                         continue
                     self.db.execute('INSERT INTO export_items VALUES (?, ?, ?, ?)', (token, position, event_id, body))
                     position += 1
                 self.db.execute('UPDATE export_snapshots SET total=? WHERE token=?', (position, token))
-        snapshot = self.db.execute('SELECT total FROM export_snapshots WHERE token=? AND recipient=?', (token, recipient)).fetchone()
+        snapshot = self.db.execute('SELECT total, aliases FROM export_snapshots WHERE token=? AND recipient=?', (token, recipient)).fetchone()
         if not snapshot:
             raise SnapshotUnavailable('snapshot unavailable')
         if offset > snapshot[0]:
@@ -376,7 +415,7 @@ class Journal:
         next_offset = offset + len(events)
         if next_offset < total and not events:
             raise ValueError('event exceeds page size')
-        return {'schemaVersion': 1, 'snapshot': token, 'offset': offset, 'total': total,
+        return {'schemaVersion': 2, 'aliases': json.loads(snapshot[1]), 'snapshot': token, 'offset': offset, 'total': total,
                 'nextCursor': token + ':' + str(next_offset) if next_offset < total else None,
                 'events': events}
 
@@ -397,11 +436,17 @@ class Journal:
                     self.db.execute('DELETE FROM import_items WHERE source=?', (source,))
                     self.db.execute('DELETE FROM import_snapshots WHERE source=?', (source,))
             return None  # The next bounded tick starts a new snapshot.
-        fields(page, {'schemaVersion', 'snapshot', 'offset', 'total', 'nextCursor', 'events'})
-        if set(page) != {'schemaVersion', 'snapshot', 'offset', 'total', 'nextCursor', 'events'}:
-            raise ValueError('incomplete page')
-        if type(page['schemaVersion']) is not int or page['schemaVersion'] != 1:
+        fields(page, {'schemaVersion', 'snapshot', 'offset', 'total', 'nextCursor', 'events', 'aliases'})
+        if type(page.get('schemaVersion')) is not int or page['schemaVersion'] not in (1, 2):
             raise ValueError('unsupported page schema')
+        required = {'schemaVersion', 'snapshot', 'offset', 'total', 'nextCursor', 'events'}
+        if page['schemaVersion'] == 2:
+            required.add('aliases')
+        if set(page) != required:
+            raise ValueError('incomplete page')
+        aliases = page.get('aliases', [])
+        self.check_aliases(aliases, source)
+        aliases_json = canonical(aliases)
         token, offset, total, events = page['snapshot'], page['offset'], page['total'], page['events']
         if not isinstance(token, str) or not re.fullmatch('[a-f0-9]{32}', token):
             raise ValueError('invalid snapshot')
@@ -420,30 +465,32 @@ class Journal:
             raise ValueError('invalid page continuation')
         for event in events:
             validate(event)
-            if event['origin'] != source:
+            if event['origin'] not in [source] + aliases:
                 raise ValueError('event origin does not match authenticated peer')
         with self.db:
             # Lock before checking progress. A concurrent restart must not swap
             # staging between receipt validation and final publication.
             self.db.execute('BEGIN IMMEDIATE')
-            receipt = self.db.execute('SELECT token, next_position, total FROM import_snapshots WHERE source=?', (source,)).fetchone()
+            self.check_aliases(aliases, source)
+            receipt = self.db.execute('SELECT token, next_position, total, aliases FROM import_snapshots WHERE source=?', (source,)).fetchone()
             if offset == 0:
                 if receipt and receipt[0] == token and receipt[1] > 0:
                     raise ValueError('snapshot already in progress')
                 self.db.execute('DELETE FROM import_items WHERE source=?', (source,))
-                self.db.execute('INSERT OR REPLACE INTO import_snapshots VALUES (?, ?, 0, ?, ?)', (source, token, total, time.time()))
-            elif receipt != (token, offset, total):
+                self.db.execute('INSERT OR REPLACE INTO import_snapshots(source, token, next_position, total, created, aliases) VALUES (?, ?, 0, ?, ?, ?)', (source, token, total, time.time(), aliases_json))
+            elif receipt != (token, offset, total, aliases_json):
                 raise ValueError('page is not the expected continuation')
             for i, event in enumerate(events):
                 self.db.execute('INSERT INTO import_items VALUES (?, ?, ?, ?)', (source, offset + i, event['id'], canonical(event)))
             self.db.execute('UPDATE import_snapshots SET next_position=?, created=? WHERE source=?', (end, time.time(), source))
             if end == total:
+                self.register_aliases(aliases, source)
                 # No partial success/rejection set is visible to scheduling.
                 # The final page publishes the whole snapshot atomically.
                 for row in self.db.execute('SELECT body FROM import_items WHERE source=? ORDER BY position', (source,)):
                     event = json.loads(row[0])
                     self.db.execute('INSERT OR IGNORE INTO events VALUES (?, ?, ?, ?, ?, ?)',
-                                    (event['id'], source, event['at'], event['provider'], event['profile'], row[0]))
+                                    (event['id'], event['origin'], event['at'], event['provider'], event['profile'], row[0]))
                     self._retain_execution(event)
                 self.db.execute('DELETE FROM events WHERE at < ?', (time.time() - 30 * 86400,))
                 self.db.execute('DELETE FROM import_items WHERE source=?', (source,))
@@ -466,13 +513,14 @@ class Journal:
             data = event['data']
             attribution = data.get('attribution', {})
             task = attribution.get('task') or event['id']
-            task_key = (event['origin'], event['provider'], task)
+            owner = self.owner_origin(event['origin'])
+            task_key = (owner, event['provider'], task)
             if task_key in tasks:
                 continue
             tasks.add(task_key)
             identity = data.get('identity', {})
             account = identity.get('accountHash') if identity.get('status') == 'verified' else None
-            binding = account or (event['origin'], event['profile'])
+            binding = account or (owner, event['profile'])
             model_counts = data.get('modelUsage') or {data.get('model'): attribution}
             for model, counts in model_counts.items():
                 key = (event['provider'], binding, model, data.get('usageScope', 'unknown'))
@@ -483,7 +531,9 @@ class Journal:
                                    'knownTokenTasks': 0, 'unknownTokenTasks': 0,
                                    'reportedTotalTokens': 0}
                 group = groups[key]
-                route = {'origin': event['origin'], 'profile': event['profile']}
+                route = {'origin': owner, 'profile': event['profile']}
+                if event['origin'] != owner:
+                    route['observationOrigin'] = event['origin']
                 if route not in group['bindings']:
                     group['bindings'].append(route)
                 group['tasks'] += 1
@@ -496,8 +546,8 @@ class Journal:
         return {'retentionDays': 30, 'uniqueTasks': len(tasks), 'groups': list(groups.values())}
 
     def latest(self, provider, profile):
-        row = self.db.execute('SELECT body FROM events WHERE origin=? AND provider=? AND profile=? ORDER BY at DESC, id DESC LIMIT 1',
-                              (self.origin, provider, profile)).fetchone()
+        row = self.db.execute('SELECT body FROM events WHERE origin IN (?, ?) AND provider=? AND profile=? ORDER BY at DESC, id DESC LIMIT 1',
+                              (self.origin, self.local_origin, provider, profile)).fetchone()
         return json.loads(row[0]) if row else None
 
 

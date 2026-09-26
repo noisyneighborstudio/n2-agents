@@ -136,8 +136,20 @@ only the matching staged transfer; the next tick restarts it. An older response
 cannot discard a newer transfer. The older `agents usage export` command
 remains a bounded diagnostic interface; fleet sync uses the paginated protocol.
 
-Pre-enrollment evidence transfer remains fleet-completion work. An unreadable
-local journal makes measurements unavailable rather than ignoring restrictions.
+Snapshot schema 2 also declares the sender's earlier local origin UUID. An
+approved sender can link that UUID to its enrolled machine identity; it cannot
+claim another fleet identity, the receiver's local UUID, or a UUID already owned
+by another peer. This is an authenticated sender assertion, not independent
+proof of pre-enrollment provenance or provider account identity. Schema 1 pages
+remain readable and carry no local-origin declaration.
+
+The ownership link becomes visible only with the complete snapshot. Original
+event IDs, origins and observation times remain unchanged. Token summaries group
+by the owning machine while exposing an older `observationOrigin` when present.
+Later recovery can resolve a rejection from before enrollment, and replaying the
+older observation cannot undo that recovery. Imported origins are never
+re-exported as the receiving machine's own observations. An unreadable local
+journal makes measurements unavailable rather than ignoring restrictions.
 
 ## Provider identity evidence
 

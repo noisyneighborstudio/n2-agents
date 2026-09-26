@@ -295,7 +295,7 @@ class JournalTests(unittest.TestCase):
             def __exit__(self, *args): return raw.__exit__(*args)
             def execute(self, sql, args=()):
                 result = raw.execute(sql, args)
-                if sql.startswith('SELECT token, next_position, total FROM import_snapshots'):
+                if sql.startswith('SELECT token, next_position, total'):
                     rows = result.fetchall()
                     try:
                         other.import_page(other_first, 'peer-a')
@@ -308,6 +308,61 @@ class JournalTests(unittest.TestCase):
         self.assertEqual(len(attempts), 1, 'concurrent replacement must be locked before receipt validation')
         self.assertIn('locked', attempts[0])
         self.assertEqual([event['id'] for event in self.b.active_rejections()], [newer['id']])
+
+    def test_enrollment_transfers_immutable_events_and_recovery(self):
+        root = Path(self.temp.name) / 'before-fleet'
+        local = u.Journal(root)
+        original_origin = local.origin
+        now = time.time()
+        rejected = local.append('codex', 'Default', 'quota-rejected', {'status': 'restricted'}, now - 40 * 86400)
+        task = local.append('codex', 'Tokens', 'execution-succeeded',
+                            {'status': 'ok', 'attribution': {'task': 'one', 'totalTokens': 60}}, now - 10)
+        local.db.close()
+        enrolled = u.Journal(root, 'new-peer')
+        self.addCleanup(enrolled.db.close)
+        page = enrolled.export_page('peer-b')
+        self.assertEqual(page['aliases'], [original_origin])
+        self.assertIn(rejected, page['events'])
+        self.assertIn(task, page['events'])
+        self.b.import_page(page, 'new-peer')
+        self.assertEqual(self.b.active_rejections(), [rejected], 'old ID, origin and time stay unchanged')
+        summary = self.b.token_summary()
+        self.assertEqual(summary['uniqueTasks'], 1)
+        self.assertEqual(summary['groups'][0]['reportedTotalTokens'], 60)
+        self.assertEqual(summary['groups'][0]['bindings'][0]['origin'], 'new-peer')
+        self.assertEqual(summary['groups'][0]['bindings'][0]['observationOrigin'], original_origin)
+        self.assertEqual(self.b.export_page('new-peer')['total'], 0, 'foreign legacy origins cannot be relabeled')
+        enrolled.append('codex', 'Default', 'execution-succeeded', {'status': 'ok', 'startedAt': time.time()})
+        self.b.import_page(enrolled.export_page('peer-b'), 'new-peer')
+        self.assertEqual(self.b.active_rejections(), [])
+        self.b.import_page(page, 'new-peer')
+        self.assertEqual(self.b.active_rejections(), [], 'replaying pre-enrollment state cannot undo recovery')
+        self.assertEqual(sum(g['reportedTotalTokens'] for g in self.b.token_summary()['groups']), 60)
+
+    def test_local_alias_claims_are_scoped_and_cannot_change_owner(self):
+        page = self.a.export_page('peer-b')
+        self.b.import_page(page, 'peer-a')
+        alias = page['aliases'][0]
+        for aliases in [['peer-c'], [self.b.local_origin], [alias, alias]]:
+            bad = dict(page, snapshot='a' * 32, aliases=aliases)
+            with self.assertRaises(ValueError): self.b.import_page(bad, 'peer-c')
+        with self.assertRaises(ValueError): self.b.import_page(page, 'peer-c')
+        self.assertEqual(self.b.owner_origin(alias), 'peer-a')
+
+    def test_alias_registration_waits_for_complete_consistent_snapshot(self):
+        from unittest.mock import patch
+        self.a.append('codex', 'One', 'quota-rejected', {'status': 'restricted'})
+        self.a.append('codex', 'Two', 'quota-rejected', {'status': 'restricted'})
+        with patch.object(u, 'MAX_BATCH', 1):
+            first = self.a.export_page('peer-b')
+            alias = first['aliases'][0]
+            cursor = self.b.import_page(first, 'peer-a')
+            self.assertEqual(self.b.owner_origin(alias), alias)
+            last = self.a.export_page('peer-b', cursor)
+            with self.assertRaises(ValueError): self.b.import_page(dict(last, aliases=[]), 'peer-a', cursor)
+            self.assertEqual(self.b.owner_origin(alias), alias)
+            self.b.import_page(last, 'peer-a', cursor)
+            self.assertEqual(self.b.owner_origin(alias), 'peer-a')
 
     def test_symlink_database_refused(self):
         root = Path(self.temp.name) / 'linked'
