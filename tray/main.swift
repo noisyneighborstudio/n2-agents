@@ -592,25 +592,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         launchSession(sessionCommand(profile: profile, vendor: v), slug: "\(profile)-\(id)", in: spec)
     }
 
-    // Signs the slot out and back in through `agents login`, in a terminal —
-    // the labs sign in through a browser and print codes there. Confirmed
-    // first when it would discard a working login.
-    func signIn(profile: String, vendor id: String, confirm: Bool) {
-        guard let v = model.data?.snapshot.vendor(id) else { return }
-        dismissPanel()
-        if confirm {
-            let ask = NSAlert()
-            ask.messageText = "Sign \(v.label) in “\(profile)” out and back in?"
-            let current = model.data?.snapshot.account(profile, id).map { " (\($0))" } ?? ""
-            ask.informativeText = "The current \(v.label) login for this profile\(current) is removed, then a terminal opens so you can sign in with the right account. The browser uses whichever account it's already signed in to — switch it there first if needed."
-            ask.addButton(withTitle: "Sign Out and Sign In")
-            ask.addButton(withTitle: "Cancel")
-            NSApp.activate(ignoringOtherApps: true)
-            guard ask.runModal() == .alertFirstButtonReturn else { return }
+    @MainActor private lazy var signInCoordinator = SignInCoordinator()
+
+    func signIn(profile: String, vendor: String, confirm: Bool) {
+        startSignIn(profile: profile, vendor: vendor, confirmLegacy: confirm)
+    }
+
+    private func startSignIn(profile: String, vendor: String, confirmLegacy: Bool,
+                             setup: Bool = false, copyOnly: Bool = false) {
+        let cli = cliPath, environment = Self.scriptEnvironment
+        let label = model.data?.snapshot.vendor(vendor)?.label ?? vendor
+        if !copyOnly { dismissPanel() }
+        Task { @MainActor in await signInCoordinator.perform(profile: profile, vendor: vendor,
+            confirmLegacy: confirmLegacy, copyOnly: copyOnly,
+            run: { SignInPlan.run(cli: cli, environment: environment, args: $0) },
+            confirm: { plan in
+                let alert = plan.alert(profile: profile, label: label)
+                NSApp.activate(ignoringOtherApps: true)
+                return alert.runModal() == .alertFirstButtonReturn
+            }, finish: { plan in
+                let command = plan.command(cli: cli)
+                if copyOnly {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(command, forType: .string)
+                    return
+                }
+                self.launchSession(plan.terminalCommand(cli: cli, profile: profile, vendor: vendor, setup: setup),
+                                   slug: "\(profile)-\(vendor)-login", in: self.preferredTerminal)
+            }, cancelled: {
+                if setup && !copyOnly && self.setup?.model.profile == profile { self.setup?.loginFinished(vendor: vendor) }
+            }, fail: { message in
+                if setup && !copyOnly && self.setup?.model.profile == profile { self.setup?.loginFinished(vendor: vendor) }
+                let alert = NSAlert(); alert.messageText = "Sign-in unavailable"
+                alert.informativeText = message; alert.addButton(withTitle: "OK")
+                NSApp.activate(ignoringOtherApps: true); alert.runModal()
+            })
         }
-        // Whatever the outcome, tell the panel to re-read when it's over.
-        let cmd = loginCommand(profile: profile, vendor: id) + "; open -g 'n2agents://refresh'"
-        launchSession(cmd, slug: "\(profile)-\(id)-login", in: preferredTerminal)
     }
 
     func copyCommand(profile: String, vendor: String) {
@@ -674,20 +691,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         return out
     }
 
-    private func loginCommand(profile: String, vendor: String) -> String {
-        "\"\(cliPath)\" login \(profile) --vendor \(vendor)"
-    }
-
     func setupStartLogin(profile: String, vendor: String) {
-        let done = "open -g 'n2agents://login-done?profile=\(profile)&vendor=\(vendor)'"
-        launchSession(loginCommand(profile: profile, vendor: vendor) + "; " + done,
-                      slug: "\(profile)-\(vendor)-setup", in: preferredTerminal)
+        startSignIn(profile: profile, vendor: vendor, confirmLegacy: false, setup: true)
     }
 
     func setupCopyLoginCommand(profile: String, vendor: String) {
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(loginCommand(profile: profile, vendor: vendor), forType: .string)
+        startSignIn(profile: profile, vendor: vendor, confirmLegacy: false, copyOnly: true)
     }
 
     func setupPending(profile: String, labs: [String]?) {

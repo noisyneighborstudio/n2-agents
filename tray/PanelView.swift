@@ -728,7 +728,11 @@ private struct SlotActions: View {
             if !vendor.desktopName.isEmpty, let dir = data.snapshot.desktopDir(profile.name, vendor.id) {
                 pathRow("Copy \(vendor.desktopName) data folder", dir)
             }
-            if let account = data.snapshot.account(profile.name, vendor.id) {
+            if vendor.id == "codex" {
+                ActionRow(title: "Sign in…", icon: "key") {
+                    actions.signIn(profile: profile.name, vendor: vendor.id, confirm: true)
+                }
+            } else if let account = data.snapshot.account(profile.name, vendor.id) {
                 ActionRow(title: account, icon: "person.crop.circle", trailing: "Sign in again…") {
                     actions.signIn(profile: profile.name, vendor: vendor.id, confirm: true)
                 }

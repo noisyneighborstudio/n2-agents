@@ -26,6 +26,7 @@ python3 scripts/test-usage-reader.py ReaderTests.test_current_claude_limits_excl
 python3 scripts/test-fleet-session.py
 
 sh scripts/test-account-ownership.sh
+sh scripts/test-native-signin.sh
 sh scripts/test-fleet-settings.sh
 
 exec python3 scripts/test-codex-rpc.py ParentLifetimeTests

@@ -40,6 +40,8 @@ for line in sys.stdin:
         if mode=='login-bad-url':result['verificationUrl']='https://other.invalid/device'
         print(json.dumps({'id':request['id'],'result':result}),flush=True)
         if mode in ('login-cancel','login-timeout','login-bad-url'):continue
+        if settings.get('loginGate'):
+            with open(settings['loginGate'],'rb') as gate:assert gate.read(1)==b'g'
         if settings.get('loginDelay'):time.sleep(settings['loginDelay'])
         path=home/'auth.json'
         path.write_text(json.dumps({'tokens':{'access_token':'original-secret','account_id':'workspace'}}))
