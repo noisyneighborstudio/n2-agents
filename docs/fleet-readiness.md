@@ -484,3 +484,26 @@ failures or skips; 639 sync checks across all 75 sections; 97 execution checks;
 and native UI parser/action checks. The final QA package matches the source and
 passes all 19 codec/transport tests. Scoped reviews are clear after rejecting
 stale-generation responses. No live provider credential was used or renewed.
+
+### Private owner grant state
+
+The internal owner store now serializes grant operations across processes and
+persists `renewing` before allowing a native provider attempt. Requests rejecting
+a known older generation reuse the replacement; unknown generations cannot
+rotate the grant. Activation and renewal completion require an account check
+bound to the exact credential-file revision. Retirement fences old bindings
+across ordinary restart, without claiming rollback-resistant transfer.
+
+Fifteen disposable state tests cover process concurrency, crash recovery,
+consent, account and ownership mismatches, private-file validation, changed
+credentials and persistence failure. Eight competing processes produce one
+simulated provider attempt and receive the same replacement generation. These
+fixtures do not authenticate to a provider. Native verification/refresh,
+login/reset, migration, the owner endpoint and the production runner connection
+remain required before this can renew real fleet credentials.
+
+Scoped correctness and security review is clear after fixing parent-directory
+persistence during store/grant creation. All 15 owner tests pass from source and
+from the ad-hoc QA package, with helper byte parity verified. The adjacent 12
+codec and seven transport tests also pass. No app was installed and no live
+credential was read or renewed for this state-layer verification.

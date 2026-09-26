@@ -240,3 +240,34 @@ state, renewal and response signing still need to be connected on the server.
 The client transport does not substitute for these checks. The synthetic SSH
 fixture exercises real fleet request verification and signed token responses;
 it does not establish live provider renewal.
+
+## Private owner grant state
+
+`fleet-auth-owner.py` provides a private store with a process lock per grant.
+New grants start with an empty Codex home and remain `pending-login` until the
+integration verifies the exact stored access token and supplies its account hash
+and credential-file revision. It never imports a legacy profile login. The
+production caller must locate this store outside synchronized profile trees.
+
+Each grant records explicit peer consent, its owner and ownership generation,
+verified account, token generation and bounded previous-generation history.
+Rejecting the current token persists `renewing` before permitting one provider
+attempt. Concurrent requests rejecting that same generation then use the
+verified replacement. Unknown generations cannot trigger a refresh. A restarted
+owner cannot repeat an uncertain attempt; it must independently verify changed,
+persisted credentials or require reauthentication. An unchanged access token
+cannot complete renewal.
+
+State replacement uses a private temporary file, file sync, atomic rename and
+directory sync. Store and grant creation also sync their parent directory entries
+before acknowledging success. Persistence errors invalidate the in-memory session. The process
+lock has a deadline and is never stolen. Retirement changes the ownership
+generation and removes consent. This survives ordinary process restart; it does
+not provide rollback-resistant ownership transfer or authorize restoring a grant
+from backup.
+
+The store accepts trusted verification results from its caller. It does not
+perform provider verification, invoke native refresh, implement login/reset,
+serve `auth-token`, or connect production execution to renewal. Those integration
+steps remain required. The tests use disposable credentials and synthetic
+verification results, including concurrent processes and abrupt process death.

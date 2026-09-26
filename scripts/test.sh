@@ -751,5 +751,6 @@ python3 scripts/test-profile-metadata.py
 python3 scripts/test-profile-routing.py
 python3 scripts/test-fleet-auth-response.py
 python3 scripts/test-fleet-auth-transport.py
+python3 scripts/test-fleet-auth-owner.py
 
 echo "All tests passed"
