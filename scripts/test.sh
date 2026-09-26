@@ -714,7 +714,7 @@ pgids=(${(f)"$(field '"\n".join(str(t["pgid"]) for t in s["turns"] if t["role"] 
 loop pause "$run" >/dev/null
 [ "$(field 's["status"]')" = PAUSED ]
 [[ "$(field 's["reason"]')" == "paused by you"* ]]
-[ "$(field '{t["outcome"] for t in s["turns"] if t["role"] == "worker"}')" = "{'interrupted'}" ]
+[ "$(field '{t["outcome"] for t in s["turns"] if t["role"] == "worker"}')" = "{'interrupted'}" ] || { field '[{k: t.get(k) for k in ("id", "role", "outcome", "note", "startedAt", "endedAt", "pgid")} for t in s["turns"] if t["role"] == "worker"]' >&2; exit 1; }
 for g in $pgids; do ! kill -0 -"$g" 2>/dev/null; done
 rm "$loop_fake/slow"
 loop resume "$run" >/dev/null

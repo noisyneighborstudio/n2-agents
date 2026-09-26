@@ -892,3 +892,21 @@ A native Codex 0.157.1 TUI probe reached the private owner bridge and attempted
 account bootstrap. It stopped because the synthetic provider account response
 lacks the required `planType` field. This is a fixture-contract gap; the probe
 does not establish native TUI acceptance or a production bridge defect.
+
+
+### Concurrent loop process descriptors
+
+The full suite exposed a real pause/concurrency defect: one slow worker finished
+before the second worker launched. POSIX-spawned agents inherited unrelated
+Foundation pipe writers, preventing synchronous Git reads from reaching EOF until
+the worker exited. A deterministic reproduction and independent review confirmed
+the mechanism. Both spawn paths now use `POSIX_SPAWN_CLOEXEC_DEFAULT` with explicit
+standard-stream file actions. Foreground and detached turn tests and detached
+controller tests prove unrelated inheritable descriptors are closed. The bound
+worker suite and full repository suite pass with this fix; the pause assertion
+remains unchanged and now prints worker outcomes if it fails.
+
+The temporary checkout and logs disappeared during a runtime interruption. The
+pushed work was restored at `/Users/sethwebster/Development/n2-agents-fleet-ready`.
+The interrupted diagnostic run has no claimed result. Subsequent verification
+logs and native compatibility artifacts use durable storage.

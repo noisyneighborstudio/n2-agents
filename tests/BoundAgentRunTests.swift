@@ -14,6 +14,31 @@ func waitForBoundProvider(_ started: URL) throws -> pid_t {
         let root = fm.temporaryDirectory.appendingPathComponent("n2-bound-loop-\(UUID().uuidString)")
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: root) }
+        // Leaking another thread's pipe write end blocks its EOF until this
+        // agent exits, serializing workers and preventing timely pause.
+        do {
+            var descriptors: [Int32] = [0, 0]
+            precondition(pipe(&descriptors) == 0)
+            let extra = fcntl(descriptors[1], F_DUPFD, 200)
+            precondition(extra >= 200)
+            defer { close(descriptors[0]); close(descriptors[1]); close(extra) }
+            let program = "import os,sys\ntry: os.fstat(int(sys.argv[1])); print('inherited')\nexcept OSError: print('closed')"
+            let argv = ["/usr/bin/python3", "-c", program, String(extra)]
+            let output = root.appendingPathComponent("descriptor-output").path
+            for detach in [false, true] {
+                let result = try spawnAndWait(argv, cwd: root.path, stdin: "/dev/null", stdout: output,
+                    stderr: root.appendingPathComponent("descriptor-error").path, timeout: 5, detach: detach, abort: Flag())
+                precondition(result.0 == 0)
+                let captured = try String(contentsOfFile: output, encoding: .utf8)
+                precondition(captured == "closed\n", "turn inherited unrelated pipe")
+            }
+            let log = root.appendingPathComponent("descriptor-detached").path
+            let pid = try spawnDetached(argv, log: log)
+            var status: Int32 = 0
+            precondition(waitpid(pid, &status, 0) == pid && status == 0)
+            let captured = try String(contentsOfFile: log, encoding: .utf8)
+            precondition(captured == "closed\n", "controller inherited unrelated pipe")
+        }
         let profiles = root.appendingPathComponent("profiles")
         let home = profiles.appendingPathComponent("Test/codex")
         try fm.createDirectory(at: home, withIntermediateDirectories: true)

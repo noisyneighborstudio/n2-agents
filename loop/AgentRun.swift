@@ -108,7 +108,10 @@ func spawnAndWait(_ argv: [String], cwd: String, stdin: String, stdout: String, 
     var attr: posix_spawnattr_t? = nil
     posix_spawnattr_init(&attr)
     defer { posix_spawnattr_destroy(&attr) }
-    if detach { posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSID)) }
+    // A concurrent Foundation Process may own Git output pipes or locks.
+    // Keep only descriptors installed by our explicit file actions.
+    let flags = Int16(POSIX_SPAWN_CLOEXEC_DEFAULT) | (detach ? Int16(POSIX_SPAWN_SETSID) : 0)
+    posix_spawnattr_setflags(&attr, flags)
 
     var pid: pid_t = 0
     let cargs = argv.map { strdup($0) } + [nil]
@@ -181,7 +184,7 @@ func spawnDetached(_ argv: [String], log: String) throws -> pid_t {
     var attr: posix_spawnattr_t? = nil
     posix_spawnattr_init(&attr)
     defer { posix_spawnattr_destroy(&attr) }
-    posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSID))
+    posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSID) | Int16(POSIX_SPAWN_CLOEXEC_DEFAULT))
     var pid: pid_t = 0
     let cargs = argv.map { strdup($0) } + [nil]
     defer { cargs.forEach { free($0) } }
