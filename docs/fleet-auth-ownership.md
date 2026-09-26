@@ -310,3 +310,38 @@ kills the process group before exiting, so recovery cannot acquire the lock
 while the prior native operation remains active. The process-death fixture kills
 the owner after credential persistence, confirms recovery is blocked during the
 native operation, and then verifies the saved replacement without another refresh.
+
+## Authenticated owner endpoint
+
+The `auth-token` fleet handler now calls `fleet-auth-server.py` with the sender
+returned by ordinary fleet signature, addressing, approval and replay checks.
+The handler requires an SSH session. Local `exec` delivery is refused; the
+client also requires its pinned SSH carrier. SSH session environment is a local
+entry-point guard, not an additional authentication mechanism against the local
+OS user.
+
+The endpoint binds the request recipient to the authenticated sender and the
+owner to its local fleet key. It rechecks roster approval, public-key identity
+and revocation before opening `fleet/auth-owners/<grantId>`, outside profile
+sync trees. Under the grant lock, the native owner checks grant consent,
+ownership generation, expected account and rejected token generation. Replies
+are signed and returned in memory. Approval is checked again after signing and
+before bytes leave the helper. These checks do not establish a revocation lease.
+
+Secret replies bypass `fleet_ok`, ordinary reply decoding and reply temporary
+files. Only the public signed request is spooled by the existing receiver.
+Endpoint failures emit a fixed diagnostic. The caller still must verify the
+returned token against the provider before using it for execution.
+
+Seven endpoint tests use real fleet envelope signatures with a synthetic SSH
+carrier and disposable native provider fixture. They cover initial fetch,
+renewal, stale-generation reuse, missing grant consent, wrong account/recipient,
+unknown grant, non-SSH delivery and revocation during signing. They do not prove
+live provider recovery. Profile-to-grant registration, login/reset, migration
+and the production runner connection remain required.
+
+Generic `fleet_call` refuses `auth-token` before creating reply files or dialing.
+Both that path and envelope construction require canonical lowercase/hyphen
+verbs, preventing newline and shell-escape spellings from bypassing the private
+carrier guard. Envelope recipients reject framing characters. The exec carrier
+clears inherited SSH session variables before starting its local receiver.

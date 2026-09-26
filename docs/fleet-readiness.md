@@ -528,3 +528,25 @@ Scoped correctness/security review is clear after fixing lock lifetime across
 owner death. All eight native tests pass against source and packaged helpers,
 with byte parity verified. The 31 existing protocol tests, 12 bound-runner tests
 and 15 grant-state tests pass. The ad-hoc QA build succeeds and was not installed.
+
+### Authenticated owner endpoint
+
+The signed fleet `auth-token` handler now enforces sender/recipient and owner
+identity, current peer approval/key/revocation, grant consent, ownership generation
+and expected account. It invokes the native owner under the grant lock and signs
+the token response in memory. Non-SSH delivery is refused; token replies bypass
+the ordinary reply-file path. Approval is rechecked after signing.
+
+Seven synthetic endpoint tests pass through real signed fleet dispatch for fetch,
+renewal and stale-generation reuse. They also cover consent/account/recipient
+mismatch, unknown grants, non-SSH delivery and revocation during signing. No live
+provider credentials are involved. Profile-to-grant registration, login/reset,
+migration and production execution integration remain required.
+
+Scoped correctness/security review is clear after rejecting token verbs in the
+generic spooling client and rejecting malformed verb/header spellings. Seven
+endpoint and seven transport tests pass. The final QA build passes; all seven
+endpoint tests pass with packaged helper byte parity. That packaged fixture
+omits only the QA root-redirection marker to retain disposable peer roots.
+The complete fleet regression is running separately and is not claimed complete
+for this checkpoint.

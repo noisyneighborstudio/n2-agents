@@ -61,7 +61,8 @@ class TransportTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='n2-auth-wire-'); self.addCleanup(self.temp.cleanup)
         self.base = Path(self.temp.name); self.identities = {}
-        self.env = patch.dict(os.environ, {'FIXTURE_ROOT': str(self.base), 'FIXTURE_REPO': str(ROOT), 'N2_FLEET_QA': ''})
+        fixture_home = self.base/'home'; fixture_home.mkdir()
+        self.env = patch.dict(os.environ, {'FIXTURE_ROOT': str(self.base), 'FIXTURE_REPO': str(ROOT), 'N2_FLEET_QA': '', 'HOME': str(fixture_home)})
         self.env.start(); self.addCleanup(self.env.stop)
         for name in ('client','owner'):
             root = self.base/name

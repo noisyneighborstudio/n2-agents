@@ -222,6 +222,8 @@ fleet_event() {  # fleet_event <kind> <detail…>   — never carries secret val
 
 fleet_envelope() {  # fleet_envelope <to> <verb> <payload-file> ; writes message to stdout
   to=$1 verb=$2 pf=${3:-/dev/null}
+  case $verb in ''|*[!a-z-]*) echo "ERR malformed-verb" >&2; return 1 ;; esac
+  case $to in ''|*[!A-Za-z0-9:+/=_.-]*) echo "ERR malformed-recipient" >&2; return 1 ;; esac
   from=$(fleet_self_id) || fleet_die "no fleet identity (run: agents fleet init)"
   tmpd=$(mktemp -d "${TMPDIR:-/tmp}/n2fleet.XXXXXX") || fleet_die "mktemp failed"
   b64=$tmpd/b64
@@ -387,6 +389,13 @@ fleet_serve() {
   fi
   rm -rf "$fsd"
   return $fsrc
+}
+
+# Token replies bypass fleet_ok and its reply files. Only the verified sender
+# enters this helper; local/exec serve routes are not confidential carriers.
+fleet_handle_auth_token() {
+  [ -n "${SSH_CONNECTION:-}" ] || { echo "ERR encrypted-carrier-required" >&2; return 1; }
+  python3 "$scripts_dir/fleet-auth-server.py" "$root" "$1" "$2"
 }
 
 fleet_handle_ping() { printf 'pong %s %s\n' "$(fleet_self_machine)" "$(fleet_self_id)" > "$3/out"; fleet_ok "$3/out"; }
@@ -713,7 +722,7 @@ fleet_carry() {  # fleet_carry <peerdir> ; message on stdin, reply on stdout
     exec)
       [ "${N2_FLEET_AUTH_CARRIER:-}" != 1 ] || return 1
       home=$(fleet_meta "$d" home) || return 1
-      env HOME="$home" N2_FLEET_AGENTS="$(fleet_agents_cmd)" \
+      env SSH_CONNECTION= SSH_CLIENT= SSH_TTY= HOME="$home" N2_FLEET_AGENTS="$(fleet_agents_cmd)" \
         "$(fleet_agents_cmd)" fleet serve 2>"$(fleet_carry_err)"
       ;;
     tailscale|ssh)
@@ -742,6 +751,8 @@ fleet_carry() {  # fleet_carry <peerdir> ; message on stdin, reply on stdout
 
 fleet_call() {  # fleet_call <peerid> <verb> [payload-file] -> payload on stdout
   pid=$1 verb=$2 pf=${3:-/dev/null}
+  case $verb in ''|*[!a-z-]*) echo "ERR malformed-verb" >&2; return 1 ;; esac
+  [ "$verb" != auth-token ] || { echo "ERR private-carrier-required" >&2; return 1; }
   d=$(fleet_peer_dir "$pid")
   [ -d "$d" ] || { echo "ERR unknown-peer" >&2; return 1; }
   fleet_approved "$pid" || { echo "ERR not-approved" >&2; return 1; }

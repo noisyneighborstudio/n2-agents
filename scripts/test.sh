@@ -753,5 +753,6 @@ python3 scripts/test-fleet-auth-response.py
 python3 scripts/test-fleet-auth-transport.py
 python3 scripts/test-fleet-auth-owner.py
 python3 scripts/test-fleet-auth-native.py
+python3 scripts/test-fleet-auth-server.py
 
 echo "All tests passed"
