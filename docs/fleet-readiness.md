@@ -149,3 +149,16 @@ finish before links were cut. It now blocks the worker's return notification too
 proves the dispatcher remains unreachable after worker completion, and requires
 reconciliation to recover the result. Independent reviews are clear. The native
 parser/action suite also passes; native GUI end-to-end verification remains open.
+
+The native usage panel now reads structured observations, including every limit
+bucket, verified measurement account, restriction reset and credit/spend evidence.
+Provider restrictions contribute zero runnable headroom without inventing a
+utilization percentage. Unknown readings have a Refresh action instead of a
+false signed-out or exhausted label. Model tests cover restricted/healthy and
+restricted/unknown combinations, malformed data, missing timestamps and resets,
+and model-specific limits. The full regression suite and focused usage suites
+pass. Independent correctness and security reviews are clear for this scope.
+The actual SwiftUI detail component was rendered at 360 points and visually
+inspected with synthetic evidence. The QA app package builds and validates with
+ad-hoc signing; it was not installed. This component check does not complete the
+remaining native fleet notification and end-to-end GUI acceptance checks.

@@ -18,7 +18,7 @@ let package = Package(
             path: "tray",
             exclude: ["build"],
             sources: ["main.swift", "UpdateChannel.swift", "ShellPath.swift", "Vendors.swift", "ProfileColor.swift", "StatusIcon.swift", "QuotaToast.swift", "Ink.swift", "LabMark.swift", "ProfileSetup.swift", "GlassWindow.swift",
-                      "PanelModel.swift", "PanelView.swift", "SettingsWindowView.swift", "FleetSyncSettings.swift", "FleetSettingsLoader.swift", "Hotkey.swift", "FleetModel.swift", "FleetView.swift", "FleetControl.swift"],
+                      "PanelModel.swift", "UsageDetailsView.swift", "PanelView.swift", "SettingsWindowView.swift", "FleetSyncSettings.swift", "FleetSettingsLoader.swift", "Hotkey.swift", "FleetModel.swift", "FleetView.swift", "FleetControl.swift"],
             // Sparkle.framework ships in Contents/Frameworks; without this rpath
             // dyld cannot find it and the app dies before main().
             linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]

@@ -343,6 +343,13 @@ private struct NextBestButton: View {
                 }
             }
             .buttonStyle(RowButtonStyle(radius: 8, border: true))
+        case .usageUnavailable?:
+            Button { actions.retryUsage() } label: {
+                row(icon: "arrow.clockwise", iconColor: Ink.secondary, title: "Usage unavailable") {
+                    Text("Refresh").foregroundStyle(Ink.link)
+                }
+            }
+            .buttonStyle(RowButtonStyle(radius: 8, border: true))
         case .nothingSignedIn?:
             row(icon: "bolt.slash", iconColor: Ink.secondary, title: "Nothing is signed in") { EmptyView() }
                 .background(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.12)))
@@ -690,15 +697,8 @@ private struct SlotActions: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if let u = usage, u.note == .ok, u.isFresh {
-                if let five = u.fiveHour {
-                    MeterRow(label: "5h", percent: five,
-                             meta: u.resets.map(clockTime) ?? "", delay: 0)
-                }
-                if let seven = u.sevenDay {
-                    MeterRow(label: u.longWindow, percent: seven,
-                             meta: u.sevenResets.map(clockTime) ?? "", delay: 0)
-                }
+            if let u = usage {
+                UsageDetailsView(usage: u)
             }
 
             group("Start", "bolt")
@@ -961,7 +961,7 @@ private struct CapacitySegment: View {
     let namespace: Namespace.ID
 
     private var used: Int? { usage?.used }
-    private var maxed: Bool { (used ?? 0) >= Usage.maxedAt }
+    private var maxed: Bool { usage?.maxed ?? false }
 
     var body: some View {
         VStack(spacing: 3) {
@@ -980,7 +980,9 @@ private struct CapacitySegment: View {
         var parts = [vendor.label]
         if !vendor.hasUsageAPI { parts.append("no quota API") }
         else if signedOut { parts.append("not signed in") }
-        else if let u = used { parts.append(u >= Usage.maxedAt ? "maxed" : "\(u)% used") }
+        else if maxed { parts.append(usage?.note == .restricted ? "provider restriction" : "at N2 scheduling reserve") }
+        else if let u = used { parts.append("\(u)% used") }
+        else { parts.append("usage unavailable") }
         return parts.joined(separator: " · ")
     }
 
@@ -991,6 +993,9 @@ private struct CapacitySegment: View {
         } else if signedOut {
             Capsule().fill(Ink.amber.opacity(0.18))
                 .overlay(Capsule().strokeBorder(Ink.amber.opacity(0.45)))
+        } else if maxed, usage?.note == .restricted {
+            Capsule().fill(maxedRed.opacity(0.18))
+                .overlay(Capsule().strokeBorder(maxedRed))
         } else if let u = used {
             Gauge(percent: u)
         } else if sweeping {

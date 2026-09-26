@@ -333,8 +333,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: slow)
         DispatchQueue.global(qos: .utility).async {
             let fresh = Dictionary(uniqueKeysWithValues: vendors.map { v in
-                let r = self.runCLI(["best", "--porcelain", "--vendor", v.id])
-                return (v.id, r.status == 0 ? Usage.parse(r.output, longWindow: v.longWindow) : [:])
+                let r = self.runCLI(["best", "--json", "--vendor", v.id])
+                return (v.id, r.status == 0 ? Usage.parseJSON(r.output, provider: v.id, longWindow: v.longWindow) : [:])
             })
             DispatchQueue.main.async {
                 self.model.usageLoading = false
