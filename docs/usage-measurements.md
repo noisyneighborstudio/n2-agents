@@ -66,9 +66,10 @@ rejection without windows, overage semantics, credential routing and numeric
 validation. A live read on September 25 matched Default's 72% weekly use and
 ExpoIO's exhausted weekly limit. This validates those Codex observations only.
 
-Account/workspace verification, verified account attribution of execution failures, application
-of shared rejections to scheduling, and verified account attribution of task tokens remain tracked in
-[fleet readiness](fleet-readiness.md). Grok, Muse and Cursor still use their
+The [current evidence matrix](audits/usage-binding-attribution-2026-09-27.md)
+distinguishes verified Codex execution receipts and signed fleet replication from
+unverified execution routes and missing fresh physical-fleet observations.
+Remaining acceptance stays tracked in [fleet readiness](fleet-readiness.md). Grok, Muse and Cursor still use their
 existing collectors; their limitations have not been resolved by this change.
 
 ## Primary references
@@ -94,7 +95,9 @@ Matching profile names on different machines remain separate bindings.
 The bounded `agents usage record --provider <provider> --profile <profile>
 --kind quota-rejected` interface accepts structured JSON on stdin. It rejects
 unknown fields, including nested credential fields. The loop records quota rejections and successful turns automatically, with its
-local task reference and requested Claude model where known. Verified account attribution of loop outcomes remains open; token and provider-session fields are populated when the provider reports them. Recorded
+local task reference and requested Claude model where known. Account-bound Codex outcomes carry verified identity only after receipt validation.
+Claude and legacy unbound outcomes retain unknown account identity; token and
+provider-session fields are populated when the provider reports them. Recorded
 rejections now constrain subsequent usage reads and loop selection. An unknown
 account identity remains unknown; recording or replicating an observation does
 not verify it.
@@ -115,10 +118,9 @@ retains the latest of those times so a waiting loop can recheck it.
 
 A verified account match applies a peer's rejection even when the local profile
 has a different name. Without verified identity, a rejection applies only to its
-originating local route. Enrollment preserves earlier local constraints. Loop
-outcomes still lack verified account attribution, so ordinary loop failures
-currently propagate as diagnostic evidence but only block that local route.
-Imported, verified outcome evidence is covered by synthetic cross-peer tests.
+originating local route. Enrollment preserves earlier local constraints. Account-bound Codex outcomes can constrain matching verified accounts across
+profiles. Unverified Claude and legacy outcomes constrain only their local route.
+Signed cross-peer tests cover verified rejection transfer and recovery ordering.
 
 Fleet transfer freezes a recipient-bound snapshot of durable execution state and
 retained diagnostic history, including recovery records that prevent replay from
@@ -158,8 +160,11 @@ of the backend origin, selected `chatgptAccountId`, and CLI-reported login. User
 in the same workspace remain separate. Missing routing remains `login-only`;
 N2 never substitutes a profile label for a workspace. The local Codex 0.155.1
 probe on September 25 returned login-only for both measured profiles. Default
-reported 75% weekly use and ExpoIO 100%, so this host has not established live
-workspace verification through that field.
+reported 75% weekly use and ExpoIO 100%. That historical probe did not establish
+workspace verification. The September 26 Codex 0.157.1
+[bound live turn](audits/codex-bound-live-2026-09-26.json) and
+[quota rejection](audits/codex-bound-restriction-2026-09-26.json) did retain verified
+account receipts. Neither establishes fresh headroom today.
 
 Claude login hints come from `claude auth status --json` with the same literal
 `CLAUDE_CONFIG_DIR` used for launch and measurement. Email and organization in

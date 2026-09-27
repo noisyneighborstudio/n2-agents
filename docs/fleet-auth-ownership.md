@@ -1,8 +1,10 @@
 # Codex renewal ownership
 
 Implementation plan for the authentication-lifecycle requirement in PR #3.
-Current N2 execution pins an existing access token. It cannot renew that token.
-This plan does not change live profiles or migrate credentials.
+Owner storage and native renewal are now implemented with isolated tests.
+Migration and live lifecycle acceptance remain incomplete; see
+[fleet readiness](fleet-readiness.md). The sections below retain the design
+requirements, not a claim that all requirements have passed acceptance.
 
 ## Provider constraints
 
