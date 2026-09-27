@@ -1137,3 +1137,14 @@ different account eligible. An older-started task or another model's success
 cannot clear it; qualifying later recovery survives replay. This adds physical
 transport evidence to the existing paging/retention tests. Live identity and
 provider measurements remain separate, outstanding requirements.
+
+
+## Packaged allowance and spending details
+
+The [isolated packaged limit proof](audits/packaged-limit-details.md) renders
+Codex model restrictions, multiple allowance buckets, known/unknown resets and
+credit balance without fabricating utilization. A restricted Default profile
+leaves a healthy Other selectable. Claude's extra-usage spending status remains
+visible separately from its model allowance; included allowance at 40% stays
+selectable. These are synthetic parser/presentation checks with an unchanged
+native binary, not live provider identity or limit-contract acceptance.

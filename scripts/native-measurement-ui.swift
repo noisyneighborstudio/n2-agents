@@ -34,6 +34,8 @@ if mode == "ocr" {
     request.recognitionLevel = .accurate
     try VNImageRequestHandler(url: URL(fileURLWithPath: expected)).perform([request])
     print((request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n"))
+} else if mode == "short-date" {
+    print(Date(timeIntervalSince1970: Double(expected)!).formatted(date: .abbreviated, time: .shortened))
 } else if mode == "date" {
     print(Date(timeIntervalSince1970: Double(expected)!).formatted(date: .abbreviated, time: .standard))
 } else if mode == "dump" {

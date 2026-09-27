@@ -1,0 +1,38 @@
+{
+  "sourceBase": "b4d80283cb59eaf86d6f676728d5341cd54c8861",
+  "positiveRoot": "/private/tmp/n2-package-measurements-_vli_ju8",
+  "negativeRoot": "/private/tmp/n2-package-measurements-8k9fpln3",
+  "negativeAssertion": "missing label: Restricted for new work",
+  "negativeExitCode": 1,
+  "syntheticProvider": true,
+  "networkDenied": true,
+  "installed": false,
+  "cases": [
+    "preserve model restriction, three buckets, mixed resets and zero credit balance",
+    "select Codex Other34 while Default remains restricted",
+    "show Claude spend note separately from the 98 percent scheduling reserve",
+    "select Claude Default40 despite extra-usage spending limit"
+  ],
+  "passed": true,
+  "files": {
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/packaged-limit-details/limit-protocol.json": "6fccbf5be9271aa69c6926713113cf593d77f7b11e681db243665c8923269533",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/packaged-limit-details/limits.ocr.txt": "58c2a58c8fb98f3f9cbfbbb70426e026626ff54ece08d82bc97497a3db5a5b5d",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/packaged-limit-details/limits.png": "c9f8db31f527c0f86df38e400d8562297a699545879df02be47fa191cbc6e8af",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/packaged-limit-details/limits.txt": "210c65d313ec23ec9008b705a7ac0ca6e05e6726aa3faa1dc419788da22f20f6",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/packaged-limit-details/partial.ocr.txt": "48d99ff8a433a22c648c20fa4bb8757e2f19082c9e508342691e259f5fabc0b1",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/packaged-limit-details/partial.png": "13b2b203abf7b2c90148cd6bb110b957deaed9fb61810bed3f399f29b571e1ab",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/packaged-limit-details/partial.txt": "6e6b8eab478e4b80d2d693f22bc2d8934ae1661864bc50c9b34fd0139254bc4d",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/packaged-limit-details/prelaunch-cleanup.json": "cc3e6f20760dcb7858d557f5234342ae4b5cba0a305f04ddd292e03776c037a8",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/packaged-limit-details/receipt.json": "2d5231b6dad1760eff17f40b9a9938849f3774ed9a4087fae08ae6ed0a39da4c",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/packaged-limit-details/responses-limits": "455bbf1adf9d1c8f2f6cea1b026d930a165d0e0223d79d98cfbd6f52ce5d106a",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/packaged-limit-details/responses-partial": "7b16934335bdbd7d9c461085cee996a6a1cb3ce5bf142307d3a32f9e2d7bbdf7",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/packaged-limit-details/responses-spend": "1cb8ca04d927ec8490083cb3afc474f73ac42d4e31265afdf938689b524ada86",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/packaged-limit-details/responses-spend-only": "38ce20a60f58c0bdf7c6ee446b8c4683cdb2c55ff76400ec5be8e0ac1a3e23dc",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/packaged-limit-details/spend-only.ocr.txt": "e59c883931a4c89d84d6621d0607528215367118a717bb50d1d60d4ca4caa189",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/packaged-limit-details/spend-only.png": "d03c56786c7fce7e301ed0e8648048544b2b2f620581961b2c1b7e7ba29cd6aa",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/packaged-limit-details/spend-only.txt": "a0e0320a5ceb1f949022078eed91d9318242805ab3c592a4eebaf5e592d8c72e",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/packaged-limit-details/spend.ocr.txt": "1e248fc06adf75bef44d08a258d9f866fb3f514192f1b8d864874d0c0bd3dd41",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/packaged-limit-details/spend.png": "cae77188667de20507cd607497bc9dbec0ba5c7646ccc59fa98569a314990c14",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/packaged-limit-details/spend.txt": "6042b1561adeae8a93fe94158b136602293d842fe934bba50a7be17ddd4b38e8"
+  }
+}
