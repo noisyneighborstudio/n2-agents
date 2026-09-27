@@ -217,12 +217,14 @@ final class ProfileSetup: NSObject, NSWindowDelegate {
         model.authSession?.cancel()
         let session = host?.setupStartLogin(profile: model.profile, vendor: vendor)
         model.authSession = session
-        session?.onFinish = { [weak self] status in
-            self?.loginFinished(vendor: vendor, succeeded: status == 0)
+        session?.onFinish = { [weak self, weak session] status in
+            guard let self, let session, self.model.authSession === session else { return }
+            self.loginFinished(vendor: vendor, succeeded: status == 0)
         }
     }
 
-    func tryAgain(_ vendor: String) {
+    func reopenLogin(_ vendor: String) {
+        guard !closed, model.states[vendor] == .signingIn || model.states[vendor] == .failed else { return }
         model.states[vendor] = .signingIn
         startLogin(vendor)
     }
@@ -428,9 +430,10 @@ private struct LabRow: View {
                 Text(verbatim: label).font(.system(size: 13, weight: .medium))
                 Text(detail).font(.system(size: 11)).foregroundStyle(Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                if state == .failed {
+                if state == .signingIn || state == .failed {
                     HStack(spacing: 6) {
-                        Button("Try again") { actions.tryAgain(lab) }
+                        Button(state == .signingIn ? "Reopen" : "Try again") { actions.reopenLogin(lab) }
+                            .help("Restart sign-in for this provider and profile")
                         Button("Copy command") { actions.copyCommand(lab) }
                     }
                     .controlSize(.small)
