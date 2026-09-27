@@ -53,6 +53,7 @@ chmod +x "$fake_bin/security"
 fake_path="$fake_bin:/usr/bin:/bin"
 
 # --- syntax ----------------------------------------------------------------
+python3 tests/ReonboardTests.py
 sh -n agents vendors.sh shell/agent-as
 zsh -n install.sh uninstall.sh tray/build.sh \
   scripts/release-build.sh scripts/make-appcast.sh scripts/release-prepare.sh \

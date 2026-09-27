@@ -325,6 +325,7 @@ protocol PanelActions: AnyObject {
     func closeSessions()
     func showSettings()
     func closeSettings()
+    func reonboardAccounts()
     func installCLI() -> String
     func addVendor(profile: String)
     func deleteProfile(_ name: String)
