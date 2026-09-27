@@ -15,9 +15,11 @@ chunk=$(printf '%s\n' "$prompt" | sed -n 's/^CHUNK: //p' | head -1)
 profile=$(basename "$(dirname "$CODEX_HOME")")
 echo "$role ${chunk:-} $profile" >> "$LOOP_FAKE/calls"
 
-left=$(cat "$LOOP_FAKE/worker-quota-$profile" 2>/dev/null || echo 0)
-if [ "$role" = worker ] && [ "$left" -gt 0 ]; then
-  echo $((left - 1)) > "$LOOP_FAKE/worker-quota-$profile"
+# Workers run concurrently: take one from the counter under a lock, or two
+# turns can spend the same count and the test sees extra quota failures.
+if [ "$role" = worker ] && [ -f "$LOOP_FAKE/worker-quota-$profile" ] &&
+   /usr/bin/lockf "$LOOP_FAKE/worker-quota.lock" /bin/sh -c '
+     left=$(cat "$1"); [ "$left" -gt 0 ] || exit 1; echo $((left - 1)) > "$1"' sh "$LOOP_FAKE/worker-quota-$profile"; then
   echo "ERROR: You've hit your usage limit. Try again in 2 seconds." >&2
   exit 1
 fi

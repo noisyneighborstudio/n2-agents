@@ -693,6 +693,18 @@ wait_for DONE
 [ "$(field '{c["lastSlot"] for c in s["plan"]["chunks"]}')" = "{'codex|Work'}" ]
 [ "$(field 'max(c["revisions"] for c in s["plan"]["chunks"])')" = 0 ]
 
+# The fake's quota counter is shared by concurrent workers: n in, exactly n out.
+race=$(mktemp -d "$loop_root/race.XXXXXX"); mkdir -p "$race/P/codex"; echo 4 > "$race/worker-quota-P"
+racers=()
+for _ in {1..12}; do
+  ( cd "$race"; rc=0
+    printf 'ROLE: worker\nCHUNK: r\n' | LOOP_FAKE=$race CODEX_HOME=$race/P/codex "$loop_root/bin/codex" >/dev/null 2>&1 || rc=$?
+    echo $rc >> "$race/status" ) &
+  racers+=($!)
+done
+wait $racers
+[ "$(grep -c '^1$' "$race/status")" = 4 ]
+
 # Every slot running dry waits for the stated reset and carries on by itself —
 # however many quota failures that takes, it never turns into a pause.
 new_loop worker-quota-Home=4 worker-quota-Work=4
