@@ -828,6 +828,7 @@ python3 scripts/test-fleet-prompt-binding.py
 python3 scripts/test-fleet-claude.py
 python3 scripts/test-fleet-shell.py
 sh scripts/test-tool-disruption-approval.sh
+python3 scripts/test-usage-ranking.py
 python3 scripts/test-release-gates.py
 
 echo "All tests passed"

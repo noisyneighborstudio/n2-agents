@@ -45,6 +45,14 @@ import Foundation
             check(Usage.parse("Fixture\t\(invalid)\t-\t-\tok")["Fixture"]?.used == nil, "invalid percentage")
         }
 
+        for invalid in ["nan", "-1", "101"] {
+            check(Usage.parse("Fixture\t\(invalid)\t20\t-\tok")["Fixture"]?.used == nil,
+                  "malformed first window must invalidate whole row")
+            check(Usage.parse("Fixture\t20\t\(invalid)\t-\tok")["Fixture"]?.used == nil,
+                  "malformed second window must invalidate whole row")
+        }
+        check(Usage.parse("Fixture\t-\t20\t-\tok")["Fixture"]?.used == 20,
+              "an absent window is not malformed")
         func vendor(_ id: String) -> Vendor {
             Vendor(id: id, installed: true, desktop: "none", usage: "oauth",
                    label: id, sessions: "none", monogram: id, desktopName: "",
@@ -72,6 +80,15 @@ import Foundation
         model.usage["codex"]?["Default"] = expired
         check(model.reading(profile, data).state == .usageUnknown && model.remaining == nil,
               "shared expired measurement must not claim capacity")
+        let fallbackVendor = Vendor(id: "opencode", installed: true, desktop: "none", usage: "none",
+                                    label: "Fallback", sessions: "none", monogram: "F",
+                                    desktopName: "", desktopBundle: "", longWindow: "7d")
+        let fallbackProfile = Profile(name: "Fallback", running: false, slots: ["opencode": "ok"])
+        model.data = PanelData(snapshot: Snapshot(vendors: [fallbackVendor, vendor("claude")], profiles: [], active: "Fixture"),
+                               profiles: [fallbackProfile, profile], sessions: [], terminals: [], desktops: [])
+        if case .slot(_, "claude", .some)? = model.nextBest {} else { check(false, "tray must prefer measured capacity") }
+        model.usage["claude"] = ["Fixture": expired]
+        if case .slot(_, "opencode", nil)? = model.nextBest {} else { check(false, "tray should expose unmeasured fallback") }
         print("Usage freshness, command failure, expiry, history and summary proofs passed")
     }
 }

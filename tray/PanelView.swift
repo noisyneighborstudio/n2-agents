@@ -321,7 +321,7 @@ private struct NextBestButton: View {
         case .slot(let profile, let vendorID, let used)?:
             Button { actions.openSession(profile: profile, vendor: vendorID, terminal: nil) } label: {
                 row(icon: "bolt", iconColor: Ink.link, title: "Open next best") {
-                    Text(verbatim: [data.snapshot.vendor(vendorID)?.label ?? vendorID, profile, used.map { "\($0)% used" }]
+                    Text(verbatim: [data.snapshot.vendor(vendorID)?.label ?? vendorID, profile, used.map { "\($0)% used" } ?? "usage unmeasured"]
                             .compactMap { $0 }.joined(separator: " · "))
                         .foregroundStyle(Ink.secondary)
                 }

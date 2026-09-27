@@ -120,16 +120,15 @@ func unusable(_ s: Slot, cooldowns: [String: Cooldown], now: Date = Date()) -> S
 func pick(_ slots: [Slot], effort: Effort, cooldowns: [String: Cooldown], busy: [String: Int],
           avoidVendors: Set<String> = [], avoidSlots: Set<String> = []) -> Slot? {
     let usable = slots.filter { unusable($0, cooldowns: cooldowns) == nil && !avoidSlots.contains($0.key) }
-    func headroom(_ s: Slot) -> Double { s.quota == "ok" ? 100 - (s.used ?? 100) : 30 }  // unmeasured ranks below healthy
     return usable.sorted { a, b in
+        if (a.quota == "ok") != (b.quota == "ok") { return a.quota == "ok" }
         let ia = avoidVendors.contains(a.vendor) ? 1 : 0, ib = avoidVendors.contains(b.vendor) ? 1 : 0
         if ia != ib { return ia < ib }
         let sa = Adapter.of(a.vendor)!.strength[effort]!, sb = Adapter.of(b.vendor)!.strength[effort]!
         if sa != sb { return sa > sb }
         let ba = busy[a.key] ?? 0, bb = busy[b.key] ?? 0
         if ba != bb { return ba < bb }
-        let ha = headroom(a), hb = headroom(b)
-        if ha != hb { return ha > hb }
+        if a.quota == "ok", let ua = a.used, let ub = b.used, ua != ub { return ua < ub }
         return a.key < b.key
     }.first
 }

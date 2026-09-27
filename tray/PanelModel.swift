@@ -586,10 +586,14 @@ final class PanelModel: ObservableObject {
         var firstBack: [Date] = []
         var sawMaxed = false
         var sawUnknown = false
+        var fallback: NextBest?
         for i in slots.indices {
             let (profile, vendor) = slots[(after + 1 + i) % slots.count]
             guard snap.signedIn[profile]?[vendor.id] != false else { continue }
-            guard vendor.hasUsageAPI else { return .slot(profile: profile, vendor: vendor.id, used: nil) }
+            guard vendor.hasUsageAPI else {
+                if fallback == nil { fallback = .slot(profile: profile, vendor: vendor.id, used: nil) }
+                continue
+            }
             guard let rows = usage[vendor.id] else {
                 if usageLoading { return nil }
                 sawUnknown = true
@@ -605,6 +609,7 @@ final class PanelModel: ObservableObject {
             guard u.note == .ok, u.used != nil else { sawUnknown = true; continue }
             return .slot(profile: profile, vendor: vendor.id, used: u.used)
         }
+        if let fallback { return fallback }
         if sawUnknown { return .usageUnavailable }
         return sawMaxed ? .allMaxed(firstBack: firstBack.min()) : .nothingSignedIn
     }
