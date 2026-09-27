@@ -713,6 +713,7 @@ wait_for PAUSED
 run_agents help | grep -Fq 'agents loop "goal"'
 
 sh scripts/test-usage.sh
+python3 scripts/test-usage-ranking.py
 python3 scripts/test-release-gates.py
 
 echo "All tests passed"

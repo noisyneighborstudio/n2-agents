@@ -73,6 +73,36 @@ import Darwin
         expect(pick([slot("claude", "A", used: 10), slot("claude", "B", used: 10)], effort: .standard, cooldowns: [:], busy: ["claude|A": 1])?.key == "claude|B",
                "work spreads across equal slots")
 
+        let measured = slot("muse", "Measured", used: 80)
+        let unmeasured = slot("codex", "Unmeasured", used: nil, quota: "no-usage-api")
+        for effort in Effort.allCases {
+            expect(pick([unmeasured, measured], effort: effort, cooldowns: [:],
+                        busy: ["muse|Measured": 3], avoidVendors: ["muse"])?.key == measured.key,
+                   "measured capacity beats unmeasured strength, busyness and preference")
+        }
+        expect(pick([unmeasured], effort: .deep, cooldowns: [:], busy: [:])?.key == unmeasured.key,
+               "no-API remains an explicit fallback")
+        for bad in [slot("codex", "Missing", used: nil), slot("codex", "Failed", used: 0, quota: "fetch-error"),
+                    slot("codex", "NaN", used: .nan), slot("codex", "Denied", used: 100)] {
+            expect(unusable(bad, cooldowns: [:]) != nil, "missing/failed/invalid/denied slots are ineligible")
+        }
+        let collector = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try! FileManager.default.createDirectory(at: collector, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: collector) }
+        let script = collector.appendingPathComponent("agents")
+        try! """
+        #!/bin/sh
+        if [ "$1" = porcelain ]; then
+          printf 'V\tcodex\t1\tnone\toauth\nS\tFixture\tcodex\tok\tunused\tyes\n'
+        else
+          echo 'collector unavailable' >&2
+          exit 7
+        fi
+        """.write(to: script, atomically: true, encoding: .utf8)
+        try! FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+        let failedSlots = try! SlotSource(cli: script.path).slots(fresh: true)
+        expect(failedSlots.count == 1 && failedSlots[0].quota == "fetch-error", "failed metered read must not become no-API")
+
         // Plans: every problem is named, so the planner can fix exactly that.
         let bad: [String: Any] = ["plan": ["criteria": [["id": "c1", "description": "d", "verification": "v"], ["id": "c2", "description": "d", "verification": "v"]],
                                            "chunks": [["id": "x", "title": "t", "instructions": "i", "paths": [], "criteria": ["c1", "nope"], "dependsOn": ["y"], "effort": "light"],

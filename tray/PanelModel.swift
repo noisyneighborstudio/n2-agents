@@ -97,13 +97,14 @@ struct Usage {
         for line in text.split(separator: "\n") {
             let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
             guard f.count >= 5, let note = Note(rawValue: f[4]) else { continue }
+            let malformed = [f[1], f[2]].contains { !$0.isEmpty && $0 != "-" && percent($0) == nil }
             rows[f[0]] = Usage(fiveHour: percent(f[1]),
                                sevenDay: percent(f[2]),
                                resets: resetFormat.date(from: f[3]),
-                               note: note,
+                               note: note == .ok && malformed ? .fetchError : note,
                                sevenResets: f.count > 5 ? resetFormat.date(from: f[5]) : nil,
                                longWindow: longWindow,
-                               fetchedAt: note == .ok && (percent(f[1]) != nil || percent(f[2]) != nil)
+                               fetchedAt: note == .ok && !malformed && (percent(f[1]) != nil || percent(f[2]) != nil)
                                    ? Date() : .distantPast)
         }
         return rows
@@ -349,10 +350,14 @@ final class PanelModel: ObservableObject {
         var firstBack: [Date] = []
         var sawMaxed = false
         var sawUnknown = false
+        var fallback: NextBest?
         for i in slots.indices {
             let (profile, vendor) = slots[(after + 1 + i) % slots.count]
             guard snap.signedIn[profile]?[vendor.id] != false else { continue }
-            guard vendor.hasUsageAPI else { return .slot(profile: profile, vendor: vendor.id, used: nil) }
+            guard vendor.hasUsageAPI else {
+                if fallback == nil { fallback = .slot(profile: profile, vendor: vendor.id, used: nil) }
+                continue
+            }
             guard let rows = usage[vendor.id] else {
                 if usageLoading { return nil }
                 sawUnknown = true
@@ -368,6 +373,7 @@ final class PanelModel: ObservableObject {
             }
             return .slot(profile: profile, vendor: vendor.id, used: u.used)
         }
+        if let fallback { return fallback }
         if sawUnknown { return .usageUnknown }
         return sawMaxed ? .allMaxed(firstBack: firstBack.min()) : .nothingSignedIn
     }

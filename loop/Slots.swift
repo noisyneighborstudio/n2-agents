@@ -72,12 +72,19 @@ final class SlotSource {
             }
         }
         for lab in Set(slots.map(\.vendor)) where usageLabs.contains(lab) {
+            for i in slots.indices where slots[i].vendor == lab { slots[i].quota = "fetch-error" }
             let rows = run(cli, ["best", "--porcelain", "--vendor", lab])
+            guard rows.ok else { continue }
             for row in rows.out.split(separator: "\n") {
                 let f = row.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
                 guard f.count >= 5, let i = slots.firstIndex(where: { $0.vendor == lab && $0.profile == f[0] }) else { continue }
-                slots[i].quota = f[4]
+                slots[i].quota = f[4] == "no-usage-api" ? "fetch-error" : f[4]
                 let five = Double(f[1]), seven = Double(f[2])
+                if f[4] == "ok" && [f[1], f[2]].contains(where: { value in
+                    if value == "-" || value.isEmpty { return false }
+                    guard let n = Double(value) else { return true }
+                    return !n.isFinite || n < 0 || n > 100
+                }) { slots[i].quota = "fetch-error"; continue }
                 slots[i].used = [five, seven].compactMap { $0 }.max()
                 // Resets are UTC minutes: 2026-09-26T08:24.
                 let utc = DateFormatter()
@@ -99,8 +106,11 @@ func unusable(_ s: Slot, cooldowns: [String: Cooldown], now: Date = Date()) -> S
     if let c = cooldowns[s.key], c.until > now { return c.reason }
     switch s.quota {
     case "no-token", "stale-token": return "sign-in expired (\(s.quota))"
-    case "ok": if let u = s.used, u >= 95 { return "\(Int(u))% of quota used" }
-    default: break
+    case "ok":
+        guard let u = s.used, u.isFinite, u >= 0, u <= 100 else { return "usage unknown" }
+        if u >= 95 { return "\(Int(u))% of quota used" }
+    case "no-usage-api": break
+    default: return "usage unavailable (\(s.quota))"
     }
     return nil
 }
@@ -111,16 +121,15 @@ func unusable(_ s: Slot, cooldowns: [String: Cooldown], now: Date = Date()) -> S
 func pick(_ slots: [Slot], effort: Effort, cooldowns: [String: Cooldown], busy: [String: Int],
           avoidVendors: Set<String> = [], avoidSlots: Set<String> = []) -> Slot? {
     let usable = slots.filter { unusable($0, cooldowns: cooldowns) == nil && !avoidSlots.contains($0.key) }
-    func headroom(_ s: Slot) -> Double { s.quota == "ok" ? 100 - (s.used ?? 0) : 30 }  // unmeasured ranks below healthy
     return usable.sorted { a, b in
+        if (a.quota == "ok") != (b.quota == "ok") { return a.quota == "ok" }
         let ia = avoidVendors.contains(a.vendor) ? 1 : 0, ib = avoidVendors.contains(b.vendor) ? 1 : 0
         if ia != ib { return ia < ib }
         let sa = Adapter.of(a.vendor)!.strength[effort]!, sb = Adapter.of(b.vendor)!.strength[effort]!
         if sa != sb { return sa > sb }
         let ba = busy[a.key] ?? 0, bb = busy[b.key] ?? 0
         if ba != bb { return ba < bb }
-        let ha = headroom(a), hb = headroom(b)
-        if ha != hb { return ha > hb }
+        if a.quota == "ok", let ua = a.used, let ub = b.used, ua != ub { return ua < ub }
         return a.key < b.key
     }.first
 }

@@ -6,26 +6,25 @@ queue while these independent deliveries are in progress.
 
 ## Queue
 
-1. **Prefer measured eligible capacity** (`integration-usage-ranking`).
-   Behavior: automatic CLI/loop selection excludes failed/missing metered reads;
-   no-API candidates are explicit fallback, below measured compatible candidates.
-   Proof: measured zero and 80% used versus unknown, failed and no-API candidates;
-   vary strength, busyness and vendor preferences; no measured candidate control.
-   Scope: selection, no account changes or provider calls.
-   Budget: 150 changed lines; stop at 300.
-
-2. **Keep Codex window resets independent** (`integration-codex-windows`).
+1. **Keep Codex window resets independent** (`integration-codex-windows`).
    Behavior: five-hour exhaustion cannot overwrite a measured weekly percentage.
    Proof: 100/30 selects only the short reset, weekly-only exhaustion and denial
    without windows remain unavailable rather than inventing fresh capacity.
    Scope: parser and consumers required for this behavior, no account changes.
    Budget: 200 changed lines; stop at 400.
 
-3. **Verify provider-scoped readouts** (`integration-scoped-readouts`).
+2. **Verify provider-scoped readouts** (`integration-scoped-readouts`).
    Behavior: applicable provider restrictions and their observation age remain visible.
    Proof: canonical protocol fixtures and isolated package acceptance for selected models.
    Scope: split before implementation if the native-reader dependency inventory exceeds
    250 changed lines; no credential migration.
+
+3. **Prepare one accepted stable promotion** (`integration-stable-candidate`).
+   Behavior: one accepted improvement has a reviewable candidate with no unaccepted
+   intervening changes. Proof: source SHA, exact-commit gates, continuous artifact
+   digest and installed-behavior receipt; separate stable receipts after approval.
+   Scope: prepare only; no merge, publish, install or credential changes without
+   explicit authorization. No dependency on unrelated fleet completion.
 
 ## Noticed
 
@@ -34,8 +33,6 @@ queue while these independent deliveries are in progress.
   passed in the prior slice. Retain the assertion; investigate a recurrence with
   fixture receipts rather than changing usage-display code to accommodate it.
 
-- Codex window percentages/reset semantics are the next independent integration
-  after these review fixes; retain global denial separately from window usage.
 - Fleet crash-accounting, archive safety, notifications and provider logout stay
   deferred on PR #3. They do not block independent measurement fixes. No dispatch
   release before archive proof; no unproven credential retirement.

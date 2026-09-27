@@ -585,10 +585,20 @@ PYEOF
 # is out of the running exactly like one with a bad token.
 # Updates the rotation pointer so --next continues from the pick.
 # $1 vendor, $2 (optional): profile to exclude (a resumed session's source).
+# Missing windows are allowed; absent or malformed measurements are not capacity.
+usage_has_capacity() {
+  awk -v f="$1" -v s="$2" '
+    function missing(x) { return x == "" || x == "-" }
+    function valid(x) { return x ~ /^[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$/ && x + 0 < 95 }
+    BEGIN { exit !((!missing(f) || !missing(s)) &&
+                   (missing(f) || valid(f)) && (missing(s) || valid(s))) }'
+}
+
 pick_best() {
   pb_best="" pb_five=101 pb_seven=101
   while IFS="$(printf '\t')" read -r n five seven _ note _; do
     [ "$note" = ok ] || continue
+    usage_has_capacity "$five" "$seven" || continue
     [ "$n" = "${2:-}" ] && continue
     # A plan may have only one of the windows; the other counts as empty.
     f=${five%.*} s=${seven%.*}
@@ -690,10 +700,7 @@ slot_has_room() {  # profile, vendor, usage rows
 $su_row
 EOF
   [ "$su_note" = ok ] || return 1
-  su_f=${su_f%.*} su_s=${su_s%.*}
-  case $su_f in ''|*[!0-9]*) su_f=0 ;; esac
-  case $su_s in ''|*[!0-9]*) su_s=0 ;; esac
-  [ "$su_f" -lt 95 ] && [ "$su_s" -lt 95 ]
+  usage_has_capacity "$su_f" "$su_s"
 }
 
 next_best() {  # profiles, vendors -> "profile vendor"; fails when nothing is usable
@@ -708,10 +715,14 @@ next_best() {  # profiles, vendors -> "profile vendor"; fails when nothing is us
     '{ a[NR] = $0; if ($0 == last) at = NR } END { for (i = 1; i <= NR; i++) print a[(at + i - 1) % NR + 1] }')
   # Quota is a network read, so it's fetched once, and only when a signed-in
   # slot of a lab that reports it comes up.
-  nb_rows="" nb_fetched=0
+  nb_rows="" nb_fetched=0 nb_fallback=""
   for s in $nb_order; do
     nb_n=${s%%:*} nb_v=${s#*:}
     slot_signed_in "$nb_n" "$nb_v" || continue
+    if ! vendor_has_usage "$nb_v"; then
+      [ -n "$nb_fallback" ] || nb_fallback="$nb_n $nb_v"
+      continue
+    fi
     if vendor_has_usage "$nb_v" && [ "$nb_fetched" = 0 ]; then
       nb_rows=$(usage_rows "$2")
       nb_fetched=1
@@ -721,6 +732,7 @@ next_best() {  # profiles, vendors -> "profile vendor"; fails when nothing is us
       return 0
     fi
   done
+  [ -n "$nb_fallback" ] && { echo "$nb_fallback"; return 0; }
   return 1
 }
 
@@ -765,7 +777,8 @@ cmd_run() {
     pick=$(next_best "$nb_p" "$nb_v") || \
       die "nothing usable — no slot is signed in with room left (see: agents list, agents best)"
     name=${pick% *} vsel=${pick#* } rotate=0 best=0
-    echo "agents: next best is $(vendor_label "$vsel") in '$name'" >&2
+    if vendor_has_usage "$vsel"; then nb_note=""; else nb_note=" (usage unmeasured)"; fi
+    echo "agents: next best is $(vendor_label "$vsel") in '$name'$nb_note" >&2
   fi
 
   v=$(one_vendor "$vsel")
