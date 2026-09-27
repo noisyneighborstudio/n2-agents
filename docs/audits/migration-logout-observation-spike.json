@@ -1,0 +1,24 @@
+{
+  "sourceRevision": "36650394c5b38c2990ccf2a3457165ca3e9d9726",
+  "scope": "Unchanged extracted storage-selection expression, resolver and Bedrock path-selection method; synthetic config/layer types. No provider binary, config loader, network, logout or credentials.",
+  "assertions": 8,
+  "results": [
+    "file-unmanaged:File",
+    "file-required-keyring:Keyring",
+    "ephemeral-required-auto:Auto",
+    "keyring-required-file:File",
+    "openai-selected:[]",
+    "bedrock-matching:[[\"model_provider\"], [\"model_providers\", \"bedrock\", \"aws\"], [\"model\"]]",
+    "bedrock-runtime-matching:[[\"model_provider\"], [\"model_providers\", \"bedrock-runtime\", \"aws\"], [\"model\"]]",
+    "bedrock-other-user:[]"
+  ],
+  "sources": {
+    "core/src/config/managed_features.rs": "94cd6d897ecf7c33ad9cb1f401425f5437671f278e7b8cc74331f389e0afef22",
+    "core/src/config/mod.rs": "0ca738441c0c0a3085e1d06da7606747f79f7d66f04cf363052c9b28a1abeaff",
+    "core/src/config/auth_keyring.rs": "520a3f2232207ece119fdc296640030a7acfd3909ba14f40d938b6d9fb4180f4",
+    "core/src/config/edit/bedrock.rs": "1e453fe702ea0a8656512de44aafee55fef7164cdfe4baff0266b7f6e407e576",
+    "app-server-protocol/src/protocol/v2/account.rs": "f52c03c9f98f8fd496824616ec1669954f35470cbd2ff15101ce4b7e6a57b2ad",
+    "cli/src/login.rs": "34f8a089a6907d9791e4bb858f44fdee56350b9898daad45c2065325f9e6bef7",
+    "app-server/src/request_processors/account_processor.rs": "a28e9125a67d6e972fefdab8d8b191d8ec38a3294019f0c77d5e2077c2991831"
+  }
+}
