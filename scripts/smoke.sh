@@ -18,4 +18,5 @@ grep -Fq 'agents loop' "$smoke_root/help"
 test "$(cat "$smoke_root/route")" = "$HOME/.n2-agents/Fixture/codex"
 sh scripts/test-usage.sh
 python3 scripts/test-usage-ranking.py
+sh scripts/test-profile-setup.sh
 echo 'Smoke passed: real CLI routes to isolated profile.'

@@ -2,6 +2,20 @@ import AppKit
 import SwiftUI
 #if canImport(SwiftTerm)
 import SwiftTerm
+
+// Menu-bar apps do not have an Edit menu to dispatch Command-V. Handle it
+// only while this console owns keyboard focus; keep SwiftTerm's paste behavior.
+class AuthTerminalView: LocalProcessTerminalView {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        if window?.firstResponder === self, modifiers == .command,
+           event.charactersIgnoringModifiers?.lowercased() == "v" {
+            paste(self)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+}
 #endif
 
 /// Runs a provider's interactive login inside setup. A PTY preserves browser
@@ -17,8 +31,8 @@ final class NativeAuthSession: NSObject, ObservableObject {
     private var started = false
     private var cancelled = false
 #if canImport(SwiftTerm)
-    lazy var terminal: LocalProcessTerminalView = {
-        let view = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 600, height: 240))
+    lazy var terminal: AuthTerminalView = {
+        let view = AuthTerminalView(frame: NSRect(x: 0, y: 0, width: 600, height: 240))
         view.processDelegate = self
         view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         return view
@@ -51,6 +65,14 @@ final class NativeAuthSession: NSObject, ObservableObject {
         let callback = onFinish
         onFinish = nil
         callback?(status)
+    }
+
+    func pasteCode() {
+        guard isRunning else { return }
+#if canImport(SwiftTerm)
+        terminal.paste(self)
+        terminal.window?.makeFirstResponder(terminal)
+#endif
     }
 
     func cancel() {
@@ -104,6 +126,9 @@ struct NativeAuthView: View {
                 .id(ObjectIdentifier(session))
                 .frame(height: 240)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
+            Button("Paste code") { session.pasteCode() }
+                .disabled(!session.isRunning)
+                .help("Paste the clipboard into the sign-in prompt, then press Return")
 #else
             Text(session.failure ?? "Account setup requires the packaged app.")
 #endif
