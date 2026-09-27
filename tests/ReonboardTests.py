@@ -194,3 +194,39 @@ muse_backend_case('Default')
 muse_backend_case('Work')
 muse_backend_case('Default', keychain_error=True)
 print('Muse logout backend tests passed')
+
+# A signed-out named Muse slot can keep a keychain reference from an older
+# backend. The file backend refuses to save over it (FM-008), so sign-in must
+# clear it first while keeping other providers and settings.
+def muse_stale_reference_case():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        bin_dir = root / 'bin'
+        bin_dir.mkdir()
+        slot = root / '.n2-agents/Work/muse/muse'
+        slot.mkdir(parents=True)
+        auth = slot / 'auth.json'
+        auth.write_text(json.dumps({'providers': {'meta': {'mechanism': 'keychain'},
+                                                  'other': {'access_token': 'keep'}}, 'setting': 'keep'}))
+        (bin_dir / 'muse').write_text('''#!/bin/sh
+[ "$*" = login ] || exit 2
+[ "$TBH_CREDENTIAL_BACKEND" = file ] || exit 3
+auth="$XDG_CONFIG_HOME/muse/auth.json"
+if /usr/bin/python3 -c 'import json,sys; sys.exit(0 if "meta" in json.load(open(sys.argv[1]))["providers"] else 1)' "$auth"; then
+  echo 'login succeeded but saving failed: keychain unavailable and the meta slot is keychain-referenced (FM-008)' >&2
+  exit 1
+fi
+/usr/bin/python3 -c 'import json,sys; v=json.load(open(sys.argv[1])); v["providers"]["meta"]={"mechanism":"oauth","access_token":"new"}; json.dump(v,open(sys.argv[1],"w"))' "$auth"
+''')
+        (bin_dir / 'muse').chmod(0o755)
+        env = dict(os.environ, HOME=str(root), PATH=f'{bin_dir}:/usr/bin:/bin')
+        result = subprocess.run(['./agents', 'login', 'Work', '--vendor', 'muse'], env=env,
+                                text=True, capture_output=True)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert json.loads(auth.read_text()) == {'providers': {'other': {'access_token': 'keep'},
+                                                              'meta': {'mechanism': 'oauth', 'access_token': 'new'}},
+                                                'setting': 'keep'}
+
+
+muse_stale_reference_case()
+print('Muse stale keychain reference test passed')

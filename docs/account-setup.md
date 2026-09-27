@@ -22,3 +22,8 @@ both input routes reach a real PTY using a synthetic clipboard action.
 with a fake host. It verifies restart, cancellation, profile binding, stale
 callbacks, failure retry and subsequent progress. It does not claim acceptance
 against Anthropic's live browser flow.
+
+Sign-in clears a signed-out slot's leftover credentials before logging in, not
+only after a logout. A named Muse slot can keep a keychain reference from an
+older backend; Muse's file backend then refuses to save the new login (FM-008).
+`python3 tests/ReonboardTests.py` reproduces that failure with a fake `muse`.
