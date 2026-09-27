@@ -1125,3 +1125,15 @@ capacity removes next-best selection. The opt-in command, isolation boundary,
 negative controls and screenshot receipts are recorded in
 [packaged measurement acceptance](audits/packaged-measurement-freshness.md).
 Live measurements and the broader lifecycle/native acceptance remain required.
+
+
+## Physical account restriction propagation
+
+The opt-in [physical usage proof](audits/physical-usage-restriction-propagation.md)
+passes signed exchange from the M5 to seth-agent with synthetic verified accounts.
+A rejection constrains another profile name on the same account, preserves the
+original event and timestamp across reopened journals and replay, and leaves a
+different account eligible. An older-started task or another model's success
+cannot clear it; qualifying later recovery survives replay. This adds physical
+transport evidence to the existing paging/retention tests. Live identity and
+provider measurements remain separate, outstanding requirements.
