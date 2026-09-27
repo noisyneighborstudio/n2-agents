@@ -1,0 +1,34 @@
+{
+  "root": "/private/tmp/n2-physical-h8u3zthk",
+  "peer": "sethwebster@100.88.174.82",
+  "negativeControl": false,
+  "transport": "physical SSH",
+  "localHost": "seth-agent",
+  "remoteHost": "macbook-m5-pro-max-sdw",
+  "task": "c27a67dc4729062dade9d0aa",
+  "nativeArtifacts": "/private/tmp/n2-physical-h8u3zthk/native",
+  "native": {
+    "unreachableShown": true,
+    "settingsResponsiveWhileHeld": true,
+    "finishedShown": true,
+    "negativeControlRejected": true,
+    "binarySha256": "d45d561b5aeb173a22b97e600cfe61de7520969338aee25f103a9f20ed121196"
+  },
+  "dispatcherState": "completed",
+  "remoteState": "completed",
+  "executions": 1,
+  "taskCount": 1,
+  "passed": true,
+  "cleanup": "owned task terminal",
+  "sourceHead": "04c5331dce60820dae371b8497cf1cb0543902ca",
+  "cleanupNegative": {
+    "injectedBeforeRead": true,
+    "appExited": true,
+    "bundleRemoved": true
+  },
+  "captureSha256": {
+    "unreachable.png": "bfa7f96c2093d864682e1849d291d68103a9ebd4c0b8fd6f70ae6f80b826c7e5",
+    "settings-while-held.png": "cb90ac694b0b15b6d1ff9ff1669225a33f2ee4a26c9baf83d5fb75271c5459a5",
+    "recovered.png": "d8bbc8bb9a5d0ec0a38266d5a62f2815ea0066a86b24ac7230d3a1d722562323"
+  }
+}

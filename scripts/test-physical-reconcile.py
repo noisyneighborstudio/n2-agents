@@ -99,7 +99,7 @@ def helper():
         raise ValueError(mode)
 
 
-def main():
+def main(native_check_in=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--peer', required=True, help='local for offline regression, or existing trusted user@IPv4 SSH destination')
     parser.add_argument('--artifacts', type=Path)
@@ -232,7 +232,9 @@ exec {root}/repo/agents "$@"
         remote(f'/usr/bin/python3 {root}/acceptance.py --wait-state {remote_meta} completed')
         assert metadata(local_meta)['state'] == 'unreachable', 'completion must require reconciliation'
         patch(route, port='22')
-        if not args.skip_reconcile:
+        if native_check_in is not None:
+            native_check_in(evidence, local_meta)
+        elif not args.skip_reconcile:
             call('alpha', 'fleet', 'task', 'reconcile', task)
         evidence['dispatcherState'] = metadata(local_meta)['state']
         assert evidence['dispatcherState'] == 'completed', 'dispatcher-completed assertion failed'

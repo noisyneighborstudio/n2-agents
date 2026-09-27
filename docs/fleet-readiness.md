@@ -22,7 +22,7 @@ about 17 hours old; they do not establish fresh fleet headroom.
 - [x] Reverify enrollment and transport: 339 passed, zero failures/skips, live SSH required.
 - [x] Reverify profile/configuration/credential sync, conflicts and machine exceptions: 639 checks pass across all 75 sections.
 - [ ] Complete provider-specific authentication lifecycle evidence and explicit limitations.
-- [x] Reverify managed-tool authorization, replication and safe update deferral, including a barrier test of preparation versus disruptive installation.
+- [ ] Reverify managed-tool authorization, replication and safe update deferral. Prior barriers passed, but the September 27 source review found that removing the replicated disruptive flag can retain approval and bypass deferral.
 - [x] Verify dispatch eligibility, preferences and expected-completion ranking: 97 execution checks and focused preference/prompt/delivery checks pass.
 - [x] Verify ordinary dirty and linked-workspace/context handoff and declared deliverable destinations. Nested submodule metadata remains a documented limitation.
 - [ ] Verify native and in-app notifications, disconnection handling and reconciliation. Native parser/action tests pass; GUI end-to-end checks remain.
@@ -1059,3 +1059,21 @@ The negative control without that protection times out on the stopped process.
 
 All 40 bridge tests and the full repository suite pass. Formatting, lint, smoke,
 and installed Codex start/resume also pass; independent review is clear.
+
+## Physical native recovery and approved source security review
+
+The isolated packaged app now passes physical M5 task recovery, including
+unreachable presentation, responsive Settings while Check in is held, and
+finished presentation after one execution. See
+[audit and command](audits/native-physical-reconcile.md). OS notification delivery
+and complete native/provider acceptance remain outstanding.
+
+The user approved read-only checkout access on September 27, superseding the
+earlier source-review access rejection. Independent source review at `04c5331`
+covered account ownership/login/migration/bridge boundaries, signed transport,
+enrollment/revocation, replication/conflicts, managed tools, task/workspace/result
+handling, session import and usage journal trust. It found two P2 issues:
+non-atomic task-ID admission and disruptive-classification removal retaining
+installer approval. Both are queued for reproduction, repair and independent
+recheck. This source review did not perform runtime/adversarial archive probes,
+credential access or live-provider operations; those requirements remain.
