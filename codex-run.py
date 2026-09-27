@@ -131,7 +131,10 @@ def run(config, expected_account, effort, prompt, timeout=3600, executable='code
         emit({'type': 'turn.failed', 'error': {'message': message}})
     emit({'type': 'n2.account.binding', 'identity': {'status': 'verified', 'accountHash': expected_account},
           'session': result['threadId'], 'turn': result['turnId'], 'model': result['model'],
-          'usageScope': 'provider-thread', 'tokens': result['tokens'], 'quotaResetAt': result['errorResetAt']})
+          'requestedModel': result['requestedModel'],
+          'usageScope': 'provider-thread', 'tokens': result['tokens'], 'quotaResetAt': result['errorResetAt'],
+          'status': result['status'], 'errorCode': result['errorCode'] if result['errorCode'] in
+          ('usageLimitExceeded', 'rateLimitExceeded') else None})
     return 0 if result['status'] == 'completed' else 1
 
 

@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import select
 import shutil
+import signal
 import subprocess
 import sys
 import tarfile
@@ -31,6 +32,12 @@ if '--skip-account-pin' in sys.argv:
     check = "if identity.get('status') != 'verified' or identity.get('accountHash') != expected_account:"
     assert runner.read_text().count(check) == 1
     runner.write_text(runner.read_text().replace(check, 'if False:'))
+runner = base/'repo/codex-run.py'
+marker = "    emit({'type': 'n2.account.binding'"
+assert runner.read_text().count(marker) == 1
+runner.write_text(runner.read_text().replace(marker,
+    "    if os.environ.get('N2_FLEET_TASK') == '6666dddd': return 0\n"
+    "    if os.environ.get('N2_FLEET_TASK') == '7777eeee': expected_account = '0'*64\n" + marker))
 source = base / 'repo/fleet-exec.sh'
 point = '  exec_set_state "$erl_id" preparing\n'
 assert source.read_text().count(point) == 1
@@ -45,18 +52,26 @@ assert os.read(fd,1)==b'x'
 os.close(fd)
 ''')
 os.mkfifo(base / 'gate', 0o600)
-provider = (REPO / 'tests/fake-bound-codex.py').read_text()
+provider = (REPO / 'tests/fake-bound-codex.py').read_text().replace('Bound answer', 'Codex usage limit reached')
 provider = provider.replace("    method = request['method']", """    method = request['method']
     credential = Path(os.environ['CODEX_HOME'])/'auth.json'
     token = current_token or (json.loads(credential.read_text())['tokens']['access_token'] if credential.exists() else '')
     if method == 'turn/start':
         root = Path(os.environ['N2_BIND_ROOT'])
         task = os.environ['N2_FLEET_TASK']
-        (root/(task+'.turn')).write_text(json.dumps({'token':token,'cwd':os.getcwd(),'params':request['params']}))
-        Path(os.environ['N2_FLEET_OUTPUTS'],'result.txt').write_text('deliverable')""")
+        (root/(task+'.turn')).write_text(json.dumps({'token':token,'cwd':os.getcwd(),'params':request['params'],'runner':os.getppid(),'provider':os.getpid()}))
+        Path(os.environ['N2_FLEET_OUTPUTS'],'result.txt').write_text('deliverable')
+        if token == 'interrupt-token':
+            import select
+            (root/'ready'/(task+'.turn')).touch()
+            assert select.select([sys.stdin],[],[],45)[0], 'interruption timed out'
+            raise RuntimeError('provider not interrupted')
+        if token == 'quota-token': mode = 'quota-rerouted'""")
 provider = provider.replace("    elif method == 'account/rateLimits/read':", """        if token == 'after-token': result['account']['email'] = 'after@example.invalid'
         if token == 'unknown-token': result = {'account': {'type':'apiKey'}}
     elif method == 'account/rateLimits/read':""")
+provider = provider.replace("if mode == 'rerouted':", "if mode.endswith('rerouted'):")
+provider = provider.replace("    elif method == 'turn/start':", "        if token == 'other-model-token': result['model'] = 'other-model'\n    elif method == 'turn/start':")
 (base / 'bin/codex').write_text(provider)
 (base / 'bin/codex').chmod(0o700)
 (base / 'bin/security').write_text('#!/bin/sh\nexit 1\n')
@@ -155,6 +170,61 @@ try:
             events = [json.loads(line) for line in (directory/'out/stdout').read_text().splitlines()]
             receipts = [e for e in events if e['type'] == 'n2.account.binding']
             assert len(receipts) == 1 and receipts[0]['identity']['accountHash'] == binding['account'], events
+            history = json.loads(peer('receiver','usage','history'))
+            task_events = [e for e in history if e['data'].get('attribution',{}).get('task') == task]
+            assert sorted(e['kind'] for e in task_events) == ['execution-started','execution-succeeded'], task_events
+            terminal = next(e for e in task_events if e['kind'] == 'execution-succeeded')
+            data = terminal['data']
+            assert terminal['origin'] == receiver and terminal['origin'] != sender, terminal
+            assert data['identity']['accountHash'] == binding['account'] and data['model'] == 'fixture-model', data
+            assert data['session'] == 'thread-fixture' and data['usageScope'] == 'provider-thread', data
+            assert data['attribution']['totalTokens'] == 60 and data['attribution']['cachedInputTokens'] == 30, data
+            assert 'fixture task' not in json.dumps(history) and 'before-token' not in json.dumps(history)
+            assert dispatch(task).returncode == 0
+            assert json.loads(peer('receiver','usage','history')) == history, 'redelivery duplicated execution evidence'
+            summary = json.loads(peer('receiver','usage','summary'))
+            assert summary['uniqueTasks'] == 1 and sum(g['reportedTotalTokens'] for g in summary['groups']) == 60, summary
+    for task, token in [('4444aaaa','quota-token'),('8888aaaa','other-model-token'),('9999aaaa','before-token'),('5555bbbb','interrupt-token'),('6666dddd','before-token'),('7777eeee','before-token')]:
+        credential('Before',token); peer('receiver','use','Before','--vendor','codex')
+        response = dispatch(task)
+        assert response.returncode == 0, response.stderr
+        wait_ready(task)
+        fd = os.open(base/'gate',os.O_WRONLY | os.O_NONBLOCK); os.write(fd,b'x'); os.close(fd)
+        if token == 'interrupt-token':
+            wait_ready(task+'.turn')
+            turn = json.loads((base/(task+'.turn')).read_text())
+            history = json.loads(peer('receiver','usage','history'))
+            assert any(e['kind'] == 'execution-started' and e['data']['attribution']['task'] == task for e in history)
+            os.kill(turn['runner'], signal.SIGTERM)
+        directory = base/'receiver/.n2-agents/fleet/tasks/db'/task
+        helper.wait_state(directory/'meta','terminal')
+        history = json.loads(peer('receiver','usage','history'))
+        events = [e for e in history if e['data'].get('attribution',{}).get('task') == task]
+        if token == 'quota-token':
+            assert sorted(e['kind'] for e in events) == ['execution-started','quota-rejected'], events
+            rejected = next(e for e in events if e['kind'] == 'quota-rejected')['data']
+            assert rejected['status'] == 'restricted' and rejected['resetKnown'] is False and rejected['recheckAt'] is None, rejected
+            assert rejected['model'] is None, rejected
+            assert json.loads(peer('receiver','usage','restrictions')), 'quota failure did not restrict work'
+        elif task in ('8888aaaa','9999aaaa'):
+            assert sorted(e['kind'] for e in events) == ['execution-started','execution-succeeded'], events
+            restrictions = json.loads(peer('receiver','usage','restrictions'))
+            if task == '8888aaaa': assert restrictions, 'different selection erased quota rejection'
+            else: assert not restrictions, 'same-selection success failed to clear unknown-model rejection'
+        else:
+            assert len(events) == 1 and events[0]['kind'] == 'execution-started', events
+            assert all(v is None for k,v in events[0]['data']['attribution'].items() if k != 'task'), events
+            if task == '7777eeee':
+                assert helper.metadata(directory/'meta')['state'] == 'failed', 'mismatched receipt succeeded'
+            if token == 'interrupt-token':
+                assert helper.metadata(directory/'meta')['state'] == 'failed'
+                try: os.kill(turn['provider'],0)
+                except ProcessLookupError: pass
+                else: raise AssertionError('provider survived interruption')
+    summary = json.loads(peer('receiver','usage','summary'))
+    assert summary['uniqueTasks'] == 8 and sum(g['reportedTotalTokens'] for g in summary['groups']) == 240, summary
+    assert sum(g['unconfirmedTasks'] for g in summary['groups']) == 4, summary
+    print('ok fleet journal: receiver/task/account/model, exact totals, replay deduplication, quota restriction, interrupted/missing/mismatched receipts unknown')
     credential('Before','unknown-token'); peer('receiver','use','Before','--vendor','codex')
     response = dispatch('3333cccc')
     assert response.returncode != 0 and 'account-binding-unavailable' in response.stderr, response

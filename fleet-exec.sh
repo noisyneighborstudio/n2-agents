@@ -495,7 +495,7 @@ exec_invoke_prompt() (
     cat "$eip_spec/context"
   } | case $eip_vendor in
     claude) env "$eip_env=$eip_value" "$eip_cli" --print ;;
-    codex) /usr/bin/python3 "$scripts_dir/fleet-prompt.py" run "$eip_binding" ;;
+    codex) /usr/bin/python3 "$scripts_dir/fleet-prompt.py" run "$eip_binding" "$(fleet_self_id)" ;;
   esac
 )
 

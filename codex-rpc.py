@@ -508,6 +508,7 @@ class CodexRPC:
             self._binding_failed = True
             raise ValueError('invalid Codex turn acknowledgement')
         result = {'threadId': thread['id'], 'turnId': turn['id'], 'model': started.get('model'),
+                  'requestedModel': started.get('model'),
                   'text': '', 'tokens': None, 'status': None, 'errorCode': None, 'errorResetAt': None}
         def consume(message):
             method = message.get('method')

@@ -1185,3 +1185,42 @@ Binding slice validation: format, lint, full tests and smoke passed in one chain
 with exit zero, logged at `/private/tmp/n2-prompt-binding-gates.log`. Both
 independent source reviews found no actionable issue. The saved route/account
 does not freeze configuration contents or an owner-grant revision.
+
+### Dispatched Codex execution accounting
+
+The actual fleet prompt path now commits `execution-started` before calling the
+bound runner, with the fleet task ID and the executing receiver's origin. A
+validated terminal binding adds execution success/failure or quota rejection
+with the provider session, model and reported counters. Cached input remains a
+subset of input; the reported total is not increased by cached tokens. Replayed
+task delivery retains the original events and counts the task once.
+
+The integration consumes records emitted by the trusted bound runner, never
+model prose. Its receipt carries terminal status and a whitelisted quota code.
+Quota-like assistant text does not become a rejection. Unknown resets remain
+unknown. Missing, mismatched or interrupted receipts leave the durable start
+unconfirmed with null counters and unknown execution identity. SIGTERM cleanup
+uses the runner's existing provider context and is covered by the proof.
+
+Proof: `python3 scripts/test-fleet-prompt-binding.py` uses real signed disposable
+dispatch and synthetic provider messages. The pre-change run failed with an
+empty task history. The repaired path verifies 60 total/30 cached tokens, account,
+model, session, receiver origin, replay, quota restriction, interruption cleanup,
+and missing/mismatched receipt unknowns. Existing runner regression tests also
+pass. Physical M5 transport, Claude attribution and shell unknowns remain next
+work; this does not prove live-provider usage.
+
+Recovery uses the provider-resolved model selected at thread creation, retained
+separately from the reported model. A reroute may make attribution's model
+unknown without losing that initial selection. The signed proof requires a
+success on a different selection to preserve the rejection, and a later success
+on the original selection to clear it. An initially unknown selection is not
+replaced by a guessed default.
+
+Accounting validation: format, lint, full tests and smoke passed with exit zero
+in `/private/tmp/n2-fleet-journal-gates.log`; the signed journal proof ran in
+both tests and smoke. Independent correctness review caught the recovery gap;
+its fail-first regression and repaired result are retained in
+`/private/tmp/n2-fleet-journal-recovery-negative.log` and
+`/private/tmp/n2-fleet-journal-recovery-positive.log`. Final correctness and
+security source reviews found no remaining actionable issue in this slice.
