@@ -1,5 +1,8 @@
 #!/bin/zsh
 set -euo pipefail
+# Provider fixtures must not inherit the invoking agent's route or credentials.
+unset CODEX_HOME CLAUDE_CONFIG_DIR GROK_HOME CURSOR_CONFIG_DIR XDG_CONFIG_HOME
+unset OPENAI_API_KEY ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN
 trap 'print -u2 -- "Test failed at line $LINENO"' ZERR
 cd "${0:A:h}/.."
 
@@ -708,5 +711,7 @@ wait_for PAUSED
 [[ "$(field 's["reason"]')" == *"doesn't hold"* ]]
 
 run_agents help | grep -Fq 'agents loop "goal"'
+
+python3 scripts/test-release-gates.py
 
 echo "All tests passed"
