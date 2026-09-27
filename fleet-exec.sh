@@ -411,6 +411,19 @@ fleet_handle_task_start() {  # <from> <payload> <dir>
     fi
     rm -f "$hts_w/spec/workspace.tar"
   fi
+  # Freeze receiver selection before publishing acceptance or preparing tools.
+  # Planning's unknown-auth override does not authorize an unbound account turn.
+  if [ "$hts_v" = codex ] && [ "$(cat "$hts_w/spec/mode" 2>/dev/null)" = prompt ]; then
+    if ! (
+      hts_profile=$(active_profile codex) &&
+      hts_config=$(config_dir "$hts_profile" codex) &&
+      /usr/bin/python3 "$scripts_dir/fleet-prompt.py" capture "$hts_d/prompt-binding.json" \
+        "$root" "$hts_profile" "$hts_config"
+    ); then
+      rm -rf "$hts_w" && rm -rf "$hts_d"
+      echo "ERR account-binding-unavailable"; return 1
+    fi
+  fi
   exec_meta_set "$hts_id" machine "$(fleet_self_machine)"
   exec_meta_set "$hts_id" role worker
   exec_meta_set "$hts_id" origin "$hts_from"
@@ -461,14 +474,19 @@ exec_prompt_supported() { case $1 in claude|codex) return 0 ;; *) return 1 ;; es
 exec_invoke_prompt() (
   eip_vendor=$1 eip_spec=$2
   exec_prompt_supported "$eip_vendor" || { echo "unsupported prompt adapter" >&2; exit 125; }
-  eip_profile=$(active_profile "$eip_vendor") || exit 125
-  eip_cfg=$(config_dir "$eip_profile" "$eip_vendor") || exit 125
-  [ -d "$eip_cfg" ] || { echo "active profile slot is missing" >&2; exit 125; }
-  eip_cli=$(vendor_cli "$eip_vendor")
-  command -v "$eip_cli" >/dev/null 2>&1 || exit 127
-  eip_env=$(vendor_env "$eip_vendor")
-  [ -n "$eip_env" ] || exit 125
-  eip_value=$(vendor_env_value "$eip_vendor" "$eip_cfg") || exit 125
+  if [ "$eip_vendor" = codex ]; then
+    eip_binding="$(exec_task_dir "$N2_FLEET_TASK")/prompt-binding.json"
+    [ -f "$eip_binding" ] || { echo "missing accepted account binding" >&2; exit 125; }
+  else
+    eip_profile=$(active_profile "$eip_vendor") || exit 125
+    eip_cfg=$(config_dir "$eip_profile" "$eip_vendor") || exit 125
+    [ -d "$eip_cfg" ] || { echo "active profile slot is missing" >&2; exit 125; }
+    eip_cli=$(vendor_cli "$eip_vendor")
+    command -v "$eip_cli" >/dev/null 2>&1 || exit 127
+    eip_env=$(vendor_env "$eip_vendor")
+    [ -n "$eip_env" ] || exit 125
+    eip_value=$(vendor_env_value "$eip_vendor" "$eip_cfg") || exit 125
+  fi
   # The prompt stays on stdin, outside process arguments and fleet journals.
   {
     printf 'Task:\n'; cat "$eip_spec/command"
@@ -477,7 +495,7 @@ exec_invoke_prompt() (
     cat "$eip_spec/context"
   } | case $eip_vendor in
     claude) env "$eip_env=$eip_value" "$eip_cli" --print ;;
-    codex) env "$eip_env=$eip_value" "$eip_cli" exec - ;;
+    codex) /usr/bin/python3 "$scripts_dir/fleet-prompt.py" run "$eip_binding" ;;
   esac
 )
 
@@ -530,8 +548,7 @@ exec_run_local() {  # <id>
   erl_pid=$!
   printf 'task %s\npid %s\n' "$erl_id" "$erl_pid" > "$(exec_active_dir)/$erl_id" 2>/dev/null || true
   exec_fanout started "$erl_id" "$(exec_meta "$erl_id" label)"
-  wait "$erl_pid"
-  erl_rc=$?
+  if wait "$erl_pid"; then erl_rc=0; else erl_rc=$?; fi
   rm -f "$(exec_active_dir)/$erl_id" 2>/dev/null || true
   exec_meta_set "$erl_id" rc "$erl_rc"
   exec_meta_set "$erl_id" ended "$(fleet_now)"

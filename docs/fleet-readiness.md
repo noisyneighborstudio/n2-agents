@@ -1159,3 +1159,29 @@ held changed the invoked configuration path. Existing loop/bridge attribution
 does not cover this fleet path. The next slice binds and journals actual Codex
 fleet prompts; this gap remains unfixed. Claude, shell-task attribution and
 physical task-attribution acceptance also remain required.
+
+### Dispatched Codex account binding
+
+Codex prompt admission now saves the receiver-selected resolved configuration,
+profile and authenticated expected account before publishing acceptance. The
+worker invokes the existing bound runner with that saved selection; changing the
+active profile cannot redirect it, and an account mismatch refuses before a turn.
+Accounts lacking supported verified identity, including API-key-only accounts,
+refuse admission with `account-binding-unavailable`. The planning option
+`--allow-unknown-auth` does not bypass execution binding. Claude and shell tasks
+are unchanged. Provider output is retained, but durable execution journaling is
+not yet integrated and remains the first queued slice.
+
+Proof: `python3 scripts/test-fleet-prompt-binding.py` exercises actual signed
+dispatch with synthetic credentials and an event-driven preparation barrier.
+It checks profile switching, account replacement, unknown identity refusal,
+stdin/context, cwd, deliverable output and terminal exit state. Bypassing only
+the account equality check in a copied runtime with `--skip-account-pin` fails
+because the changed-account task completes. No live provider calls occurred.
+The direct adapter regression retains Claude behavior and verifies Codex refuses
+without an accepted binding. `tray/build.sh` includes the new runtime helper.
+
+Binding slice validation: format, lint, full tests and smoke passed in one chain
+with exit zero, logged at `/private/tmp/n2-prompt-binding-gates.log`. Both
+independent source reviews found no actionable issue. The saved route/account
+does not freeze configuration contents or an owner-grant revision.

@@ -813,6 +813,7 @@ python3 scripts/test-fleet-session.py
 
 python3 scripts/test-physical-reconcile.py --peer local
 python3 scripts/test-task-admission-race.py
+python3 scripts/test-fleet-prompt-binding.py
 sh scripts/test-tool-disruption-approval.sh
 
 echo "All tests passed"

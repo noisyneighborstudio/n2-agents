@@ -31,10 +31,12 @@ grep -Fq 'with two lines; $(touch NEVER)' "$base/capture.stdin"
 grep -Fq 'Keep the existing API.' "$base/capture.stdin"
 test ! -e NEVER
 echo 'ok Claude receives literal multiline prompt and context in isolated profile'
-exec_invoke_prompt codex "$base/spec"
-test "$(cat "$base/capture.args")" = "$(printf 'exec\n-')"
-test "$(cat "$base/capture.env")" = "$HOME/Work/codex"
-echo 'ok Codex receives stdin prompt and isolated profile'
+# Codex now requires admission's saved binding. Its provider protocol and
+# isolation are exercised end to end in test-fleet-prompt-binding.py.
+root="$base/root"
+export N2_FLEET_TASK=11223344
+if exec_invoke_prompt codex "$base/spec" 2>/dev/null; then exit 1; fi
+echo 'ok Codex refuses invocation without an accepted binding'
 if exec_invoke_prompt cursor "$base/spec" 2>/dev/null; then exit 1; fi
 echo 'ok unsupported provider refuses prompt invocation'
 export N2_PROMPT_EXIT=23
