@@ -26,6 +26,12 @@ with tempfile.TemporaryDirectory() as cfg, open(sys.argv[2],'w') as output:
 PYCLAUDE
 "$work/test-usage" "$work/claude-current.jsonl" "$work/store-status.jsonl"
 
+# Freshness across the whole panel model: expiry, failures, history, summaries.
+awk '/^struct Profile \{/ {copy=1} copy {print} copy && /^}/ {exit}' tray/main.swift > "$work/Profile.swift"
+swiftc "$work/Profile.swift" tray/PanelModel.swift tray/Vendors.swift tray/StatusIcon.swift \
+    tray/FleetModel.swift tray/UpdateChannel.swift tests/UsageFreshnessTests.swift -o "$work/test-usage-freshness"
+"$work/test-usage-freshness"
+
 python3 scripts/test-codex-rpc.py
 python3 scripts/test-codex-run.py
 sh scripts/test-bound-agent-run.sh

@@ -14,6 +14,7 @@ struct Usage {
         case staleToken = "stale-token"
         case rateLimited = "rate-limited"
         case fetchError = "fetch-error"
+        case expired
         case restricted
         case credentialOverride = "credential-override"
         case credentialStoreUnavailable = "credential-store-unavailable"
@@ -81,6 +82,7 @@ struct Usage {
         case .staleToken: return "token expired"
         case .rateLimited: return "rate-limited"
         case .fetchError: return "check failed"
+        case .expired: return "stale reading"
         case .restricted: return "provider restriction"
         case .credentialOverride: return "credential override"
         case .credentialStoreUnavailable: return "credential store unavailable"
@@ -111,9 +113,30 @@ struct Usage {
     /// Expired observations cannot advertise capacity or select an account.
     static let maximumAge: TimeInterval = 15 * 60
     var hasObservationTime: Bool { fetchedAt != .distantPast }
-    var isFresh: Bool {
-        let age = Date().timeIntervalSince(fetchedAt)
-        return age >= -300 && age <= Self.maximumAge
+    /// Observations can come from another machine, so a few minutes of
+    /// clock skew is tolerated; anything later is not a reading of now.
+    func isFresh(at now: Date) -> Bool {
+        let age = now.timeIntervalSince(fetchedAt)
+        return age >= -300 && age < Self.maximumAge
+    }
+    var isFresh: Bool { isFresh(at: Date()) }
+    var unavailableLabel: String {
+        note == .expired || (note == .ok && !isFresh) ? "stale reading" : "usage unavailable"
+    }
+    var historyLabel: String {
+        guard fetchedAt != .distantPast else { return "No successful reading" }
+        let values = windows?.map { "\($0.label) \(Int($0.percent.rounded()))%" }
+            ?? [fiveHour.map { "5h \($0)%" }, sevenDay.map { "\(longWindow) \($0)%" }].compactMap { $0 }
+        return "Last reading: " + values.joined(separator: ", ") + " · " +
+            fetchedAt.formatted(date: .abbreviated, time: .standard)
+    }
+    /// Expiry must reach the UI even when no refresh completes.
+    static func expire(_ rows: [String: Usage], at now: Date) -> [String: Usage] {
+        rows.mapValues { row in
+            var result = row
+            if row.note == .ok && !row.isFresh(at: now) { result.note = .expired }
+            return result
+        }
     }
 
     /// Used in whichever window is tighter — the one that stops you first.
@@ -186,12 +209,15 @@ struct Usage {
         for line in text.split(separator: "\n") {
             let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
             guard f.count >= 5, let note = Note(rawValue: f[4]) else { continue }
+            let malformed = [f[1], f[2]].contains { !$0.isEmpty && $0 != "-" && percent($0) == nil }
             rows[f[0]] = Usage(fiveHour: percent(f[1]),
                                sevenDay: percent(f[2]),
                                resets: resetFormat.date(from: f[3]),
-                               note: note,
+                               note: note == .ok && malformed ? .fetchError : note,
                                sevenResets: f.count > 5 ? resetFormat.date(from: f[5]) : nil,
-                               longWindow: longWindow)
+                               longWindow: longWindow,
+                               fetchedAt: note == .ok && !malformed && (percent(f[1]) != nil || percent(f[2]) != nil)
+                                   ? Date() : .distantPast)
         }
         return rows
     }
@@ -299,8 +325,22 @@ struct Usage {
 
     /// Keep the last observation for diagnosis, but retain the failed read's
     /// status. A failed refresh must never leave a healthy capacity gauge.
-    static func merge(_ old: [String: Usage], _ new: [String: Usage]) -> [String: Usage] {
-        new.mapValues { $0 }.merging(old) { fresh, previous in
+    /// A command failure is not an authoritative empty profile list.
+    static func merge(_ old: [String: Usage], _ new: [String: Usage],
+                      commandFailed: Bool = false, profiles: [String] = []) -> [String: Usage] {
+        if commandFailed {
+            var failed = old
+            for profile in profiles where failed[profile] == nil {
+                failed[profile] = Usage(fiveHour: nil, sevenDay: nil, resets: nil,
+                                       note: .fetchError, sevenResets: nil, fetchedAt: .distantPast)
+            }
+            return failed.mapValues { row in
+                var failed = row
+                failed.note = .fetchError
+                return failed
+            }
+        }
+        return new.merging(old) { fresh, previous in
             guard fresh.note == .rateLimited || fresh.note == .fetchError else { return fresh }
             var stale = previous
             stale.note = fresh.note
@@ -415,6 +455,12 @@ final class PanelModel: ObservableObject {
     /// slots. A provider rejection affects availability without inventing a
     /// utilization percentage. nextBest independently finds an available slot.
     /// Missing readings contribute no number.
+    /// A slot on the lab's one shared login reads Default's row.
+    func effectiveUsage(_ profile: String, _ vendor: String) -> Usage? {
+        guard let row = usage[vendor]?[profile] else { return nil }
+        return row.note == .sharedLogin ? usage[vendor]?["Default"] : row
+    }
+
     func reading(_ profile: Profile, _ data: PanelData) -> (state: ProfileState, used: Int?) {
         if let pending = pendingSetups[profile.name], !pending.isEmpty {
             return (.needsSignIn(pending.count), nil)
@@ -422,7 +468,7 @@ final class PanelModel: ObservableObject {
         let slotted = data.snapshot.installedVendors.filter { profile.slots[$0.id] != nil }
         let metered = slotted.filter(\.hasUsageAPI)
         func signedIn(_ v: Vendor) -> Bool { data.snapshot.signedIn[profile.name]?[v.id] != false }
-        func row(_ v: Vendor) -> Usage? { usage[v.id]?[profile.name] }
+        func row(_ v: Vendor) -> Usage? { effectiveUsage(profile.name, v.id) }
 
         let live = metered.filter(signedIn)
         let readable = live.compactMap { row($0) }.filter { $0.isFresh && ($0.note == .ok || $0.note == .restricted) }
@@ -457,7 +503,7 @@ final class PanelModel: ObservableObject {
             data.quotaVendors
                 .filter { p.slots[$0.id] != nil && data.snapshot.signedIn[p.name]?[$0.id] != false }
                 .compactMap { v in
-                    usage[v.id]?[p.name].flatMap { u in u.availableRemaining.map { (p.name, v, $0) } }
+                    effectiveUsage(p.name, v.id).flatMap { u in u.availableRemaining.map { (p.name, v, $0) } }
                 }
         }
     }

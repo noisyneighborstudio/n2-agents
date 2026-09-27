@@ -167,6 +167,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         loadAllSessions()
         refreshFleet()
         Timer.scheduledTimer(withTimeInterval: 45, repeats: true) { [weak self] _ in self?.refreshFleet() }
+        // Expiry must still reach the UI when a collector is stuck.
+        Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.model.usage = self.model.usage.mapValues { Usage.expire($0, at: Date()) }
+        }
         Timer.scheduledTimer(withTimeInterval: 180, repeats: true) { [weak self] _ in self?.refreshPanel() }
 
         // Keep claude-as / claude-<profile> on PATH in step with the profile
@@ -327,10 +332,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         let slow = DispatchWorkItem { [weak self] in self?.model.usageSlow = true }
         usageSlowTimer = slow
         DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: slow)
+        let profiles = model.data?.profiles.map(\.name) ?? []
         DispatchQueue.global(qos: .utility).async {
             let fresh = Dictionary(uniqueKeysWithValues: vendors.map { v in
                 let r = self.runCLI(["best", "--json", "--vendor", v.id])
-                return (v.id, r.status == 0 ? Usage.parseJSON(r.output, provider: v.id, longWindow: v.longWindow) : [:])
+                return (v.id, (rows: r.status == 0 ? Usage.parseJSON(r.output, provider: v.id, longWindow: v.longWindow) : [:],
+                               failed: r.status != 0))
             })
             DispatchQueue.main.async {
                 guard generation == self.usageGeneration else { return }
@@ -338,9 +345,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
                 self.usageSlowTimer?.cancel()
                 self.model.usageSlow = false
                 var usage = self.model.usage
-                for (id, rows) in fresh {
+                for (id, result) in fresh {
+                    let rows = result.rows
                     self.usageTTL[id] = rows.values.contains { $0.note == .rateLimited } ? 900 : 300
-                    usage[id] = Usage.merge(usage[id] ?? [:], rows)
+                    usage[id] = Usage.merge(usage[id] ?? [:], rows, commandFailed: result.failed, profiles: profiles)
                 }
                 self.model.usage = usage
                 if self.usageRefetch {

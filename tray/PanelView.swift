@@ -515,6 +515,7 @@ private struct ProfileCard: View {
     private var status: (icon: String?, text: String, tint: Color) {
         switch reading.state {
         case .ready:             return (nil, "Ready", Ink.secondary)
+        case .usageUnknown:      return ("questionmark.circle", "Usage unavailable", Ink.amber)
         case .checking:          return (nil, "Checking…", Ink.secondary)
         case .usageUnknown:      return ("questionmark.circle", "Usage unknown", Ink.amber)
         case .allOut:            return ("clock", "All out", maxedRed)
@@ -615,8 +616,8 @@ private struct SlotRow: View {
                 .foregroundStyle(u.maxed ? maxedRed : .primary)
                 .frame(width: 56, alignment: .trailing)
             meta(u, b)
-        } else if usage?.note == .ok {
-            flat(nil, usage?.isFresh == false ? "stale reading" : "usage unknown", Ink.amber)
+        } else if let u = usage, u.note == .ok || u.note == .expired {
+            flat("clock", u.unavailableLabel, Ink.amber)
         } else if let note = usage?.note {
             if note == .sharedLogin {
                 flat("link", usage?.statusLabel ?? "no reading", Ink.secondary)
@@ -677,7 +678,7 @@ private struct SlotActions: View {
     @State private var copied: String?   // which row just copied
     @State private var showOwnership = false
 
-    private var usage: Usage? { model.usage[vendor.id]?[profile.name] }
+    private var usage: Usage? { model.effectiveUsage(profile.name, vendor.id) }
     private var signedOut: Bool {
         data.snapshot.signedIn[profile.name]?[vendor.id] == false
             || usage?.note == .staleToken || usage?.note == .noToken
@@ -686,8 +687,15 @@ private struct SlotActions: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            if model.usage[vendor.id]?[profile.name]?.note == .sharedLogin {
+                Text("Shared login · Default").font(.caption).foregroundStyle(Ink.secondary)
+            }
             if let u = usage {
                 UsageDetailsView(usage: u)
+            }
+
+            if let u = usage, u.used == nil {
+                Text(u.historyLabel).font(.caption).foregroundStyle(Ink.secondary)
             }
 
             group("Start", "bolt")
