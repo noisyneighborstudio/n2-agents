@@ -1114,3 +1114,14 @@ hashes failing closed. Existing operators must review and reapprove their tools.
 The fixture uses synthetic version files and markers, with no live installers,
 provider accounts or credential operations. Independent source security review
 cleared the finding; the focused proof passes and runs in both repository gates.
+
+
+## Offline packaged measurement acceptance
+
+The actual QA native binary now passes missing-window, failed-refresh and stale
+measurement presentation with bundled-CLI synthetic protocol results. Rendered
+account details remain distinct, failure timestamps stay historical, and unknown
+capacity removes next-best selection. The opt-in command, isolation boundary,
+negative controls and screenshot receipts are recorded in
+[packaged measurement acceptance](audits/packaged-measurement-freshness.md).
+Live measurements and the broader lifecycle/native acceptance remain required.

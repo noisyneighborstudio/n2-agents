@@ -1,0 +1,51 @@
+{
+  "root": "/private/tmp/n2-package-measurements-tyxwa7tl",
+  "syntheticProvider": true,
+  "installed": false,
+  "hashes": {
+    "agents": "10c9cf014fd761155b09835d178e7d90e0cc7f7b3c21e46474536942cd87d55d",
+    "usage.py": "4b7cd5d342d2dffb316f6f58c3bec73b114fdfaaba13a9c9e787ccd6472d5aa5",
+    "usage-store.py": "a632a09b4a1147edad5253b8a8e2dcd22bc75f28278214b1f0fc27977dac038d",
+    "codex-rpc.py": "73f25b039b25b7369d7d1f11d6a201df12d5771291d79ebacd4e3c2986eefc3c"
+  },
+  "networkDenied": true,
+  "accounts": {
+    "Default": "1bbd44a4f4c5097628e19633da589d5c896b76a749ec10d74ac161875a4c6f9f",
+    "Other": "c6fb096024cd7c31e6144bde39d3a1a9dfbfe287b54b0a1f3059ec13095eec9a"
+  },
+  "observedAt": {
+    "Default": "2026-09-27T06:55:38.083885+00:00",
+    "Other": "2026-09-27T06:55:38.111324+00:00"
+  },
+  "binarySha256": "bddba1ee98a8610a986be84845874fff99c7ad6c45df73441be562c4687d9d78",
+  "nativeAccountSeparation": true,
+  "negativeControlRejected": true,
+  "nativeObservationTimesPreserved": true,
+  "passed": true,
+  "sourceCommit": "b7c42e1dcffd75a4b6af578da67513933327a865",
+  "artifacts": {
+    "healthy.png": "f7dcd7c6112ee279fc9324dff53609aaad180640b27a54afdca62885c2e49f1b",
+    "healthy.txt": "390a355a760d8842ee99af3eb7e9732693e23f87dd8aa94019e62395e621ba46",
+    "healthy.ocr.txt": "78480a04caa4248d5c56af255ae349db04b81424667b293d9a7ff2e3e74ca0be",
+    "other-account.png": "dd57c9ff0446b8ae7b231b72281c7010e127886bf7d886b206045e183ce038a9",
+    "other-account.txt": "640d6b15426a9675ae74cc39c6545005013a482bb9d58bc32b6d1c7349638add",
+    "other-account.ocr.txt": "c518cde4ea4baf9349480d552e354e2c129e2f070d9ebc32a712dee0b6e3c22f",
+    "failed.png": "05f6a058b97fea02df76a0080d32eb97d76862a2f51ca910e6f1c65ef25cf3a9",
+    "failed.txt": "f151c379a74be9c48d9a78a81f111bf4ad1f0394e7529d9802ca03c72a5bdab7",
+    "failed.ocr.txt": "3e8e848853aee5f3d7e52755703ebbbdae65c9be0836d37b3e8068752a3a096a",
+    "missing.png": "b6ed6d28cc0ad141c3af99c57abff9d5824b89674d3b61b8059ea162b1b2886e",
+    "missing.txt": "f151c379a74be9c48d9a78a81f111bf4ad1f0394e7529d9802ca03c72a5bdab7",
+    "missing.ocr.txt": "3e8e848853aee5f3d7e52755703ebbbdae65c9be0836d37b3e8068752a3a096a",
+    "stale.png": "35fe9d11a0781d5de56430fc651f494f52b9e93a6001d5de8f6161fba24e63a9",
+    "stale.txt": "219a13da259bab455bca3fb9f2ff610ed8c2b51c8d82c8fba0e9258440f055b9",
+    "stale.ocr.txt": "056f1a714dee65edfd83e57a3414471f97a61d614e31324355e0117b1dd95b3a"
+  },
+  "endToEndNegative": {
+    "fixture": "/private/tmp/n2-package-measurements-aptcntez",
+    "substitution": "healthy response for failed refresh",
+    "exitStatus": 1,
+    "failure": "missing label: check failed",
+    "appRemoved": true
+  },
+  "renderedImageNegative": "Healthy capture rejected as unavailable/failure evidence"
+}
