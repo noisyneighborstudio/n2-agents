@@ -868,8 +868,11 @@ cmd_login() {
   if [ "$authed" != 1 ] && [ -n "$out_args" ]; then
     echo "Signing $(vendor_label "$v") out of '$name'…"
     # shellcheck disable=SC2086
-    ( exec_vendor "$v" "$name" "$cfg" "$cli" $out_args ) || \
+    if ( exec_vendor "$v" "$name" "$cfg" "$cli" $out_args ); then
+      vendor_clear_logged_out_credentials "$v" "$cfg" "$name" || die "credential cleanup failed for '$name' / $v"
+    else
       echo "agents: '$cli $out_args' reported an error — signing in anyway" >&2
+    fi
   fi
   login_slot
 }
@@ -938,6 +941,7 @@ cmd_reonboard() {
     # shellcheck disable=SC2086
     ( exec_vendor "$v" "$name" "$cfg" "$cli" $out_args ) || \
       die "sign-out failed for '$name' / $v. Resolve it and run agents reonboard again."
+    vendor_clear_logged_out_credentials "$v" "$cfg" "$name" || die "credential cleanup failed for '$name' / $v"
     if vendor_authed "$v" "$cfg" "$name"; then
       die "'$name' / $v still has credentials after sign-out. Resolve it before trying again."
     fi
