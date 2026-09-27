@@ -16,6 +16,8 @@ struct Usage {
         case noUsageAPI = "no-usage-api"
         /// The lab has one login for the machine; Default's row carries it.
         case sharedLogin = "shared-login"
+        /// The lab refuses work though no window shows it spent.
+        case limitReached = "limit-reached"
     }
 
     let fiveHour: Int?
