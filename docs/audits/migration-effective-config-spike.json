@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 1,
+  "providerVersion": "codex-cli 0.157.1",
+  "sourceRevision": "36650394c5b38c2990ccf2a3457165ca3e9d9726",
+  "scope": "Installed CLI, empty disposable HOME/CODEX_HOME, explicit secret_auth_storage=false, network denied by sandbox-exec; read-only config RPC and features list only.",
+  "assertions": [
+    "omitted store observed as file",
+    "explicit file and ephemeral preserved",
+    "legacy profile rejected by both config/read and features list",
+    "no auth.json created in any case"
+  ],
+  "sources": [
+    {
+      "path": "codex-rs/app-server/src/config_manager.rs",
+      "sha256": "9aab02f8480f984ed1421293cd6294d86b044b9f3cc01dc424ac5a92d33c084c"
+    },
+    {
+      "path": "codex-rs/app-server/src/config_manager_service.rs",
+      "sha256": "cb5e0862e3402aed6349d870f4a8b38472ad1835edd906f797ea1e3aeeac8209"
+    },
+    {
+      "path": "codex-rs/app-server/src/request_processors/config_processor.rs",
+      "sha256": "66d0f303742fc268f9f4557cc01418c89c85854ff58f3feb7321e19a891b1db2"
+    },
+    {
+      "path": "codex-rs/app-server-protocol/src/protocol/v2/config.rs",
+      "sha256": "8187edb07de0259f5a96927ca69b749a7ba9049062bf2ef2eb1ff9c7d8696447"
+    },
+    {
+      "path": "codex-rs/cli/src/cloud_config.rs",
+      "sha256": "4e0fee9c789fb2752b01145637cfd01e88a048fff770ba33552d88b91894e939"
+    },
+    {
+      "path": "codex-rs/cli/src/login.rs",
+      "sha256": "34f8a089a6907d9791e4bb858f44fdee56350b9898daad45c2065325f9e6bef7"
+    },
+    {
+      "path": "codex-rs/cli/src/main.rs",
+      "sha256": "88fd769091e831d50b99f8b5b573424c86a2323665a840461b191d62f47bb817"
+    },
+    {
+      "path": "codex-rs/core/src/config/auth_keyring.rs",
+      "sha256": "520a3f2232207ece119fdc296640030a7acfd3909ba14f40d938b6d9fb4180f4"
+    },
+    {
+      "path": "codex-rs/core/src/config/edit/bedrock.rs",
+      "sha256": "1e453fe702ea0a8656512de44aafee55fef7164cdfe4baff0266b7f6e407e576"
+    },
+    {
+      "path": "codex-rs/core/src/config/mod.rs",
+      "sha256": "0ca738441c0c0a3085e1d06da7606747f79f7d66f04cf363052c9b28a1abeaff"
+    }
+  ],
+  "observations": [
+    {
+      "case": "default",
+      "featuresExit": 0,
+      "secretAuthRow": [
+        "secret_auth_storage                      stable             false"
+      ],
+      "config": {
+        "cli_auth_credentials_store": "file",
+        "model_provider": null,
+        "profile": null,
+        "features": {
+          "secret_auth_storage": false
+        },
+        "profiles": {}
+      },
+      "requirements": {
+        "requirements": null
+      },
+      "authFileCreated": false
+    },
+    {
+      "case": "file",
+      "featuresExit": 0,
+      "secretAuthRow": [
+        "secret_auth_storage                      stable             false"
+      ],
+      "config": {
+        "cli_auth_credentials_store": "file",
+        "model_provider": null,
+        "profile": null,
+        "features": {
+          "secret_auth_storage": false
+        },
+        "profiles": {}
+      },
+      "requirements": {
+        "requirements": null
+      },
+      "authFileCreated": false
+    },
+    {
+      "case": "ephemeral",
+      "featuresExit": 0,
+      "secretAuthRow": [
+        "secret_auth_storage                      stable             false"
+      ],
+      "config": {
+        "cli_auth_credentials_store": "ephemeral",
+        "model_provider": null,
+        "profile": null,
+        "features": {
+          "secret_auth_storage": false
+        },
+        "profiles": {}
+      },
+      "requirements": {
+        "requirements": null
+      },
+      "authFileCreated": false
+    },
+    {
+      "case": "profile",
+      "featuresExit": 1,
+      "secretAuthRow": [],
+      "config": {
+        "cli_auth_credentials_store": null,
+        "model_provider": null,
+        "profile": null,
+        "features": null,
+        "profiles": null
+      },
+      "requirements": {
+        "requirements": null
+      },
+      "authFileCreated": false,
+      "configError": {
+        "code": -32603,
+        "message": "failed to resolve feature override precedence: legacy `profile = \"test\"` config is no longer supported; use `--profile test` with `test.config.toml` instead"
+      }
+    }
+  ],
+  "notProven": [
+    "managed MDM/system/cloud overrides",
+    "equivalence to CLI logout configuration",
+    "OS Keychain behavior",
+    "provider revocation",
+    "installed binary provenance from matching version",
+    "absence of OS Keychain access; the sandbox denied network only"
+  ]
+}
