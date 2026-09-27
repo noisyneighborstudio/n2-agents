@@ -35,4 +35,6 @@ python3 scripts/test-native-notification.py
 sh scripts/test-owner-auth-status.sh
 sh scripts/test-fleet-settings.sh
 
+python3 scripts/test-physical-reconcile.py --peer local
+
 exec python3 scripts/test-codex-rpc.py ParentLifetimeTests

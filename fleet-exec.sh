@@ -408,7 +408,8 @@ fleet_handle_task_start() {  # <from> <payload> <dir>
   exec_meta_set "$hts_id" label "$hts_lab"
   exec_meta_set "$hts_id" created "$(fleet_now)"
   exec_set_state "$hts_id" accepted
-  exec_run_local "$hts_id" &
+  # A detached task must not retain the request transport descriptors.
+  exec_run_local "$hts_id" </dev/null >"$hts_d/worker.log" 2>&1 &
   printf 'accepted %s\n' "$hts_id" > "$3/out"
   fleet_ok "$3/out"
 }
