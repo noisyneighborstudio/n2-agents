@@ -22,6 +22,8 @@ protocol SetupHost: AnyObject {
     func setupStartLogin(profile: String, vendor: String) -> NativeAuthSession?
     func setupCopyLoginCommand(profile: String, vendor: String)
     func setupPending(profile: String, labs: [String]?)
+    /// A login landed: the panel shows it and reads its usage now.
+    func setupLoginLanded(profile: String)
     func setupOpen(profile: String, vendor: String)
     func setupMakeActive(profile: String)
     var setupTerminalName: String { get }
@@ -155,18 +157,21 @@ final class ProfileSetup: NSObject, NSWindowDelegate {
 
     private func apply(_ authed: [String: Bool]) {
         var advanced = false
+        var landed = false
         for lab in model.labs where authed[lab] == true {
             let state = model.states[lab]
             if state == .signingIn && model.authSession?.isRunning == true { continue }
             if state == .failed && model.authSession != nil { continue }
             guard state != .signedIn, state != .skipped else { continue }
             if state == .signingIn || state == .failed { advanced = true }
+            landed = true
             withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { model.states[lab] = .signedIn }
         }
         for lab in model.labs where model.states[lab] == nil {
             model.states[lab] = .waiting
         }
         persist()
+        if landed { host?.setupLoginLanded(profile: model.profile) }
         if advanced { advance() }
     }
 

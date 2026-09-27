@@ -43,7 +43,7 @@ struct StatusIcon {
 
     /// Rendered once into flat 1x and 2x bitmaps: a lazily drawn image
     /// re-runs its handler on every menu bar repaint, and this one is costly.
-    func image(remaining: Int?, dark: Bool) -> NSImage {
+    func image(remaining: Int?, dark: Bool, attention: Bool = false) -> NSImage {
         let image = NSImage(size: Self.size)
         for scale in [1, 2] {
             let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(Self.size.width) * scale,
@@ -55,6 +55,7 @@ struct StatusIcon {
             NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
             draw(remaining: remaining, dark: dark, in: NSRect(origin: .zero, size: Self.size))
+            if attention { Self.drawWarning(in: NSRect(origin: .zero, size: Self.size)) }
             NSGraphicsContext.restoreGraphicsState()
             image.addRepresentation(rep)
         }
@@ -98,6 +99,14 @@ struct StatusIcon {
         border.lineWidth = 1
         border.stroke()
         NSGraphicsContext.restoreGraphicsState()
+    }
+
+    /// A profile needs signing in: the system warning triangle, bottom right.
+    private static func drawWarning(in rect: NSRect) {
+        guard let symbol = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.preferringMulticolor()) else { return }
+        let side = rect.width / 2
+        symbol.draw(in: NSRect(x: rect.maxX - side, y: rect.minY, width: side, height: side))
     }
 
     /// A QA build's icon carries an orange "QA" tag, so it can't be mistaken
