@@ -1,64 +1,56 @@
 # Slice queue
 
-The active integration queue is on `dougbot/integration-usage-ranking`, based
-on main through PRs #30, #31 and #32. Work on the entries below happens in the integration
-checkout, not this fleet checkout. Its `docs/slices.md` is authoritative;
-these entries mirror it at the time of this queue handoff.
-
-The old fleet queue is deferred: Claude crash accounting, hostile archives,
-notification acceptance and provider logout remain acceptance requirements in
-docs/fleet-readiness.md. Do not restart those tasks ahead of independent delivery.
-Unproven provider logout remains blocked on provider scope evidence, not retries.
-The complete deferred briefs are retained in `ad27ac9:docs/slices.md`. In particular,
-`loop-claude-crash-usage` still needs proof that loop `error_during_execution`
-zero placeholders remain unknown. The dispatched Claude accounting fix does not
-satisfy that requirement; retain successful measured-zero and ordinary-failure controls.
+This is the fleet queue for PR #3, now merged with main through a9221bf. Integrate
+main into this branch as each main change lands. Fleet readiness requirements are
+in `docs/fleet-readiness.md`; the deferred fleet briefs are in `ad27ac9:docs/slices.md`.
+No merge to main, publication, installation or machine enrollment without explicit
+authorization.
 
 ## Gates
 
-Every push runs `.github/workflows/ci.yml` on macOS 26. Run the same gates locally:
-
-- Formatting: `scripts/check.sh format` checks introduced whitespace errors against the previous commit or `N2_CHECK_BASE`.
-- Lint: `scripts/check.sh lint` checks tracked Python syntax with compiler warnings as errors and shell entry-point syntax. It does not claim style or type analysis.
-- Tests: `scripts/test.sh`.
-- Smoke: `scripts/smoke.sh` runs the real CLI with throwaway profiles and a signed synthetic owner. It needs no provider credentials.
-
-A slice is complete only after these commands pass locally and CI passes on its pushed commit. Use one commit with a `Slice: <slug>` trailer. Remove the completed queue entry in that commit. No merge or deployment.
+Every push runs `.github/workflows/ci.yml`, which runs `scripts/verify.sh`: format,
+lint, `scripts/test.sh` and `scripts/smoke.sh`, in that order. Run it locally first.
+A slice is complete only after these pass locally and CI passes on its pushed
+commit. One commit with a `Slice: <slug>` trailer; remove the entry in that commit.
 
 ## Queue
 
-1. **Keep Codex window resets independent** (`integration-codex-windows`).
-   Behavior: five-hour exhaustion cannot overwrite a measured weekly percentage.
-   Proof: 100/30 selects only the short reset, weekly-only exhaustion and denial
-   without windows remain unavailable rather than inventing fresh capacity.
-   Scope: parser and consumers required for this behavior, no account changes.
-   Budget: 200 changed lines; stop at 400.
+1. **Keep owner-managed slots out of account reset** (`fleet-reonboard-owner-slots`).
+   Behavior: "Sign Out of All Accounts" and `agents reonboard` leave owner-managed
+   Codex slots signed in on their owner, say so, and finish every other slot. Today
+   the reset stops at such a slot after signing out the slots before it.
+   Proof: reonboard with a synthetic owner-managed Codex slot between two ordinary
+   slots completes, keeps the owner binding and credentials, and lists the kept slot;
+   the setup queue offers no local sign-in for it. Control: an ordinary slot whose
+   logout fails still stops the reset.
+   Scope: reset and setup routing only; no provider logout or owner-side changes.
 
-2. **Verify provider-scoped readouts** (`integration-scoped-readouts`).
-   Behavior: applicable provider restrictions and their observation age remain visible.
-   Proof: canonical protocol fixtures and isolated package acceptance for selected models.
-   Scope: split before implementation if the native-reader dependency inventory exceeds
-   250 changed lines; no credential migration.
+2. **Build and accept the merged fleet candidate** (`fleet-candidate-package`).
+   Behavior: a QA package built from this branch passes packaged CLI and native
+   acceptance for enrollment, sync, dispatch and usage without touching live roots.
+   Proof: isolated package build, signature check, packaged acceptance receipts.
+   Scope: prepare only; no live install, enrollment or publication.
 
-3. **Prepare one accepted stable promotion** (`integration-stable-candidate`).
-   Behavior: one accepted improvement has a reviewable candidate with no unaccepted
-   intervening changes. Proof: source SHA, exact-commit gates, continuous artifact
-   digest and installed-behavior receipt; separate stable receipts after approval.
-   Scope: prepare only; no merge, publish, install or credential changes without
-   explicit authorization. No dependency on unrelated fleet completion.
+3. **Independent adversarial and security review** (`fleet-security-review`).
+   Behavior: reviewed findings are fixed or recorded with evidence.
+   Proof: review report against the candidate SHA; fixes each carry their own proof.
+   Scope: the merged fleet diff against main.
 
 ## Noticed
 
-- The inherited full-suite quota fixture asserted eight rejections but failed once
-  at scripts/test.sh:682 during freshness validation. The unchanged loop source
-  passed in the prior slice. Retain the assertion; investigate a recurrence with
-  fixture receipts rather than changing usage-display code to accommodate it.
+- The inherited full-suite quota fixture fails intermittently (main saw it at
+  scripts/test.sh:682 and :685). Suspect: tests/fake-loop-agent.sh decrements
+  worker-quota-<profile> without a lock, so concurrent chunks on one slot can both
+  fail while the counter drops once. Keep the assertion; capture turns on failure.
+
+- Codex setup sign-in runs fleet's owner-aware plan in a terminal; other labs use
+  main's in-app session. In-app Codex sign-in needs the plan resolved before the
+  session starts.
 
 - Fleet crash-accounting, archive safety, notifications and provider logout stay
-  deferred on PR #3. They do not block independent measurement fixes. No dispatch
-  release before archive proof; no unproven credential retirement.
-- T3 adapter remains downstream of its actual profile contract, not unrelated
-  migration completion. Resume must preserve the original account binding.
+  deferred. No dispatch release before archive proof; no unproven credential retirement.
+- T3 adapter remains downstream of its actual profile contract. Resume must
+  preserve the original account binding.
 
 - Claude fleet denials now recover by evidenced reset; an ordinary parent success cannot establish subagent or spending recovery. Scope-specific successful recovery evidence remains required before claiming complete allowance recovery. See `docs/fleet-readiness.md`.
 

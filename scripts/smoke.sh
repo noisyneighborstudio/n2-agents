@@ -22,6 +22,7 @@ test "$(cat "$smoke_root/route")" = "$HOME/.n2-agents/Fixture/codex"
 echo 'Smoke: real CLI routes to isolated profile.'
 sh scripts/test-usage.sh
 python3 scripts/test-usage-ranking.py
+sh scripts/test-profile-setup.sh
 python3 scripts/test-fleet-auth-bridge.py \
   BridgeIntegrationTests.test_n2_session_browser_and_resume_discover_original_profile \
   BridgeIntegrationTests.test_killed_record_publisher_recovers_in_discovery_and_resume \

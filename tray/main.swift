@@ -76,7 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     private var statusIcon: StatusIcon?
     private var quotaWatch: AnyCancellable?
     private var menuBarAppearance: NSKeyValueObservation?
-    private var drawnIcon: (remaining: Int?, dark: Bool)?
+    private var drawnIcon: (remaining: Int?, dark: Bool, attention: Bool)?
     private lazy var quotaToast = QuotaToast(anchor: statusItem.button!) { [weak self] in self?.togglePanel() }
     // Built on first use (an open, or the first quota reading): it anchors to
     // the status item's button.
@@ -142,7 +142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         statusItem.button?.action = #selector(togglePanel)
         if !UpdateChannel.isQABuild { hotKey.register(Shortcut.load()) }
         // @Published fires before the store, so read the model a turn later.
-        quotaWatch = model.$data.combineLatest(model.$usage)
+        quotaWatch = model.$data.combineLatest(model.$usage, model.$pendingSetups)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.quotaChanged() }
         // The drained part is drawn in the menu bar's ink, which follows the
@@ -201,14 +201,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     private func drawStatusIcon() {
         guard let icon = statusIcon, let button = statusItem.button else { return }
         let match = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua, .vibrantLight, .vibrantDark])
-        let drawn = (remaining: model.remaining, dark: match == .darkAqua || match == .vibrantDark)
+        let drawn = (remaining: model.remaining, dark: match == .darkAqua || match == .vibrantDark,
+                     attention: model.needsAttention)
         // Setting the image re-resolves the button's appearance, which fires
         // the observer that calls this: redraw only on a real change, or the
         // two feed each other forever.
         statusItem.button?.toolTip = model.capacitySummary
         if let last = drawnIcon, last == drawn { return }
         drawnIcon = drawn
-        let image = icon.image(remaining: drawn.remaining, dark: drawn.dark)
+        let image = icon.image(remaining: drawn.remaining, dark: drawn.dark, attention: drawn.attention)
         button.image = UpdateChannel.isQABuild ? StatusIcon.taggedQA(image) : image
     }
 
@@ -385,9 +386,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
                setup?.model.profile == profile {
                 setup?.loginFinished(vendor: vendor)
             }
-            usageFetchedAt.removeAll()
-            refreshPanel()
-            refreshUsage(force: false, onDemand: true)
+            loginsChanged()
         }
     }
 
@@ -772,6 +771,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         defaults.set(model.pendingSetups, forKey: CacheKey.pendingSetups)
     }
 
+    func setupLoginLanded(profile: String) {
+        loginsChanged()
+    }
+
+    // A login changed: re-read the panel and every lab's usage now, not when
+    // the cached reading expires.
+    private func loginsChanged() {
+        usageFetchedAt.removeAll()
+        refreshPanel()
+        refreshUsage(force: false, onDemand: true)
+    }
+
     func setupOpen(profile: String, vendor: String) {
         openSession(profile: profile, vendor: vendor, terminal: nil)
     }
@@ -1036,6 +1047,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         }
         accountSignOut = controller
         controller.show()
+    }
+
+    // Reads logins fresh, then queues only the profiles missing one through
+    // the same setup window reset uses.
+    func signInMissingAccounts() {
+        guard !model.resettingAccounts else { return }
+        closeSettings()
+        DispatchQueue.global(qos: .userInitiated).async {
+            let porcelain = self.runCLI(["porcelain"])
+            DispatchQueue.main.async {
+                guard !self.model.resettingAccounts else { return }
+                guard porcelain.status == 0 else {
+                    self.alert("Couldn't check sign-ins", porcelain.output)
+                    return
+                }
+                let missing = Snapshot.parse(porcelain.output).missingSignIns(pending: self.model.pendingSetups)
+                guard !missing.isEmpty else {
+                    self.alert("All accounts are signed in", "Every listed profile has a login for each of its labs.")
+                    return
+                }
+                self.setup?.finishLater()
+                for entry in missing { self.setupPending(profile: entry.profile, labs: entry.labs) }
+                self.accountSetupQueue = missing.map(\.profile)
+                self.openNextAccountSetup()
+            }
+        }
     }
 
     func installCLI() -> String {

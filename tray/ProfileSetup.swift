@@ -22,6 +22,8 @@ protocol SetupHost: AnyObject {
     func setupStartLogin(profile: String, vendor: String) -> NativeAuthSession?
     func setupCopyLoginCommand(profile: String, vendor: String)
     func setupPending(profile: String, labs: [String]?)
+    /// A login landed: the panel shows it and reads its usage now.
+    func setupLoginLanded(profile: String)
     func setupOpen(profile: String, vendor: String)
     func setupMakeActive(profile: String)
     var setupTerminalName: String { get }
@@ -155,18 +157,21 @@ final class ProfileSetup: NSObject, NSWindowDelegate {
 
     private func apply(_ authed: [String: Bool]) {
         var advanced = false
+        var landed = false
         for lab in model.labs where authed[lab] == true {
             let state = model.states[lab]
             if state == .signingIn && model.authSession?.isRunning == true { continue }
             if state == .failed && model.authSession != nil { continue }
             guard state != .signedIn, state != .skipped else { continue }
             if state == .signingIn || state == .failed { advanced = true }
+            landed = true
             withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { model.states[lab] = .signedIn }
         }
         for lab in model.labs where model.states[lab] == nil {
             model.states[lab] = .waiting
         }
         persist()
+        if landed { host?.setupLoginLanded(profile: model.profile) }
         if advanced { advance() }
     }
 
@@ -217,12 +222,14 @@ final class ProfileSetup: NSObject, NSWindowDelegate {
         model.authSession?.cancel()
         let session = host?.setupStartLogin(profile: model.profile, vendor: vendor)
         model.authSession = session
-        session?.onFinish = { [weak self] status in
-            self?.loginFinished(vendor: vendor, succeeded: status == 0)
+        session?.onFinish = { [weak self, weak session] status in
+            guard let self, let session, self.model.authSession === session else { return }
+            self.loginFinished(vendor: vendor, succeeded: status == 0)
         }
     }
 
-    func tryAgain(_ vendor: String) {
+    func reopenLogin(_ vendor: String) {
+        guard !closed, model.states[vendor] == .signingIn || model.states[vendor] == .failed else { return }
         model.states[vendor] = .signingIn
         startLogin(vendor)
     }
@@ -428,9 +435,10 @@ private struct LabRow: View {
                 Text(verbatim: label).font(.system(size: 13, weight: .medium))
                 Text(detail).font(.system(size: 11)).foregroundStyle(Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                if state == .failed {
+                if state == .signingIn || state == .failed {
                     HStack(spacing: 6) {
-                        Button("Try again") { actions.tryAgain(lab) }
+                        Button(state == .signingIn ? "Reopen" : "Try again") { actions.reopenLogin(lab) }
+                            .help("Restart sign-in for this provider and profile")
                         Button("Copy command") { actions.copyCommand(lab) }
                     }
                     .controlSize(.small)

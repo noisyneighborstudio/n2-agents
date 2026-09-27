@@ -68,6 +68,17 @@ struct Snapshot {
         return result
     }
 
+    /// Profiles, in order, with labs known to be signed out or left pending by
+    /// setup. Labs whose login can't be inspected are not guessed at.
+    func missingSignIns(pending: [String: [String]]) -> [(profile: String, labs: [String])] {
+        profiles.compactMap { p in
+            let labs = installedVendors.map(\.id).filter {
+                p.slots[$0] != nil && (signedIn[p.name]?[$0] == false || pending[p.name]?.contains($0) == true)
+            }
+            return labs.isEmpty ? nil : (p.name, labs)
+        }
+    }
+
     static let empty = Snapshot(vendors: [], profiles: [], active: "Default")
 
     // Lines are tab-separated records tagged V / P / A. Anything unrecognised is

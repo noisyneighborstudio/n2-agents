@@ -515,7 +515,6 @@ private struct ProfileCard: View {
     private var status: (icon: String?, text: String, tint: Color) {
         switch reading.state {
         case .ready:             return (nil, "Ready", Ink.secondary)
-        case .usageUnknown:      return ("questionmark.circle", "Usage unavailable", Ink.amber)
         case .checking:          return (nil, "Checking…", Ink.secondary)
         case .usageUnknown:      return ("questionmark.circle", "Usage unknown", Ink.amber)
         case .allOut:            return ("clock", "All out", maxedRed)

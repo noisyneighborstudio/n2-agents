@@ -216,7 +216,7 @@ struct Usage {
                                note: note == .ok && malformed ? .fetchError : note,
                                sevenResets: f.count > 5 ? resetFormat.date(from: f[5]) : nil,
                                longWindow: longWindow,
-                               fetchedAt: note == .ok && !malformed && (percent(f[1]) != nil || percent(f[2]) != nil)
+                               fetchedAt: (note == .ok || note == .restricted) && !malformed && (percent(f[1]) != nil || percent(f[2]) != nil)
                                    ? Date() : .distantPast)
         }
         return rows
@@ -534,6 +534,12 @@ final class PanelModel: ObservableObject {
         return (slotsLeft.count, expected)
     }
 
+    /// A lab known signed out, or setup left unfinished: the icon warns.
+    var needsAttention: Bool {
+        guard let data else { return false }
+        return !data.snapshot.missingSignIns(pending: pendingSetups).isEmpty
+    }
+
     var remaining: Int? {
         guard let minimum = slotsLeft.map(\.left).min() else { return nil }
         let coverage = measurementCoverage
@@ -634,6 +640,7 @@ protocol PanelActions: AnyObject {
     func showSettings()
     func closeSettings()
     func reonboardAccounts()
+    func signInMissingAccounts()
     func installCLI() -> String
     func addVendor(profile: String)
     func deleteProfile(_ name: String)
