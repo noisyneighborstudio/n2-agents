@@ -2127,18 +2127,18 @@ sync_tool_line_ok() {  # sync_tool_line_ok <line>
 # utilities the fleet manages; this file says which exact commands THIS machine
 # has agreed to run. A record arrives, replicates and is listed as normal, but
 # an install or check command this operator has never approved does not run
-# until `agents fleet tools approve <name>` says so. Approval is keyed on the
-# commands, not on the version, so the agreed behavior is unchanged where it
-# matters: a version bump that keeps the approved commands applies
-# automatically, active-task deferral and all. Adding a tool here is itself the
-# operator's word, so `tools add` approves what it stores.
+# until `agents fleet tools approve <name>` says so. Approval covers the commands
+# and disruption classification. A peer cannot remove active-task deferral by
+# changing only that flag. Version-only updates retain approval and deferral.
+# Legacy command-only approvals require renewed local consent. Adding a tool
+# here is the operator's word, so `tools add` approves what it stores.
 sync_tools_approved_file() { echo "$fleet_root/tools/approved"; }
 
-sync_tool_key() {  # sync_tool_key <line> -> digest of the commands it would run
-  # The stored (escaped) fields, so the key covers exactly the bytes that
-  # reach `sh -c`. Separated by a newline, which neither escaped field can
-  # contain, so no pair of commands can collide with another pair.
-  printf '%s\n%s\n' "$(sync_tool_field "$1" 4)" "$(sync_tool_field "$1" 3)" |
+sync_tool_key() {  # <line> -> digest of commands and disruption classification
+  # Stored fields are escaped and cannot contain literal newlines, so the
+  # separators bind the exact command bytes and policy without ambiguity.
+  printf '%s\n%s\n%s\n' "$(sync_tool_field "$1" 4)" "$(sync_tool_field "$1" 3)" \
+    "$(sync_tool_field "$1" 5)" |
     shasum -a 256 2>/dev/null | awk '{print substr($1,1,32)}'
 }
 

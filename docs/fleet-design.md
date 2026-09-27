@@ -1806,12 +1806,13 @@ single 1-75 tally; prefer one run when the caller can afford the wall clock.
 Three things the sync hardening deliberately does not do, recorded so a later
 reader does not mistake them for oversights.
 
-**Approval is per command, not per tool lineage.** `tools approve <name>`
-records the exact install and check commands it saw. A peer that later edits
-either string produces a new pending approval, which is the point — but it also
-means a purely cosmetic edit (a reordered flag, a changed mirror URL) costs the
-operator another approval on every machine. There is no similarity heuristic,
-and adding one would be the same trust decision made by guesswork.
+**Approval covers exact commands and disruption classification.**
+`tools approve <name>` records the install command, check command and disruption
+flag it saw. Changing any of these requires local consent, even a cosmetic
+command edit. Version-only updates preserve approval and active-task deferral.
+Legacy command-only approvals lack disruption consent and become pending;
+review the record and run `agents fleet tools approve <name>` to renew approval.
+Neither checks nor installers run while approval is pending.
 
 **The `mcp` class is gated wholesale, not field by field.** MCP entries carry
 secrets in shapes the key-name scanner cannot see — `--api-key` in `args`, a

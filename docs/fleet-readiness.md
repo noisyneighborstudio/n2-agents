@@ -22,7 +22,7 @@ about 17 hours old; they do not establish fresh fleet headroom.
 - [x] Reverify enrollment and transport: 339 passed, zero failures/skips, live SSH required.
 - [x] Reverify profile/configuration/credential sync, conflicts and machine exceptions: 639 checks pass across all 75 sections.
 - [ ] Complete provider-specific authentication lifecycle evidence and explicit limitations.
-- [ ] Reverify managed-tool authorization, replication and safe update deferral. Prior barriers passed, but the September 27 source review found that removing the replicated disruptive flag can retain approval and bypass deferral.
+- [x] Reverify managed-tool authorization, replication and safe update deferral. Signed-peer regression now covers disruption-classification consent, version-only updates, legacy approvals and both install paths; independent source security recheck is clear.
 - [x] Verify dispatch eligibility, preferences and expected-completion ranking: 97 execution checks and focused preference/prompt/delivery checks pass.
 - [x] Verify ordinary dirty and linked-workspace/context handoff and declared deliverable destinations. Nested submodule metadata remains a documented limitation.
 - [ ] Verify native and in-app notifications, disconnection handling and reconciliation. Native parser/action tests pass; GUI end-to-end checks remain.
@@ -1075,7 +1075,7 @@ enrollment/revocation, replication/conflicts, managed tools, task/workspace/resu
 handling, session import and usage journal trust. It found two P2 issues:
 non-atomic task-ID admission and disruptive-classification removal retaining
 installer approval. Task admission is repaired and independently rechecked below;
-the managed-tool finding remains queued. This source review did not perform runtime/adversarial archive probes,
+the managed-tool finding is repaired below. This source review did not perform runtime/adversarial archive probes,
 credential access or live-provider operations; those requirements remain.
 
 
@@ -1097,3 +1097,19 @@ recover or rerun it. The test runs in both repository and smoke gates.
 Independent correctness review reran the focused proof successfully. Independent
 source security review cleared the admission and cleanup findings. No provider
 jobs, real peers or credentials were used.
+
+
+## Managed-tool disruption consent
+
+`sh scripts/test-tool-disruption-approval.sh` reproduces the old classification
+bypass with signed isolated replication. Removing the disruption flag while work
+was active ran both the version check and installer without renewed approval.
+Approval now binds the exact commands and disruption flag. Both flag directions
+remain pending until local consent, and pending records run neither command.
+
+The proof covers bulk and named installation, renewed consent, version-only
+updates preserving approval and active-work deferral, and legacy command-only
+hashes failing closed. Existing operators must review and reapprove their tools.
+The fixture uses synthetic version files and markers, with no live installers,
+provider accounts or credential operations. Independent source security review
+cleared the finding; the focused proof passes and runs in both repository gates.
