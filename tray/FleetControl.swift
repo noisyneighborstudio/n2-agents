@@ -361,9 +361,13 @@ extension AppDelegate {
     /// its machine was unreachable), and the CLI has no verb that discards the
     /// feed. Labelling it "Clear" promised the opposite of what it does.
     func fleetReconcileTasks() {
-        let r = runCLI(["fleet", "task", "reconcile"])
-        if r.status != 0 { alert("Couldn't reconcile tasks", r.output) }
-        refreshFleet()
+        DispatchQueue.global(qos: .userInitiated).async {
+            let r = self.runCLI(["fleet", "task", "reconcile"])
+            DispatchQueue.main.async {
+                if r.status != 0 { self.alert("Couldn't reconcile tasks", r.output) }
+                self.refreshFleet()
+            }
+        }
     }
 
     func fleetOpenTerminal(_ argv: [String]) {
