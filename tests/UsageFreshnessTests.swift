@@ -28,6 +28,10 @@ import Foundation
         check(expired.note == .expired && expired.used == nil, "clock expiry must invalidate displayed data")
         check(expired.fiveHour == 18 && expired.fetchedAt == now, "expiry must retain history")
         check(expired.historyLabel.contains("18%"), "history should identify previous measured value")
+        check(expired.showsHistory && !fresh.showsHistory, "only an unavailable reading repeats its history")
+        var current = fresh
+        current.note = .restricted
+        check(!current.showsHistory, "a current restriction shows its buckets, not a history line")
         let failed = Usage.merge(["Fixture": fresh], [:], commandFailed: true)
         check(failed["Fixture"]?.note == .fetchError && failed["Fixture"]?.used == nil, "command failure erased history")
         check(failed["Fixture"]?.fetchedAt == now, "command failure reset age")

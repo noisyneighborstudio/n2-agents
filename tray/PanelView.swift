@@ -693,7 +693,7 @@ private struct SlotActions: View {
                 UsageDetailsView(usage: u)
             }
 
-            if let u = usage, u.used == nil {
+            if let u = usage, u.showsHistory {
                 Text(u.historyLabel).font(.caption).foregroundStyle(Ink.secondary)
             }
 

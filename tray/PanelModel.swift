@@ -123,6 +123,9 @@ struct Usage {
     var unavailableLabel: String {
         note == .expired || (note == .ok && !isFresh) ? "stale reading" : "usage unavailable"
     }
+    /// A current reading already shows its figures; only an unavailable one
+    /// needs its last dated reading spelled out.
+    var showsHistory: Bool { !(isFresh && (note == .ok || note == .restricted) && hasObservationTime) }
     var historyLabel: String {
         guard fetchedAt != .distantPast else { return "No successful reading" }
         let values = windows?.map { "\($0.label) \(Int($0.percent.rounded()))%" }
