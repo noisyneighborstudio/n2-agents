@@ -52,6 +52,13 @@ import Foundation
         }
         check(Usage.parse("Fixture\t-\t20\t-\tok")["Fixture"]?.used == 20,
               "an absent window is not malformed")
+        // The collector's Codex rows: a spent 5h window beside a weekly one at
+        // 30%, and a refusal no window accounts for.
+        let spent = Usage.parse("Fixture\t100\t30\t2026-09-26T03:24\tok\t2026-09-26T08:24")["Fixture"]!
+        check(spent.maxed && spent.sevenDay == 30, "5h exhaustion must not overwrite the weekly figure")
+        check(spent.maxedUntil == Date(timeIntervalSince1970: 1790393040), "a spent 5h window returns at its own reset")
+        let denied = Usage.parse("Fixture\t-\t80\t-\tlimit-reached\t2026-09-26T08:24")["Fixture"]
+        check(denied?.note == .limitReached && denied?.used == nil, "a refusal must not read as capacity")
         func vendor(_ id: String) -> Vendor {
             Vendor(id: id, installed: true, desktop: "none", usage: "oauth",
                    label: id, sessions: "none", monogram: id, desktopName: "",
@@ -79,6 +86,9 @@ import Foundation
         model.usage["codex"]?["Default"] = expired
         check(model.reading(profile, data).state == .usageUnknown && model.remaining == nil,
               "shared expired measurement must not claim capacity")
+        model.usage["codex"] = ["Fixture": denied!]
+        check(model.reading(profile, data).state == .usageUnknown && model.remaining == nil,
+              "a refused slot must not claim capacity")
         let fallbackVendor = Vendor(id: "opencode", installed: true, desktop: "none", usage: "none",
                                     label: "Fallback", sessions: "none", monogram: "F",
                                     desktopName: "", desktopBundle: "", longWindow: "7d")
