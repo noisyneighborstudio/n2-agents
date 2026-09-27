@@ -1,0 +1,58 @@
+{
+  "scope": "Exact production refreshFleet method and FleetModel compiled with synthetic runCLI responses. Dispatch wrapper tracks real global/main queues; native main RunLoop drains work. Announcement/attention endpoints are counters, not OS delivery. No packaged app or physical peer acceptance.",
+  "sourceCommit": "6409852c784e86a9aab1d046471a6047315c77df",
+  "sources": {
+    "tray/FleetControl.swift": "cfb1522c5138b975c940fe1cb1313ae9d2e954b948808d0d2bd89d3dc14afbca",
+    "tray/FleetModel.swift": "aabd1dbf831a9a7dccae607bbed003f2b2bc4092e523b22aa93365ad258af16e",
+    "tray/FleetView.swift": "7a7447dd84544de4b591677783b8fe46ff793c151858aa6019d72df8ad345c21"
+  },
+  "observations": [
+    {
+      "announcementCalls": 1,
+      "attentionUpdates": 1,
+      "case": "success",
+      "initialized": true,
+      "publications": 1,
+      "taskStates": [
+        "running"
+      ]
+    },
+    {
+      "announcementCalls": 1,
+      "attentionUpdates": 1,
+      "case": "status-failure",
+      "initialized": true,
+      "publications": 1,
+      "taskStates": [
+        "running"
+      ]
+    },
+    {
+      "announcementCalls": 2,
+      "attentionUpdates": 2,
+      "case": "task-list-failure",
+      "initialized": true,
+      "publications": 2,
+      "taskStates": []
+    },
+    {
+      "announcementCalls": 3,
+      "attentionUpdates": 3,
+      "case": "recovery",
+      "initialized": true,
+      "publications": 3,
+      "taskStates": [
+        "done"
+      ]
+    }
+  ],
+  "initialHarnessCorrection": "dispatchMain did not satisfy Thread.isMainThread in this command-line fixture; replaced it with RunLoop.main.run before the passing observation. No production change.",
+  "renderScope": "FleetSection/FleetModel component renders at 360 points from recorded state projections; stub PanelModel and no-op actions. Not packaged-app or OS banner evidence.",
+  "imageSha256": {
+    "success": "66266e4c6cfae04218b77be1e275b076286788377444f45016e93aec8a458709",
+    "status-failure": "66266e4c6cfae04218b77be1e275b076286788377444f45016e93aec8a458709",
+    "task-list-failure": "4449714c443519aea3614c8a7cc54eca19152d6f4214e80c26d1d1f5ec1bca64",
+    "recovery": "5225b89afd0d42b0f029f964ed6e914b3ba6f9e2a14053365614f58412803228"
+  },
+  "notificationProof": "Existing fleet-model checks passed, including first-read, empty-launch, repeat, shrinking-feed, ordering and independent-machine announce-once cases. No notification authorization or OS delivery checked."
+}
