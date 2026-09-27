@@ -15,11 +15,14 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
 
 ## Queue
 
-1. **Build and accept the merged fleet candidate** (`fleet-candidate-package`).
-   Behavior: a QA package built from this branch passes packaged CLI and native
-   acceptance for enrollment, sync, dispatch and usage without touching live roots.
-   Proof: isolated package build, signature check, packaged acceptance receipts.
-   Scope: prepare only; no live install, enrollment or publication.
+1. **Keep the M5 list authoritative on first sync** (`fleet-enrollment-direction`).
+   Behavior: a machine joining a fleet whose existing member (the M5) holds the
+   master profile list never overwrites that list with its own profiles or
+   credentials; differences surface as conflicts or explicit choices.
+   Proof: disposable two-peer enrollment where the joiner has a different
+   profile list; the existing member's list and credentials are byte-identical
+   afterwards. Control: a deliberate overwrite path is refused.
+   Scope: first-sync direction only; no real enrollment.
 
 2. **Independent adversarial and security review** (`fleet-security-review`).
    Behavior: reviewed findings are fixed or recorded with evidence.

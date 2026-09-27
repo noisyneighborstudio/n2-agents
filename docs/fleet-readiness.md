@@ -1292,3 +1292,23 @@ execution. A separate copied-source negative removes only shell recovery exclusi
 and must fail local and imported provider-denial retention. This is synthetic
 accounting acceptance, not evidence about providers invoked by arbitrary commands,
 provider cleanup after worker loss, or real account/token usage.
+
+## Integrated candidate acceptance
+
+Candidate `29a2ceb` is PR #3 after merging main through `a9221bf`. CI passed on
+that exact commit (push 36357448547, pull request 36357451447). Both packages
+below were built from it with `N2_QA=1 N2_SIGN_IDENTITY=- zsh tray/build.sh`.
+
+- Offline packaged measurements: `N2_LIMIT_DETAILS=1 scripts/accept-packaged-measurements.py`
+  passed with network denied and its negative control rejected. Synthetic
+  providers only; nothing installed.
+- Physical native recovery: `scripts/accept-native-physical-reconcile.sh --peer
+  sethwebster@100.88.174.82` passed against the M5 (unreachable shown, Settings
+  responsive while held, finished shown, one execution, negative control
+  rejected). The user approved this run on September 27. Peer commands ran in a
+  disposable `/private/tmp/n2-physical-*` root behind the HOME guard; no fleet or
+  credential file in the M5's `~/.n2-agents` changed.
+
+An independent review of the five merge resolutions and follow-up fixes found no
+defects against owner-managed sign-in, capacity, gate or dropped-check invariants.
+This is not the complete adversarial security review of the fleet diff.
