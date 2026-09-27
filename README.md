@@ -151,8 +151,9 @@ share Default's room in rotation.
 
 To check every account from scratch, open **Settings → Accounts → Sign Out of
 All Accounts and Set Up Again**. The terminal signs out the listed accounts,
-including Default, then walks through each login and asks you to confirm the
-account. Profiles, configuration and session history are kept. Close running
+including Default, then the original setup window opens for each profile.
+Use Continue when a profile is ready to set up the next one. Unfinished
+profiles show Finish setup in the panel. Profiles, configuration and session history are kept. Close running
 agent sessions first and choose the intended browser account at each login.
 Cursor's shared account is set up once. You can also run `agents reonboard`.
 

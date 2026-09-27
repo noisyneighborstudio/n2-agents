@@ -62,6 +62,10 @@ bash -n shell/agents.bash
 command -v fish >/dev/null && fish -n shell/agents.fish
 swiftc -typecheck tray/main.swift tray/UpdateChannel.swift tray/Vendors.swift tray/ProfileColor.swift tray/StatusIcon.swift tray/QuotaToast.swift tray/Ink.swift tray/LabMark.swift \
   tray/PanelModel.swift tray/PanelView.swift tray/SettingsWindowView.swift tray/ProfileSetup.swift tray/GlassWindow.swift tray/ShellPath.swift tray/Hotkey.swift
+setup_test=$(mktemp -d "$TMPDIR/setup.XXXXXX")/profile-setup-tests
+swiftc tests/ProfileSetupTests.swift tray/Vendors.swift tray/Ink.swift tray/LabMark.swift \
+  tray/ProfileSetup.swift tray/GlassWindow.swift -o "$setup_test"
+"$setup_test"
 swiftc -typecheck scripts/make-icon.swift
 swiftc -typecheck scripts/verify-signature.swift
 channel_test=$(mktemp -d "$TMPDIR/channel.XXXXXX")/update-channel-tests
