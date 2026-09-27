@@ -1235,3 +1235,42 @@ reached 240 known tokens with one additional unconfirmed task. See
 [audited receipts and limitations](audits/physical-prompt-accounting.md). This
 closes physical acceptance of the new Codex task path, not live-provider or UI
 acceptance. The local variant is part of the full test gate.
+
+### Fresh Claude fleet prompt accounting
+
+Signed Claude prompt admission now retains the receiver profile and literal
+`CLAUDE_CONFIG_DIR` spelling, including adopted symlink routes. A separately
+saved resolved target must still match at invocation. This freezes the selected
+route, not credential contents or authenticated account identity. Execution
+identity remains unknown and resulting restrictions apply only to that local
+receiver route.
+
+Fresh `--print --verbose --output-format stream-json` invocations retain terminal
+`modelUsage` subtree totals once, or explicitly narrower main-agent totals when
+only `usage` is available. Cached reads and writes remain separate; normalized
+input includes both, and cached tokens are not added twice. See the canonical
+[cache accounting contract](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
+and [agent-tree accounting](https://code.claude.com/docs/en/agent-sdk/cost-tracking).
+Crash zero placeholders and malformed counters remain unknown. Missing results
+and interrupted invocations retain the durable unconfirmed start. Typed rejected
+limit events persist immediately, including validated scope/reset evidence, even
+if no terminal result follows. Warnings and quota-like assistant prose do not
+create restrictions. Shell stdout is not parsed or changed by this slice.
+
+`python3 scripts/test-fleet-claude.py` exercises real signed disposable dispatch,
+route switching, literal symlink paths, totals/cache classes, warnings, typed
+quota/reset evidence, failures, replay, missing results and interruption. A
+lifetime pipe supervisor preserves actual exit status/stderr and removes provider
+descendants even after wrapper SIGKILL or provider-leader exit. The baseline
+failed on profile redirection in `/private/tmp/n2-fleet-claude-negative.log`;
+focused repaired evidence is retained under `/private/tmp/n2-fleet-claude-final6.log`.
+No live Claude authentication, provider operation or billing parity is claimed.
+
+Claude fleet rejection recovery is conservative: its actual restriction scopes
+form a separate journal binding dimension. A successful parent turn does not
+clear a subagent or spending denial. Known typed resets still expire it; unknown
+resets remain unresolved. Scope-specific successful recovery evidence remains
+required future work. The signed Opus-denial/Sonnet-only-success regression fails
+before this change (`/private/tmp/n2-fleet-claude-scope-negative.log`) and passes
+with the scope key (`/private/tmp/n2-fleet-claude-scope-positive.log`); requested
+model and actual invocation start times are retained unchanged.

@@ -261,7 +261,13 @@ class Journal:
         origin = self.owner_origin(event['origin'])
         if origin == self.origin:
             origin = self.local_origin
-        return canonical([origin, event['provider'], event['profile'], Journal.account(data), model])
+        binding = [origin, event['provider'], event['profile'], Journal.account(data), model]
+        if (event['provider'] == 'claude' and data.get('source') == 'n2-fleet'
+                and event['kind'] == 'quota-rejected'):
+            # A parent's successful turn cannot prove a subagent/spend quota recovered.
+            # Retain actual scopes separately; only evidenced reset expires these denials.
+            binding.append(['restrictionScopes', sorted({r['scope'] for r in data.get('restrictions', [])})])
+        return canonical(binding)
 
     def _retain_execution(self, event):
         if event['kind'] not in ('quota-rejected', 'execution-succeeded'):

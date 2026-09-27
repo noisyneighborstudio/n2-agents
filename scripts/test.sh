@@ -815,6 +815,7 @@ python3 scripts/test-physical-reconcile.py --peer local
 python3 scripts/accept-physical-prompt.py --peer local
 python3 scripts/test-task-admission-race.py
 python3 scripts/test-fleet-prompt-binding.py
+python3 scripts/test-fleet-claude.py
 sh scripts/test-tool-disruption-approval.sh
 
 echo "All tests passed"

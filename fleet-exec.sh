@@ -413,11 +413,13 @@ fleet_handle_task_start() {  # <from> <payload> <dir>
   fi
   # Freeze receiver selection before publishing acceptance or preparing tools.
   # Planning's unknown-auth override does not authorize an unbound account turn.
-  if [ "$hts_v" = codex ] && [ "$(cat "$hts_w/spec/mode" 2>/dev/null)" = prompt ]; then
+  if { [ "$hts_v" = codex ] || [ "$hts_v" = claude ]; } && [ "$(cat "$hts_w/spec/mode" 2>/dev/null)" = prompt ]; then
     if ! (
-      hts_profile=$(active_profile codex) &&
-      hts_config=$(config_dir "$hts_profile" codex) &&
-      /usr/bin/python3 "$scripts_dir/fleet-prompt.py" capture "$hts_d/prompt-binding.json" \
+      hts_adapter=fleet-prompt.py
+      [ "$hts_v" != claude ] || hts_adapter=fleet-claude.py
+      hts_profile=$(active_profile "$hts_v") &&
+      hts_config=$(config_dir "$hts_profile" "$hts_v") &&
+      /usr/bin/python3 "$scripts_dir/$hts_adapter" capture "$hts_d/prompt-binding.json" \
         "$root" "$hts_profile" "$hts_config"
     ); then
       rm -rf "$hts_w" && rm -rf "$hts_d"
@@ -474,19 +476,8 @@ exec_prompt_supported() { case $1 in claude|codex) return 0 ;; *) return 1 ;; es
 exec_invoke_prompt() (
   eip_vendor=$1 eip_spec=$2
   exec_prompt_supported "$eip_vendor" || { echo "unsupported prompt adapter" >&2; exit 125; }
-  if [ "$eip_vendor" = codex ]; then
-    eip_binding="$(exec_task_dir "$N2_FLEET_TASK")/prompt-binding.json"
-    [ -f "$eip_binding" ] || { echo "missing accepted account binding" >&2; exit 125; }
-  else
-    eip_profile=$(active_profile "$eip_vendor") || exit 125
-    eip_cfg=$(config_dir "$eip_profile" "$eip_vendor") || exit 125
-    [ -d "$eip_cfg" ] || { echo "active profile slot is missing" >&2; exit 125; }
-    eip_cli=$(vendor_cli "$eip_vendor")
-    command -v "$eip_cli" >/dev/null 2>&1 || exit 127
-    eip_env=$(vendor_env "$eip_vendor")
-    [ -n "$eip_env" ] || exit 125
-    eip_value=$(vendor_env_value "$eip_vendor" "$eip_cfg") || exit 125
-  fi
+  eip_binding="$(exec_task_dir "$N2_FLEET_TASK")/prompt-binding.json"
+  [ -f "$eip_binding" ] || { echo "missing accepted prompt binding" >&2; exit 125; }
   # The prompt stays on stdin, outside process arguments and fleet journals.
   {
     printf 'Task:\n'; cat "$eip_spec/command"
@@ -494,7 +485,7 @@ exec_invoke_prompt() (
     printf '\nContinuation context (constraints, decisions, progress):\n'
     cat "$eip_spec/context"
   } | case $eip_vendor in
-    claude) env "$eip_env=$eip_value" "$eip_cli" --print ;;
+    claude) /usr/bin/python3 "$scripts_dir/fleet-claude.py" run "$eip_binding" "$(fleet_self_id)" ;;
     codex) /usr/bin/python3 "$scripts_dir/fleet-prompt.py" run "$eip_binding" "$(fleet_self_id)" ;;
   esac
 )
