@@ -237,9 +237,43 @@ if sys.argv[2] == 'Default':
 PYSERVICES
 }
 
-# Claude's logout can leave aliases created by older CLIs or adopted profiles.
-# Remove only this slot's known keychain services and its file-backed OAuth.
+# A successful provider logout can leave credentials from older paths or
+# backends. Clear only this slot's known credentials before verifying logout.
 vendor_clear_logged_out_credentials() {  # vendor, slot dir, profile
+  if [ "$1" = muse ]; then
+    # Default can retain both file and keychain credentials across backend
+    # changes. Named profiles must never remove Default's shared keychain.
+    if [ "$3" = Default ]; then
+      vc_status=0
+      security delete-generic-password -s ai.meta.dev.credentials -a meta >/dev/null 2>&1 || vc_status=$?
+      if [ "$vc_status" != 0 ] && [ "$vc_status" != 44 ]; then
+        echo "agents: could not remove the Default Muse credential (Keychain error $vc_status)" >&2
+        return 1
+      fi
+    fi
+    /usr/bin/python3 - "$2/auth.json" <<'PYMUSECLEAR'
+import json, os, sys, tempfile
+path = sys.argv[1]
+try:
+    with open(path) as f:
+        value = json.load(f)
+except FileNotFoundError:
+    sys.exit(0)
+providers = value.get('providers') or {}
+if 'meta' not in providers:
+    sys.exit(0)
+del providers['meta']
+fd, temporary = tempfile.mkstemp(dir=os.path.dirname(path))
+try:
+    with os.fdopen(fd, 'w') as f:
+        json.dump(value, f)
+    os.replace(temporary, path)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PYMUSECLEAR
+    return $?
+  fi
   [ "$1" = claude ] || return 0
   while IFS= read -r vc_svc; do
     vc_status=0
@@ -306,7 +340,16 @@ PYAUTH
       if [ "$3" = Default ]; then
         security find-generic-password -s "ai.meta.dev.credentials" -a meta >/dev/null 2>&1 && return 0
       fi
-      grep -q '"access_token"[[:space:]]*:[[:space:]]*"[^"[:space:]][^"]*"' "$2/auth.json" 2>/dev/null || return 1 ;;
+      /usr/bin/python3 - "$2/auth.json" <<'PYMUSEAUTH'
+import json, sys
+try:
+    value = json.load(open(sys.argv[1]))
+    token = ((value.get('providers') or {}).get('meta') or {}).get('access_token')
+except (OSError, ValueError, AttributeError):
+    token = None
+sys.exit(0 if isinstance(token, str) and token.strip() else 1)
+PYMUSEAUTH
+      ;;
     *)          return 2 ;;
   esac
 }

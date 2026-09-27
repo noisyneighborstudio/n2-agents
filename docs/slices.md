@@ -1,8 +1,8 @@
 # Slice queue
 
-This is the active integration queue, on a branch based on main at 0f6ef56.
-The fleet branch remains a working integration branch; do not resume its older
-queue while these independent deliveries are in progress.
+This is the active integration queue. Integrate each verified improvement before
+starting unrelated work. The older fleet queue remains deferred; reconcile that
+branch with current main before resuming its implementation.
 
 ## Queue
 
@@ -27,6 +27,11 @@ queue while these independent deliveries are in progress.
    explicit authorization. No dependency on unrelated fleet completion.
 
 ## Noticed
+
+- Reconciling PR #3 with main after the account-setup and logout hotfixes has
+  conflicts in CI/gates, package configuration, the queue, onboarding and provider
+  credential handling. Resolve and verify that combination before further fleet
+  work. These conflicts do not block the independent usage fixes.
 
 - The inherited full-suite quota fixture asserted eight rejections but failed once
   at scripts/test.sh:682 during freshness validation. The unchanged loop source
