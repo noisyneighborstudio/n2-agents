@@ -5,8 +5,9 @@ Work in progress for PR #3, followed by the T3 adapter in PR #26. This checklist
 ## Usage reliability
 
 The [September 27 usage evidence matrix](audits/usage-binding-attribution-2026-09-27.md)
-records current proof and remaining boundaries. Existing journal readings were
-about 17 hours old; they do not establish fresh fleet headroom.
+records proof and remaining boundaries. The [retained-evidence refresh](audits/retained-fleet-attribution-refresh.md)
+found unchanged readings about 21.5 hours old and a running M5 build without the
+new usage journal. Neither establishes fresh fleet headroom.
 
 - [x] Failed and aged polls do not advertise fresh capacity. Focused production-model regression tests pass.
 - [x] Missing measurements do not count as full headroom in loop selection.
