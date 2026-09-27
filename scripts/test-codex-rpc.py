@@ -553,6 +553,11 @@ while True: signal.pause()
                 os.close(reader)
                 os.close(writer)
 
+    def test_completed_lifetimes_do_not_signal_former_process_group(self):
+        with patch.object(os, "killpg", side_effect=PermissionError("former group")) as kill_group:
+            self.test_sigkill_of_rpc_caller_stops_provider_and_stubborn_descendant()
+        kill_group.assert_not_called()
+
     def test_sigkill_of_rpc_caller_stops_provider_and_stubborn_descendant(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
@@ -586,6 +591,7 @@ while True:
                 [sys.executable, '-c', caller_code, str(Path(rpc.__file__)), directory, str(provider)],
                 stdout=subprocess.PIPE)
             group = None
+            lifetimes_ended = False
             try:
                 self.assertTrue(select.select([caller.stdout], [], [], 5)[0], 'caller startup receipt missing')
                 group = int(caller.stdout.readline())
@@ -597,12 +603,15 @@ while True:
                 for reader in readers:
                     self.assertTrue(select.select([reader], [], [], 5)[0], 'provider survived caller SIGKILL')
                     self.assertEqual(os.read(reader, 128), b'', 'provider lifetime pipe must close')
+                lifetimes_ended = True
             finally:
                 if caller.poll() is None:
                     caller.kill()
                 caller.wait(timeout=5)
                 caller.stdout.close()
-                if group is not None:
+                # EOF from both signal-ignoring fixtures proves their exit.
+                # Do not signal an old group ID after that proof has passed.
+                if group is not None and not lifetimes_ended:
                     try:
                         os.killpg(group, signal.SIGKILL)
                     except ProcessLookupError:
