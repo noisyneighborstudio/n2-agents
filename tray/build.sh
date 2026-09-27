@@ -22,6 +22,7 @@ cp "$bin_dir/N2AgentsTray" "$app/Contents/MacOS/N2 Agents"
 sparkle_framework=$(find ../.build -type d -name Sparkle.framework -print -quit)
 [[ -n $sparkle_framework ]] || { echo "✗ Sparkle.framework was not produced" >&2; exit 1; }
 ditto "$sparkle_framework" "$app/Contents/Frameworks/Sparkle.framework"
+ditto "$bin_dir/SwiftTerm_SwiftTerm.bundle" "$app/Contents/Resources/SwiftTerm_SwiftTerm.bundle"
 cp Info.plist "$app/Contents/"
 
 # Version: explicit N2_VERSION (CI) > latest git tag (source builds) > 0.0.0.

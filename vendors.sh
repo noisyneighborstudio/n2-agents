@@ -226,19 +226,78 @@ vendor_account() {  # vendor, slot dir
   true
 }
 
+# Keep this list aligned with the credential aliases read by agents' quota API.
+vendor_claude_services() {  # slot dir, profile
+  /usr/bin/python3 - "$1" "$2" <<'PYSERVICES'
+import hashlib, os, sys
+for path in dict.fromkeys([sys.argv[1], os.path.realpath(sys.argv[1])]):
+    print('Claude Code-credentials-' + hashlib.sha256(path.encode()).hexdigest()[:8])
+if sys.argv[2] == 'Default':
+    print('Claude Code-credentials')
+PYSERVICES
+}
+
+# Claude's logout can leave aliases created by older CLIs or adopted profiles.
+# Remove only this slot's known keychain services and its file-backed OAuth.
+vendor_clear_logged_out_credentials() {  # vendor, slot dir, profile
+  [ "$1" = claude ] || return 0
+  while IFS= read -r vc_svc; do
+    vc_status=0
+    security delete-generic-password -s "$vc_svc" >/dev/null 2>&1 || vc_status=$?
+    # 44 = errSecItemNotFound. All other errors must stop sign-out.
+    if [ "$vc_status" != 0 ] && [ "$vc_status" != 44 ]; then
+      echo "agents: could not remove a Claude credential for '$3' (Keychain error $vc_status)" >&2
+      return 1
+    fi
+  done <<SERVICES
+$(vendor_claude_services "$2" "$3")
+SERVICES
+  /usr/bin/python3 - "$2/.credentials.json" <<'PYCLEAR'
+import json, os, sys, tempfile
+path = sys.argv[1]
+try:
+    with open(path) as f:
+        value = json.load(f)
+except FileNotFoundError:
+    sys.exit(0)
+if 'claudeAiOauth' not in value:
+    sys.exit(0)
+del value['claudeAiOauth']
+# Replace atomically and keep unrelated credentials/settings in this file.
+fd, temporary = tempfile.mkstemp(dir=os.path.dirname(path))
+try:
+    with os.fdopen(fd, 'w') as f:
+        json.dump(value, f)
+    os.replace(temporary, path)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PYCLEAR
+}
+
 # Whether a slot holds a login: 0 yes, 1 no, 2 can't tell from outside (the
 # CLI keeps it somewhere shared or opaque — Cursor's keychain, opencode's
 # XDG data dir). Cheap: profile setup polls it every couple of seconds.
 vendor_authed() {  # vendor, slot dir, profile
   case $1 in
     claude)
-      # Claude Code keys its keychain entry to the config dir it was pinned to.
-      va_svc="Claude Code-credentials-$(printf '%s' "$2" | shasum -a 256 | cut -c1-8)"
-      security find-generic-password -s "$va_svc" >/dev/null 2>&1 && return 0
-      if [ "$3" = Default ]; then
-        security find-generic-password -s "Claude Code-credentials" >/dev/null 2>&1 && return 0
-      fi
-      [ -s "$2/.credentials.json" ] ;;
+      # Adopted profiles can have credentials under both the symlink and
+      # resolved path. Default may also have a legacy unsuffixed entry.
+      while IFS= read -r va_svc; do
+        security find-generic-password -s "$va_svc" >/dev/null 2>&1 && return 0
+      done <<SERVICES
+$(vendor_claude_services "$2" "$3")
+SERVICES
+      /usr/bin/python3 - "$2/.credentials.json" <<'PYAUTH'
+import json, sys
+try:
+    value = json.load(open(sys.argv[1]))
+    signed_in = bool((value.get('claudeAiOauth') or {}).get('accessToken'))
+except (OSError, ValueError, AttributeError):
+    signed_in = False
+sys.exit(0 if signed_in else 1)
+PYAUTH
+      ;;
     codex)
       # An owner binding is routing intent, not a local auth.json. Never use a
       # leftover credential file when ownership, migration or conflicts apply.

@@ -149,6 +149,15 @@ Cursor is the same account, so its usage (a monthly billing cycle, tagged "mo")
 shows once, on Default; other profiles' Cursor rows say "shared login" and
 share Default's room in rotation.
 
+To check every account from scratch, open **Settings → Accounts → Sign Out of
+All Accounts and Set Up Again**. The app signs out the listed accounts,
+including Default, then the original setup window opens for each profile.
+Login prompts stay inside the app; browser authorization opens when needed.
+Use Continue when a profile is ready to set up the next one. Unfinished
+profiles show Finish setup in the panel. Profiles, configuration and session history are kept. Close running
+agent sessions first and choose the intended browser account at each login.
+Cursor's shared account is set up once. You can also run `agents reonboard`.
+
 **Adding a lab** means adding one `case` arm to each accessor in
 [`vendors.sh`](vendors.sh). Nothing in `agents` or the menu bar app needs to
 change.

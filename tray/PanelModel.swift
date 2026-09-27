@@ -400,6 +400,7 @@ final class PanelModel: ObservableObject {
     @Published var updateStatus: UpdateStatus?
     /// Profiles whose setup was left unfinished: profile -> the labs it set up.
     @Published var pendingSetups: [String: [String]] = [:]
+    @Published var resettingAccounts = false
     /// Every session, for the standalone window; the panel itself keeps the
     /// two newest. Kept between opens, so the window never starts empty.
     @Published var fleet: FleetData?
@@ -415,6 +416,9 @@ final class PanelModel: ObservableObject {
     /// utilization percentage. nextBest independently finds an available slot.
     /// Missing readings contribute no number.
     func reading(_ profile: Profile, _ data: PanelData) -> (state: ProfileState, used: Int?) {
+        if let pending = pendingSetups[profile.name], !pending.isEmpty {
+            return (.needsSignIn(pending.count), nil)
+        }
         let slotted = data.snapshot.installedVendors.filter { profile.slots[$0.id] != nil }
         let metered = slotted.filter(\.hasUsageAPI)
         func signedIn(_ v: Vendor) -> Bool { data.snapshot.signedIn[profile.name]?[v.id] != false }
@@ -578,6 +582,7 @@ protocol PanelActions: AnyObject {
     func closeSessions()
     func showSettings()
     func closeSettings()
+    func reonboardAccounts()
     func installCLI() -> String
     func addVendor(profile: String)
     func deleteProfile(_ name: String)

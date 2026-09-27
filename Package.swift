@@ -9,20 +9,22 @@ let package = Package(
         .executable(name: "n2-loop", targets: ["N2Loop"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.7.1")
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.7.1"),
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.19.0")
     ],
     targets: [
         .executableTarget(
             name: "N2AgentsTray",
-            dependencies: ["Sparkle"],
+            dependencies: ["Sparkle", "SwiftTerm"],
             path: "tray",
             exclude: ["build"],
-            sources: ["main.swift", "UpdateChannel.swift", "ShellPath.swift", "Vendors.swift", "ProfileColor.swift", "StatusIcon.swift", "QuotaToast.swift", "Ink.swift", "LabMark.swift", "ProfileSetup.swift", "GlassWindow.swift",
+            sources: ["main.swift", "NativeAuth.swift", "UpdateChannel.swift", "ShellPath.swift", "Vendors.swift", "ProfileColor.swift", "StatusIcon.swift", "QuotaToast.swift", "Ink.swift", "LabMark.swift", "ProfileSetup.swift", "GlassWindow.swift",
                       "PanelModel.swift", "UsageDetailsView.swift", "AccountOwnership.swift", "NativeSignIn.swift", "NativeSessionTransfer.swift", "PanelView.swift", "SettingsWindowView.swift", "FleetSyncSettings.swift", "FleetSettingsLoader.swift", "Hotkey.swift", "FleetModel.swift", "FleetView.swift", "FleetControl.swift"],
             // Sparkle.framework ships in Contents/Frameworks; without this rpath
             // dyld cannot find it and the app dies before main().
             linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]
         ),
+        .testTarget(name: "NativeAuthTests", dependencies: ["N2AgentsTray"], path: "tests/NativeAuth"),
         // The loop engine behind `agents loop`: a plain CLI, no app frameworks.
         .executableTarget(name: "N2Loop", path: "loop"),
     ]
