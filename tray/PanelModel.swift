@@ -570,6 +570,7 @@ protocol PanelActions: AnyObject {
     func signIn(profile: String, vendor: String, confirm: Bool)
     func finishSetup(profile: String)
     func resumeSession(_ session: SessionInfo)
+    func sendSession(_ session: SessionInfo)
     func moveSession(_ session: SessionInfo, to profile: String)
     func copyResumeCommand(_ session: SessionInfo)
     func showAllSessions()

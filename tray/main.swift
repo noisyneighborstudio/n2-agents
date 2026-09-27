@@ -856,6 +856,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         pb.setString(resumeCommand(s, in: s.profile), forType: .string)
     }
 
+    @MainActor private lazy var sessionTransferCoordinator = SessionTransferCoordinator()
+
+    func sendSession(_ session: SessionInfo) {
+        let cli = cliPath, environment = Self.scriptEnvironment
+        dismissPanel()
+        Task { @MainActor in
+            await sessionTransferCoordinator.perform(thread: session.sessionID, vendor: session.vendor,
+                run: { SignInPlan.run(cli: cli, environment: environment, args: $0) },
+                choose: { peers in
+                    let (alert, picker, path) = SessionTransferPlan.prompt(
+                        title: session.title ?? session.snippet, peers: peers, cwd: session.cwd)
+                    NSApp.activate(ignoringOtherApps: true)
+                    guard alert.runModal() == .alertFirstButtonReturn,
+                          peers.indices.contains(picker.indexOfSelectedItem) else { return nil }
+                    return (peers[picker.indexOfSelectedItem], path.stringValue)
+                }, finish: { message in self.alert("Session sent", message) },
+                fail: { message in self.alert("Session transfer", message) })
+        }
+    }
+
     // The transcript moves; its place in the list doesn't (mv keeps the
     // mtime), so the row just changes hands when the lists re-read.
     func moveSession(_ s: SessionInfo, to profile: String) {

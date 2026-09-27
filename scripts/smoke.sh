@@ -27,6 +27,7 @@ python3 scripts/test-fleet-session.py
 
 sh scripts/test-account-ownership.sh
 sh scripts/test-native-signin.sh
+sh scripts/test-native-session-transfer.sh
 sh scripts/test-owner-auth-status.sh
 sh scripts/test-fleet-settings.sh
 

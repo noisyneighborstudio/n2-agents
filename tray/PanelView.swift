@@ -1228,12 +1228,15 @@ private struct SessionRow: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(RowButtonStyle(radius: 4))
-            .help("Move to another profile, copy the resume command")
+            .help("Send to another machine, move to another profile, or copy the resume command")
             .padding(.top, 6)
             .padding(.trailing, 5)
         }
         .contextMenu {
             Button { actions.resumeSession(session) } label: { Label("Resume", systemImage: "play") }
+            if session.vendor == "codex" {
+                Button { actions.sendSession(session) } label: { Label("Send to Machine…", systemImage: "laptopcomputer") }
+            }
             Menu("Move to") {
                 ForEach(destinations, id: \.self) { p in
                     Button(p) { actions.moveSession(session, to: p) }
@@ -1252,7 +1255,9 @@ private struct SessionRow: View {
             : destinations.map { p in
                 ClosureItem(p, symbol: "person.crop.circle") { actions.moveSession(session, to: p) }
             }
-        return [ClosureItem("Resume", symbol: "play") { actions.resumeSession(session) },
+        let send: [NSMenuItem] = session.vendor == "codex"
+            ? [ClosureItem("Send to Machine…", symbol: "laptopcomputer") { actions.sendSession(session) }] : []
+        return [ClosureItem("Resume", symbol: "play") { actions.resumeSession(session) }] + send + [
                 submenu("Move to", symbol: "arrowshape.turn.up.right", moves),
                 ClosureItem("Copy Resume Command", symbol: "doc.on.doc") { actions.copyResumeCommand(session) }]
     }
