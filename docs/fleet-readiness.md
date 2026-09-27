@@ -1148,3 +1148,14 @@ leaves a healthy Other selectable. Claude's extra-usage spending status remains
 visible separately from its model allowance; included allowance at 40% stays
 selectable. These are synthetic parser/presentation checks with an unchanged
 native binary, not live provider identity or limit-contract acceptance.
+
+
+## Fleet prompt attribution gap
+
+The [signed prompt spike](audits/fleet-prompt-attribution-spike.md) reproduced
+completed Codex fleet tasks without usage journal events, despite synthetic
+provider telemetry in stdout. Changing the active profile while preparation was
+held changed the invoked configuration path. Existing loop/bridge attribution
+does not cover this fleet path. The next slice binds and journals actual Codex
+fleet prompts; this gap remains unfixed. Claude, shell-task attribution and
+physical task-attribution acceptance also remain required.
