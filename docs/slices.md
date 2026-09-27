@@ -6,16 +6,7 @@ queue while these independent deliveries are in progress.
 
 ## Queue
 
-1. **Show unavailable usage consistently** (`integration-usage-freshness`).
-   Behavior: failed/expired reads cannot show healthy capacity in summaries,
-   provider rows or expanded details; retain dated history on command failure,
-   but remove absent profiles after a successful authoritative refresh.
-   Proof: injected-time production-model tests for row/command failure, expiry,
-   repeated failure, recovery and removal; rendering guards and native build.
-   Scope: UI freshness, no provider protocol or account migration.
-   Budget: 250 changed lines; stop at 500.
-
-2. **Prefer measured eligible capacity** (`integration-usage-ranking`).
+1. **Prefer measured eligible capacity** (`integration-usage-ranking`).
    Behavior: automatic CLI/loop selection excludes failed/missing metered reads;
    no-API candidates are explicit fallback, below measured compatible candidates.
    Proof: measured zero and 80% used versus unknown, failed and no-API candidates;
@@ -23,14 +14,25 @@ queue while these independent deliveries are in progress.
    Scope: selection, no account changes or provider calls.
    Budget: 150 changed lines; stop at 300.
 
-3. **Keep Codex window resets independent** (`integration-codex-windows`).
+2. **Keep Codex window resets independent** (`integration-codex-windows`).
    Behavior: five-hour exhaustion cannot overwrite a measured weekly percentage.
    Proof: 100/30 selects only the short reset, weekly-only exhaustion and denial
    without windows remain unavailable rather than inventing fresh capacity.
    Scope: parser and consumers required for this behavior, no account changes.
    Budget: 200 changed lines; stop at 400.
 
+3. **Verify provider-scoped readouts** (`integration-scoped-readouts`).
+   Behavior: applicable provider restrictions and their observation age remain visible.
+   Proof: canonical protocol fixtures and isolated package acceptance for selected models.
+   Scope: split before implementation if the native-reader dependency inventory exceeds
+   250 changed lines; no credential migration.
+
 ## Noticed
+
+- The inherited full-suite quota fixture asserted eight rejections but failed once
+  at scripts/test.sh:682 during freshness validation. The unchanged loop source
+  passed in the prior slice. Retain the assertion; investigate a recurrence with
+  fixture receipts rather than changing usage-display code to accommodate it.
 
 - Codex window percentages/reset semantics are the next independent integration
   after these review fixes; retain global denial separately from window usage.
