@@ -22,10 +22,7 @@ import SwiftUI
     }
 
     static func main() {
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
-            print("GlassWindowTests: Reduce Motion is on, so nothing animates; skipped")
-            return
-        }
+        GlassWindow.reduceMotion = { false }
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         app.finishLaunching()

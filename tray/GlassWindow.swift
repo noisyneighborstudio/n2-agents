@@ -35,6 +35,10 @@ final class GlassWindow: NSPanel {
     /// can't hide a panel that was reopened mid-furl.
     private var generation = 0
 
+    /// Reduce Motion as the system reports it. Tests animate regardless: CI
+    /// runners have it on, which would skip every animated path.
+    static var reduceMotion = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+
     /// Shown, and not on its way out.
     var isShowing: Bool { isVisible && !dismissing }
 
@@ -153,7 +157,7 @@ final class GlassWindow: NSPanel {
         if case .toast = behavior { toast = true } else { toast = false }
         if !toast { NSApp.activate(ignoringOtherApps: true) }
         let show = { toast ? self.orderFrontRegardless() : self.makeKeyAndOrderFront(nil) }
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || target.isEmpty {
+        if Self.reduceMotion() || target.isEmpty {
             show()
         } else {
             setFrame(furled(target), display: false)
@@ -207,7 +211,7 @@ final class GlassWindow: NSPanel {
         }
         generation += 1
         let generation = generation
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+        guard !Self.reduceMotion() else {
             orderOut(nil)
             return
         }
@@ -287,7 +291,7 @@ final class GlassWindow: NSPanel {
     /// shrinking window drops to its size once the mask has.
     private func resize(to target: NSRect, animated: Bool) {
         guard animated, isVisible, frame.size != target.size, let clip = surface.layer,
-              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+              !Self.reduceMotion() else {
             setFrame(target, display: true)
             surface.frame = contentView?.bounds ?? .zero
             // An animated resize cut short by present() or dismiss() never
