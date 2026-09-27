@@ -8,6 +8,7 @@ final class FakeSetupHost: SetupHost {
     var started: [String] = []
     var startedProfiles: [String] = []
     var pending: [String]?
+    var landed: [String] = []
     func authenticate(_ vendor: String) {
         lock.lock(); defer { lock.unlock() }
         credentials[vendor] = true
@@ -24,6 +25,7 @@ final class FakeSetupHost: SetupHost {
     }
     func setupCopyLoginCommand(profile: String, vendor: String) {}
     func setupPending(profile: String, labs: [String]?) { pending = labs }
+    func setupLoginLanded(profile: String) { landed.append(profile) }
     func setupOpen(profile: String, vendor: String) {}
     func setupMakeActive(profile: String) {}
     var setupTerminalName: String { "Test terminal" }
@@ -68,11 +70,13 @@ struct ProfileSetupTests {
         setup.loginFinished(vendor: "codex")
         waitUntil { host.started == ["codex", "claude"] }
         precondition(host.pending == ["claude"])
+        precondition(host.landed == ["Work"])  // the panel hears at once
         host.authenticate("claude")
         setup.loginFinished(vendor: "claude")
         waitUntil { setup.model.step == .ready }
         precondition(host.pending == nil)
         precondition(setup.model.finishedLabs == ["codex", "claude"])
+        precondition(host.landed == ["Work", "Work"])
 
         // Closing setup during an in-flight read must not launch another login.
         let cancelledHost = FakeSetupHost()

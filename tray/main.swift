@@ -375,9 +375,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
                setup?.model.profile == profile {
                 setup?.loginFinished(vendor: vendor)
             }
-            usageFetchedAt.removeAll()
-            refreshPanel()
-            refreshUsage(force: false, onDemand: true)
+            loginsChanged()
         }
     }
 
@@ -749,6 +747,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     func setupPending(profile: String, labs: [String]?) {
         model.pendingSetups[profile] = labs
         defaults.set(model.pendingSetups, forKey: CacheKey.pendingSetups)
+    }
+
+    func setupLoginLanded(profile: String) {
+        loginsChanged()
+    }
+
+    // A login changed: re-read the panel and every lab's usage now, not when
+    // the cached reading expires.
+    private func loginsChanged() {
+        usageFetchedAt.removeAll()
+        refreshPanel()
+        refreshUsage(force: false, onDemand: true)
     }
 
     func setupOpen(profile: String, vendor: String) {
