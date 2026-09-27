@@ -29,3 +29,7 @@ Sign-in clears a signed-out slot's leftover credentials before logging in, not
 only after a logout. A named Muse slot can keep a keychain reference from an
 older backend; Muse's file backend then refuses to save the new login (FM-008).
 `python3 tests/ReonboardTests.py` reproduces that failure with a fake `muse`.
+
+The menu bar icon shows a yellow warning triangle while any profile has a lab
+known to be signed out or an unfinished setup, the same set Sign In to Missing
+Accounts queues. Logins that can't be inspected don't raise it.

@@ -312,6 +312,12 @@ final class PanelModel: ObservableObject {
     /// Quota left overall, for the menu bar icon: the mean of the profiles'
     /// numbers, so each profile weighs the same however many labs it holds.
     /// Nil until a slot has read.
+    /// A lab known signed out, or setup left unfinished: the icon warns.
+    var needsAttention: Bool {
+        guard let data else { return false }
+        return !data.snapshot.missingSignIns(pending: pendingSetups).isEmpty
+    }
+
     var remaining: Int? {
         guard let data, !data.profiles.contains(where: {
             let state = reading($0, data).state

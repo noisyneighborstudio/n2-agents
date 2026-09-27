@@ -73,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     private var statusIcon: StatusIcon?
     private var quotaWatch: AnyCancellable?
     private var menuBarAppearance: NSKeyValueObservation?
-    private var drawnIcon: (remaining: Int?, dark: Bool)?
+    private var drawnIcon: (remaining: Int?, dark: Bool, attention: Bool)?
     private lazy var quotaToast = QuotaToast(anchor: statusItem.button!) { [weak self] in self?.togglePanel() }
     // Built on first use (an open, or the first quota reading): it anchors to
     // the status item's button.
@@ -139,7 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         statusItem.button?.action = #selector(togglePanel)
         hotKey.register(Shortcut.load())
         // @Published fires before the store, so read the model a turn later.
-        quotaWatch = model.$data.combineLatest(model.$usage)
+        quotaWatch = model.$data.combineLatest(model.$usage, model.$pendingSetups)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.quotaChanged() }
         // The drained part is drawn in the menu bar's ink, which follows the
@@ -194,13 +194,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     private func drawStatusIcon() {
         guard let icon = statusIcon, let button = statusItem.button else { return }
         let match = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua, .vibrantLight, .vibrantDark])
-        let drawn = (remaining: model.remaining, dark: match == .darkAqua || match == .vibrantDark)
+        let drawn = (remaining: model.remaining, dark: match == .darkAqua || match == .vibrantDark,
+                     attention: model.needsAttention)
         // Setting the image re-resolves the button's appearance, which fires
         // the observer that calls this: redraw only on a real change, or the
         // two feed each other forever.
         if let last = drawnIcon, last == drawn { return }
         drawnIcon = drawn
-        let image = icon.image(remaining: drawn.remaining, dark: drawn.dark)
+        let image = icon.image(remaining: drawn.remaining, dark: drawn.dark, attention: drawn.attention)
         button.image = UpdateChannel.isQABuild ? StatusIcon.taggedQA(image) : image
     }
 
