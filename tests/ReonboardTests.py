@@ -142,3 +142,55 @@ claude_alias_case('Default')
 claude_alias_case('Work')
 claude_alias_case('Default', keychain_error=True)
 print('Claude logout alias tests passed')
+
+# Muse logout may only clear its selected backend. Default must clear both,
+# and tokens for other providers must not keep a Muse profile signed in.
+def muse_backend_case(profile, keychain_error=False):
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        bin_dir = root / 'bin'
+        bin_dir.mkdir()
+        slot = root / '.config/muse' if profile == 'Default' else root / '.n2-agents' / profile / 'muse/muse'
+        slot.mkdir(parents=True)
+        auth = slot / 'auth.json'
+        preserved = {'providers': {'other': {'access_token': 'keep'}}, 'setting': 'keep'}
+        auth.write_text(json.dumps({'providers': {'meta': {'access_token': 'stale-meta'},
+                                                **preserved['providers']}, 'setting': 'keep'}))
+        (slot / 'history').write_text('keep history')
+        keychain = root / 'meta-keychain'
+        keychain.write_text('stored credential')
+        (bin_dir / 'security').write_text('''#!/bin/sh
+[ "$*" = 'find-generic-password -s ai.meta.dev.credentials -a meta' ] ||
+[ "$*" = 'delete-generic-password -s ai.meta.dev.credentials -a meta' ] || exit 45
+[ -f "$HOME/meta-keychain" ] || exit 44
+if [ "$1" = delete-generic-password ]; then
+  [ "$FAKE_KEYCHAIN_ERROR" != 1 ] || exit 36
+  rm "$HOME/meta-keychain"
+fi
+''')
+        (bin_dir / 'muse').write_text('''#!/bin/sh
+[ "$*" = logout ] || exit 2
+echo 'logged out: removed the stored Meta credential'
+''')
+        for name in ('security', 'muse'):
+            (bin_dir / name).chmod(0o755)
+        env = dict(os.environ, HOME=str(root), PATH=f'{bin_dir}:/usr/bin:/bin',
+                   XDG_CONFIG_HOME=str(root / '.config'), FAKE_KEYCHAIN_ERROR='1' if keychain_error else '0')
+        result = subprocess.run(['./agents', 'reonboard', '--logout-only', '--yes'], env=env,
+                                text=True, capture_output=True)
+        if keychain_error:
+            assert result.returncode != 0 and 'credential cleanup failed' in result.stderr
+            assert keychain.exists()
+        else:
+            assert result.returncode == 0, result.stdout + result.stderr
+            assert keychain.exists() == (profile != 'Default')
+            assert json.loads(auth.read_text()) == preserved
+            status = subprocess.run(['./agents', 'authed', profile], env=env, text=True, capture_output=True)
+            assert status.stdout.strip() == 'muse\tno', status.stdout
+        assert (slot / 'history').read_text() == 'keep history'
+
+
+muse_backend_case('Default')
+muse_backend_case('Work')
+muse_backend_case('Default', keychain_error=True)
+print('Muse logout backend tests passed')
