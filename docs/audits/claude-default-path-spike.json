@@ -1,0 +1,18 @@
+{
+  "binarySHA256": "d8cb1e5c79684cc12a8bfc813e3a2073406921b6245744b3009be3ab5651d21e",
+  "candidateHelper": {
+    "offset": 175589905,
+    "length": 58,
+    "sha256": "61cb041552479df46f6fbcc3836fb4aa14fefa4d42bdd784427c8443f8bc9aac"
+  },
+  "candidateExportsOffset": 175592250,
+  "candidateExportsSHA256": "91e20051af85f0bca0d2bcac9d6c4c8fa765d5802a3701298eab147c33dfbd54",
+  "importedModule": "/$bunfs/root/chunk-2tefsj0f.js",
+  "metadataOffset": 80936475,
+  "observedExportNames": [
+    "be",
+    "F3r"
+  ],
+  "moduleToSourceMapping": "unverified",
+  "decision": "No default-path normalization repair; bounded investigation stopped."
+}
