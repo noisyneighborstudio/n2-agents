@@ -133,7 +133,7 @@ import Foundation
             for (index, line) in lines.enumerated() {
                 let provider = index < 2 ? "cursor" : "muse"
                 let row = Usage.parseJSON(String(line), provider: provider)["Default"]!
-                check(row.note == (index % 2 == 0 ? .noToken : .credentialStoreUnavailable), "preserve credential failure cause")
+                check(row.note == .credentialStoreUnavailable, "ambiguous store failure must not claim missing login")
                 check(row.used == nil && row.availableRemaining == nil, "failed store cannot advertise capacity")
             }
         }

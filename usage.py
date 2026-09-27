@@ -412,10 +412,8 @@ def credential_store(service, account):
                                  '-a', account, '-w'], capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.TimeoutExpired):
         return 'credential-store-unavailable', ''
-    # errSecItemNotFound (-25300), truncated to the process exit byte, is 44.
-    # Other failures do not establish that the user is signed out.
-    if result.returncode == 44:
-        return 'no-token', ''
+    # security can collapse earlier search failures into item-not-found (44).
+    # No nonzero exit establishes that the user is signed out.
     if result.returncode != 0:
         return 'credential-store-unavailable', ''
     return 'ok', result.stdout

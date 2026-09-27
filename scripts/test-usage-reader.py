@@ -323,7 +323,7 @@ class ReaderTests(unittest.TestCase):
         for vendor in ('cursor', 'muse'):
             for failure in (1, 36, 44, OSError('synthetic unavailable'),
                             u.subprocess.TimeoutExpired('security', 5)):
-                expected = 'no-token' if failure == 44 else 'credential-store-unavailable'
+                expected = 'credential-store-unavailable'
                 with self.subTest(vendor=vendor, failure=str(failure)), tempfile.TemporaryDirectory() as cfg:
                     for fmt in ('json', 'tsv'):
                         output = io.StringIO()
@@ -344,6 +344,11 @@ class ReaderTests(unittest.TestCase):
                         else:
                             self.assertEqual(output.getvalue().strip().split('\t')[4], expected)
             with tempfile.TemporaryDirectory() as cfg:
+                malformed = '' if vendor == 'cursor' else '{invalid JSON'
+                with patch.object(u.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=malformed)), \
+                     patch.object(u.urllib.request, 'urlopen', side_effect=AssertionError('network forbidden')) as network:
+                    self.assertEqual(getattr(u, vendor)('Default', cfg), ('no-token', None))
+                network.assert_not_called()
                 token = 'synthetic-token' if vendor == 'cursor' else 'dca:synthetic'
                 stdout = token if vendor == 'cursor' else json.dumps({'access_token': token})
                 with patch.object(u.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=stdout)) as run:

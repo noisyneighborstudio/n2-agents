@@ -61,9 +61,9 @@ import Foundation
         if CommandLine.arguments.count > 1 {
             let lines = try String(contentsOfFile: CommandLine.arguments[1], encoding: .utf8).split(separator: "\n")
             precondition(lines.count == 4)
-            for (index, line) in lines.enumerated() {
+            for line in lines {
                 let row = SlotMeasurement.parse(String(line))!
-                precondition(row.status == (index % 2 == 0 ? "no-token" : "credential-store-unavailable"))
+                precondition(row.status == "credential-store-unavailable")
                 precondition(row.used == nil && row.resets == nil, "failed store cannot supply loop capacity")
             }
         }

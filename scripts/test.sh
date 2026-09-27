@@ -265,7 +265,7 @@ rm -r "$home/.n2-agents/Work/muse"
 # Cursor keeps one keychain login for the machine: Default reads it, in the
 # long-window column (a monthly cycle), and other slots say they share it.
 usage=$(run_agents best --porcelain --vendor cursor)
-print -r -- "$usage" | grep -qx 'Default	-	-	-	no-token'
+print -r -- "$usage" | grep -qx 'Default	-	-	-	credential-store-unavailable'
 print -r -- "$usage" | grep -qx 'Work	-	-	-	shared-login'
 cursor_usage() {  # used%
   printf '{"billingCycleEnd": "1792641563000", "planUsage": {"totalPercentUsed": %s}}' "$1" > "$test_root/cursor-usage.json"

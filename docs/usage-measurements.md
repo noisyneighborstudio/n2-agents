@@ -72,16 +72,19 @@ unverified execution routes and missing fresh physical-fleet observations.
 Remaining acceptance stays tracked in [fleet readiness](fleet-readiness.md). Grok, Muse and Cursor still use their
 existing collectors; their limitations have not been resolved by this change.
 
-Cursor and Muse preserve the credential-store command's reported failure category.
-An item-not-found exit produces `no-token`; other command failures, launch errors
-and the five-second read timeout produce `credential-store-unavailable`.
-Both statuses carry unknown capacity and are ineligible for scheduling. Muse's
-file-backed profile route and Cursor's shared-login scope are unchanged.
-The regression uses synthetic command results, never a real Keychain or provider
-request, and passes actual reader output through native and loop parsers.
-Apple's [security command implementation](https://github.com/apple-oss-distributions/Security/blob/main/SecurityTool/macOS/keychain_find.c)
-can collapse an earlier search error into item-not-found. Exit 44 therefore
-means reported absence, not independent proof that no credential exists.
+Cursor and Muse report every nonzero credential-store command exit, including
+item-not-found 44, as `credential-store-unavailable`. The command can collapse an
+earlier search error into that result, so it cannot establish a missing login.
+Launch errors and the five-second timeout are also unavailable. Successful reads
+retain their existing token parsing; an empty or unusable returned token is still
+`no-token`. Both failure states carry unknown capacity and cannot be scheduled.
+Muse's file-backed profile route and Cursor's shared-login scope are unchanged.
+
+The regression uses synthetic command results and actual reader JSON passed to
+native and loop parsers; no real Keychain or provider is accessed. The old mapping
+failed the new assertion for both providers. [Canonical source evidence](audits/credential-store-observation-spike.md)
+also shows why changing to SecItemCopyMatching alone would not remove ambiguity.
+Claude's separate credential fallback path still requires its own precedence audit.
 
 ## Primary references
 
