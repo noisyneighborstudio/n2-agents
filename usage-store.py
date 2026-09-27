@@ -270,6 +270,8 @@ class Journal:
         return canonical(binding)
 
     def _retain_execution(self, event):
+        if event['data'].get('source') == 'n2-fleet-shell':
+            return  # Arbitrary shell completion is not provider recovery evidence.
         if event['kind'] not in ('quota-rejected', 'execution-succeeded'):
             return
         key = self.execution_binding(event)

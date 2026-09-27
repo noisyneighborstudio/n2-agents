@@ -381,6 +381,7 @@ fleet_handle_task_start() {  # <from> <payload> <dir>
   hts_lab=$(fleet_header "$2" label)
   exec_valid_id "$hts_id" || { echo "ERR bad-task-id"; return 1; }
   case ${hts_v:-} in ''|*[!a-z0-9-]*) echo "ERR bad-vendor"; return 1 ;; esac
+  vendor_known "$hts_v" || { echo "ERR unsupported-vendor"; return 1; }
   hts_d=$(exec_task_dir "$hts_id")
   # Re-delivery of a task we already hold is an acknowledgement, never a second
   # run: a retried delivery must not start the work twice.
@@ -425,6 +426,11 @@ fleet_handle_task_start() {  # <from> <payload> <dir>
       rm -rf "$hts_w" && rm -rf "$hts_d"
       echo "ERR account-binding-unavailable"; return 1
     fi
+  fi
+  # Shell route labels describe admission, never the command's actual identity.
+  hts_mode=$(cat "$hts_w/spec/mode" 2>/dev/null)
+  if [ "${hts_mode:-shell}" = shell ]; then
+    exec_meta_set "$hts_id" profile "$(active_profile "$hts_v")"
   fi
   exec_meta_set "$hts_id" machine "$(fleet_self_machine)"
   exec_meta_set "$hts_id" role worker
@@ -490,6 +496,12 @@ exec_invoke_prompt() (
   esac
 )
 
+exec_shell_usage() {  # <task> <startedAt> <kind> <status>
+  /usr/bin/python3 "$scripts_dir/usage-store.py" --root "$root" --origin "$(fleet_self_id)" record \
+    --provider "$(exec_meta "$1" vendor)" --profile "$(exec_meta "$1" profile)" --kind "$3" \
+    --data "{\"status\":\"$4\",\"source\":\"n2-fleet-shell\",\"usageScope\":\"uninterpreted\",\"identity\":{\"status\":\"unknown\"},\"startedAt\":$2,\"attribution\":{\"task\":\"$1\",\"inputTokens\":null,\"outputTokens\":null,\"cachedInputTokens\":null,\"cacheCreationInputTokens\":null,\"uncachedInputTokens\":null,\"totalTokens\":null}}" >/dev/null
+}
+
 # The run itself. Detached from the request that delivered it, because a task
 # outlives its dispatch: the link dropping mid-run must not end the work.
 exec_run_local() {  # <id>
@@ -507,6 +519,14 @@ exec_run_local() {  # <id>
     exec_meta_set "$erl_id" rc 125
     exec_meta_set "$erl_id" ended "$(fleet_now)"
     exec_set_state "$erl_id" failed "required tools unavailable or deferred"
+    exec_announce "$erl_id"
+    return 0
+  fi
+  if [ "$erl_mode" = shell ] && ! exec_shell_usage "$erl_id" "$erl_start" execution-started execution-unconfirmed; then
+    rm -f "$(exec_active_dir)/$erl_id"
+    exec_meta_set "$erl_id" rc 125
+    exec_meta_set "$erl_id" ended "$(fleet_now)"
+    exec_set_state "$erl_id" failed "usage journal unavailable"
     exec_announce "$erl_id"
     return 0
   fi
@@ -540,6 +560,10 @@ exec_run_local() {  # <id>
   printf 'task %s\npid %s\n' "$erl_id" "$erl_pid" > "$(exec_active_dir)/$erl_id" 2>/dev/null || true
   exec_fanout started "$erl_id" "$(exec_meta "$erl_id" label)"
   if wait "$erl_pid"; then erl_rc=0; else erl_rc=$?; fi
+  if [ "$erl_mode" = shell ]; then
+    if [ "$erl_rc" = 0 ]; then exec_shell_usage "$erl_id" "$erl_start" execution-succeeded ok || true
+    else exec_shell_usage "$erl_id" "$erl_start" execution-failed execution-failed || true; fi
+  fi
   rm -f "$(exec_active_dir)/$erl_id" 2>/dev/null || true
   exec_meta_set "$erl_id" rc "$erl_rc"
   exec_meta_set "$erl_id" ended "$(fleet_now)"

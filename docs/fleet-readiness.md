@@ -1274,3 +1274,21 @@ required future work. The signed Opus-denial/Sonnet-only-success regression fail
 before this change (`/private/tmp/n2-fleet-claude-scope-negative.log`) and passes
 with the scope key (`/private/tmp/n2-fleet-claude-scope-positive.log`); requested
 model and actual invocation start times are retained unchanged.
+
+### Shell fleet task attribution
+
+`scripts/test-fleet-shell.py` uses actual signed requests between disposable peers
+and synthetic shell commands. Success, failure and command interruption preserve
+literal stdout/stderr, arguments, cwd and exit status, including the existing shell
+signal diagnostic. A preparation barrier proves the saved routing profile survives
+an active-profile switch. Provider-shaped stdout remains uninterpreted; account,
+model and all counts stay unknown. Exact worker SIGKILL leaves only an unconfirmed
+start; unavailable journal storage refuses command launch. Re-delivery creates no
+second execution or event. Signed journal exchange retains the same records and
+provider restriction. Unsupported raw vendor labels refuse before command launch.
+
+The committed-runtime negative fails on missing attribution and unsupported-vendor
+execution. A separate copied-source negative removes only shell recovery exclusion
+and must fail local and imported provider-denial retention. This is synthetic
+accounting acceptance, not evidence about providers invoked by arbitrary commands,
+provider cleanup after worker loss, or real account/token usage.

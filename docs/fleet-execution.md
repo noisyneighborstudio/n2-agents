@@ -31,3 +31,13 @@ installer from entering between preparation and process startup.
 Embedded MCP configuration is credential-bearing even when stored in a general
 settings file. Sender and receiver credential permissions both apply, including
 JSON and TOML escaped keys. Settings-only QA import uses the same gate.
+
+Shell task admission accepts only the six supported routing vendors and snapshots
+that vendor's selected profile before preparation. These labels do not identify
+what the arbitrary command invokes. Other raw vendor labels receive
+`ERR unsupported-vendor` before execution. Shell journal entries retain unknown
+account, model and token counts; command stdout is never parsed as provider data.
+Shell success cannot clear provider quota restrictions. A durable start is required
+before launching; worker loss leaves it unconfirmed. Command completion preserves
+its exit status even if the terminal journal write fails, leaving the start as
+unconfirmed evidence. The shell command, cwd and captured streams are unchanged.
