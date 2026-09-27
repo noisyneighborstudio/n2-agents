@@ -10,7 +10,7 @@ struct Slot {
     let signedIn: String
     /// Highest window used, 0-100; nil when the lab reports none or the read failed.
     var used: Double?
-    /// ok · no-token · stale-token · rate-limited · fetch-error · no-usage-api
+    /// ok · no-token · stale-token · rate-limited · fetch-error · no-usage-api · limit-reached
     var quota: String
     /// When a full window frees up, if the lab says.
     var resets: Date? = nil

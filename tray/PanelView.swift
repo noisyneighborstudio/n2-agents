@@ -654,6 +654,7 @@ private struct SlotRow: View {
         case .rateLimited: return "rate-limited"
         case .fetchError:  return "check failed"
         case .sharedLogin: return "shared login"
+        case .limitReached: return "limit reached"
         default:           return "no reading"
         }
     }

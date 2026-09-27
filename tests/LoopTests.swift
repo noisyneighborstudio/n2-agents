@@ -102,6 +102,21 @@ import Darwin
         try! FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
         let failedSlots = try! SlotSource(cli: script.path).slots(fresh: true)
         expect(failedSlots.count == 1 && failedSlots[0].quota == "fetch-error", "failed metered read must not become no-API")
+        let windows = collector.appendingPathComponent("windows")
+        try! """
+        #!/bin/sh
+        if [ "$1" = porcelain ]; then
+          printf 'V\tcodex\t1\tnone\toauth\nS\tSpent\tcodex\tok\tunused\tyes\nS\tDenied\tcodex\tok\tunused\tyes\n'
+        else
+          printf 'Spent\t100\t30\t2026-09-26T03:24\tok\t2026-09-26T08:24\nDenied\t-\t80\t-\tlimit-reached\t2026-09-26T08:24\n'
+        fi
+        """.write(to: windows, atomically: true, encoding: .utf8)
+        try! FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: windows.path)
+        let read = try! SlotSource(cli: windows.path).slots(fresh: true)
+        expect(read.first { $0.profile == "Spent" }?.resets == Date(timeIntervalSince1970: 1790393040),
+               "a spent 5h window returns at its own reset, not the weekly one")
+        expect(read.count == 2 && read.allSatisfy { unusable($0, cooldowns: [:]) != nil },
+               "spent and refused slots are ineligible")
 
         // Plans: every problem is named, so the planner can fix exactly that.
         let bad: [String: Any] = ["plan": ["criteria": [["id": "c1", "description": "d", "verification": "v"], ["id": "c2", "description": "d", "verification": "v"]],

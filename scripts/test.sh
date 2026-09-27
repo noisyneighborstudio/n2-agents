@@ -183,23 +183,35 @@ rm "$home/.n2-agents/Work/codex/auth.json"
 usage=$(run_agents best --porcelain --vendor opencode)
 print -r -- "$usage" | grep -qx 'Work	-	-	-	no-usage-api'
 # Codex reports quota too. Signed out says so; signed in, each window lands in
-# the column for its length (a weekly-only plan has no 5h figure), and a
-# reached limit reads as full whatever the percentage.
+# the column for its length (a weekly-only plan has no 5h figure). A reached
+# limit is one flag for the account: each window keeps its own figure, and a
+# denial no window accounts for is a note of its own, never capacity.
 usage=$(run_agents best --porcelain --vendor codex)
 print -r -- "$usage" | grep -qx 'Work	-	-	-	no-token'
-codex_usage() {  # used%, limit reached
-  printf '{"rate_limit": {"limit_reached": %s, "primary_window": {"used_percent": %s, "limit_window_seconds": 604800, "reset_at": 1790411072}, "secondary_window": null}}' \
-    "$2" "$1" > "$test_root/codex-usage.json"
+codex_usage() {  # limit reached, primary window, secondary window
+  printf '{"rate_limit": {"limit_reached": %s, "primary_window": %s, "secondary_window": %s}}' \
+    "$1" "$2" "$3" > "$test_root/codex-usage.json"
 }
+short() { printf '{"used_percent": %s, "limit_window_seconds": 18000, "reset_at": 1790393072}' "$1" }
+weekly() { printf '{"used_percent": %s, "limit_window_seconds": 604800, "reset_at": 1790411072}' "$1" }
 export N2_CODEX_USAGE_URL="file://$test_root/codex-usage.json"
 codex_auth='{"tokens": {"access_token": "t", "account_id": "a"}}'
 echo "$codex_auth" > "$home/.n2-agents/Work/codex/auth.json"
-codex_usage 44 false
+codex_usage false "$(weekly 44)" null
 usage=$(run_agents best --porcelain --vendor codex)
 print -r -- "$usage" | grep -qx 'Work	-	44	-	ok	2026-09-26T08:24'
-codex_usage 80 true
+codex_usage true "$(short 100)" "$(weekly 30)"
 usage=$(run_agents best --porcelain --vendor codex)
-print -r -- "$usage" | grep -qx 'Work	-	100	-	ok	2026-09-26T08:24'
+print -r -- "$usage" | grep -qx 'Work	100	30	2026-09-26T03:24	ok	2026-09-26T08:24'
+codex_usage true "$(short 20)" "$(weekly 100)"
+usage=$(run_agents best --porcelain --vendor codex)
+print -r -- "$usage" | grep -qx 'Work	20	100	2026-09-26T03:24	ok	2026-09-26T08:24'
+codex_usage true "$(weekly 80)" null
+usage=$(run_agents best --porcelain --vendor codex)
+print -r -- "$usage" | grep -qx 'Work	-	80	-	limit-reached	2026-09-26T08:24'
+codex_usage true null null
+usage=$(run_agents best --porcelain --vendor codex)
+print -r -- "$usage" | grep -qx 'Work	-	-	-	limit-reached	-'
 rm "$home/.n2-agents/Work/codex/auth.json"
 # Grok has one weekly credit pool: its percent fills the 7d column, reset at
 # the period's end in UTC. Signed in = an auth.x.ai entry in auth.json.
@@ -344,7 +356,7 @@ if run_agents run >/dev/null 2>&1; then echo "run picked a slot with nothing sig
 if run_agents login Work >/dev/null 2>&1; then echo "login guessed a lab" >&2; exit 1; fi
 rm -f "$home/.n2-agents/.last-slot"
 echo "$codex_auth" > "$home/.n2-agents/Work/codex/auth.json"
-codex_usage 10 false
+codex_usage false "$(weekly 10)" null
 echo "$grok_auth" > "$home/.n2-agents/Work/grok/auth.json"
 grok_usage 10
 # The only signed-in slots are Work's Codex and Grok, so that's where it goes…
@@ -363,12 +375,15 @@ out=$(run_agents run --vendor codex 2>&1)
 [[ $out == *"CODEX_HOME=$home/.n2-agents/Work/codex"* ]]
 porcelain=$(run_agents porcelain)
 print -r -- "$porcelain" | grep -qx "L	Work	codex"
-# A lab at its limit is passed over, every time round.
-codex_usage 100 true
-out=$(run_agents run 2>&1)
-[[ $out == *"GROK_HOME=$home/.n2-agents/Work/grok"* ]]
-out=$(run_agents run 2>&1)
-[[ $out == *"GROK_HOME=$home/.n2-agents/Work/grok"* ]]
+# A lab at its limit is passed over, every time round, and so is one that
+# refuses work though its window shows room.
+for window in 100 80; do
+  codex_usage true "$(weekly $window)" null
+  out=$(run_agents run 2>&1)
+  [[ $out == *"GROK_HOME=$home/.n2-agents/Work/grok"* ]]
+  out=$(run_agents run 2>&1)
+  [[ $out == *"GROK_HOME=$home/.n2-agents/Work/grok"* ]]
+done
 rm "$home/.n2-agents/Work/codex/auth.json" "$home/.n2-agents/Work/grok/auth.json" "$home/.n2-agents/Work/grok/billing.json"
 
 # --- adopt: shares claudes state, never copies it --------------------------

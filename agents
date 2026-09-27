@@ -442,11 +442,15 @@ def codex_row(r):
     cols = {}
     for w in (rl.get('primary_window'), rl.get('secondary_window')):
         if w:
-            used = 100 if rl.get('limit_reached') else w.get('used_percent', '-')
             reset = time.strftime('%Y-%m-%dT%H:%M', time.gmtime(w['reset_at'])) if w.get('reset_at') else '-'
-            cols['five' if w.get('limit_window_seconds', 0) <= 5 * 3600 else 'seven'] = (used, reset)
+            cols['five' if w.get('limit_window_seconds', 0) <= 5 * 3600 else 'seven'] = (w.get('used_percent', '-'), reset)
     five, seven = cols.get('five', ('-', '-')), cols.get('seven', ('-', '-'))
-    return five[0], seven[0], five[1], seven[1]
+    # limit_reached is one flag for the account and doesn't name a window, so
+    # each window keeps its own figure. A denial no window accounts for (95%+)
+    # gets a note of its own rather than passing as capacity.
+    denied = rl.get('limit_reached') and not any(
+        isinstance(used, (int, float)) and used >= 95 for used, _ in cols.values())
+    return five[0], seven[0], five[1], seven[1], 'limit-reached' if denied else 'ok'
 
 def grok(name, cfg):
     # Signed in = an auth.x.ai entry in the slot's auth.json. Its key lasts six
@@ -571,8 +575,9 @@ for pair in sys.argv[2:]:
         print(f"{name}\t-\t-\t-\t{status}")
         continue
     try:
-        five, seven, five_at, seven_at = row(req() if callable(req) else json.load(urllib.request.urlopen(req, timeout=10)))
-        print(f"{name}\t{five}\t{seven}\t{five_at}\tok\t{seven_at}")
+        # A row may add its own note after the four columns; otherwise it's ok.
+        five, seven, five_at, seven_at, note = (row(req() if callable(req) else json.load(urllib.request.urlopen(req, timeout=10))) + ('ok',))[:5]
+        print(f"{name}\t{five}\t{seven}\t{five_at}\t{note}\t{seven_at}")
     except urllib.error.HTTPError as e:
         note = {429: 'rate-limited', 401: 'stale-token', 403: 'stale-token'}.get(e.code, 'fetch-error')
         print(f"{name}\t-\t-\t-\t{note}")
@@ -620,9 +625,10 @@ EOF
 
 # --porcelain prints usage_table's rows untouched — the tray's quota meters
 # parse it, so like `agents porcelain` it is a contract, not a display:
-#   <profile> <5h%> <7d%> <5h-resets UTC> <note: ok|no-token|stale-token|rate-limited|fetch-error|no-usage-api|shared-login> [<7d-resets UTC>]
+#   <profile> <5h%> <7d%> <5h-resets UTC> <note: ok|no-token|stale-token|rate-limited|fetch-error|no-usage-api|shared-login|limit-reached> [<7d-resets UTC>]
 # The 7d columns hold the lab's long window, whatever its length
 # (vendor_long_window). shared-login: the slot uses Default's login and quota.
+# limit-reached: the lab refuses work though no window shows 95%+.
 cmd_best() {
   vsel="" porcelain=0
   while [ $# -gt 0 ]; do
