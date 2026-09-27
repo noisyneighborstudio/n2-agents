@@ -238,12 +238,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
             DispatchQueue.main.async {
                 guard generation == self.refreshGeneration, let data else { return }
                 self.model.data = data
-                // A setup finished outside the window (its terminal, or by
-                // hand) stops being pending once no lab is known signed out.
-                for (profile, labs) in self.model.pendingSetups where self.setup?.model.profile != profile
-                    && !labs.contains(where: { data.snapshot.signedIn[profile]?[$0] == false }) {
-                    self.setupPending(profile: profile, labs: nil)
-                }
                 if let s = self.model.selection,
                    data.profiles.first(where: { $0.name == s.profile })?.slots[s.vendor] == nil {
                     self.model.selection = nil
@@ -297,6 +291,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     // retry or a sign-in reads it. One fetch at a time: a fetch that becomes
     // due while another is in flight runs right after it, so a result read
     // before a sign-in never stands in for one after it.
+    private var usageGeneration = 0
     private var usageFetchedAt: [String: Date] = [:]
     private var usageTTL: [String: TimeInterval] = [:]
     private var usageRefetch = false
@@ -317,6 +312,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         // Stamped when the read starts, so a call landing mid-read doesn't
         // queue the same labs again; a sign-in clears the stamps to force one.
         for v in vendors { usageFetchedAt[v.id] = Date() }
+        let generation = usageGeneration
         model.usageLoading = true
         usageSlowTimer?.cancel()
         let slow = DispatchWorkItem { [weak self] in self?.model.usageSlow = true }
@@ -328,6 +324,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
                 return (v.id, r.status == 0 ? Usage.parse(r.output, longWindow: v.longWindow) : [:])
             })
             DispatchQueue.main.async {
+                guard generation == self.usageGeneration else { return }
                 self.model.usageLoading = false
                 self.usageSlowTimer?.cancel()
                 self.model.usageSlow = false
@@ -355,6 +352,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     // n2agents://sessions — opens the sessions window.
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls where url.scheme == "n2agents" {
+            if url.host == "reonboard-done" || url.host == "reonboard-failed" {
+                guard model.resettingAccounts else { continue }
+                completeAccountReset(succeeded: url.host == "reonboard-done")
+                continue
+            }
             if url.host == "sessions" {
                 showAllSessions()
                 continue
@@ -625,15 +627,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     }
 
     func finishSetup(profile: String) {
+        guard !model.resettingAccounts else { return }
         dismissPanel()
-        openSetup(profile: profile, isNew: false, resume: model.pendingSetups[profile])
+        accountSetupQueue.removeAll { $0 == profile }
+        openSetup(profile: profile, isNew: false, resume: model.pendingSetups[profile],
+                  reonboarding: !accountSetupQueue.isEmpty)
     }
 
     // MARK: - Profile setup window
 
     private var setup: ProfileSetup?
+    private var accountSetupQueue: [String] = []
+    private var accountSignOut: AccountSignOut?
 
-    private func openSetup(profile: String, isNew: Bool, resume: [String]?) {
+    private func completeAccountReset(succeeded: Bool) {
+        model.resettingAccounts = false
+        clearAccountCache()
+        refreshPanel()
+        if succeeded {
+            openNextAccountSetup()
+        } else {
+            alert("Sign-out did not finish", "Check the sign-out window for details, then try again. Profiles remain marked as needing setup.")
+        }
+    }
+
+    private func clearAccountCache() {
+        refreshGeneration += 1
+        usageGeneration += 1
+        model.usage = [:]
+        model.usageLoading = false
+        model.usageSlow = false
+        usageSlowTimer?.cancel()
+        usageFetchedAt.removeAll()
+        usageTTL.removeAll()
+        usageRefetch = false
+        usageRefetchOnDemand = false
+        defaults.removeObject(forKey: CacheKey.porcelain)
+    }
+
+    private func openNextAccountSetup() {
+        while !accountSetupQueue.isEmpty {
+            let profile = accountSetupQueue.removeFirst()
+            guard let labs = model.pendingSetups[profile], !labs.isEmpty else { continue }
+            openSetup(profile: profile, isNew: false, resume: labs, reonboarding: true)
+            return
+        }
+        refreshPanel()
+    }
+
+    private func openSetup(profile: String, isNew: Bool, resume: [String]?, reonboarding: Bool = false) {
         if let setup, setup.model.profile == profile {
             setup.bringToFront()
             return
@@ -644,6 +686,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         window.onClose = { [weak self, weak window] in
             if self?.setup === window { self?.setup = nil }
             self?.refreshPanel()
+        }
+        if reonboarding {
+            window.onContinue = { [weak self, weak window] in
+                guard let self else { return }
+                // Cursor has one account for the machine. Keep the login just completed.
+                if window?.model.finishedLabs.contains("cursor") == true {
+                    for name in self.accountSetupQueue {
+                        let labs = self.model.pendingSetups[name]?.filter { $0 != "cursor" } ?? []
+                        self.setupPending(profile: name, labs: labs.isEmpty ? nil : labs)
+                    }
+                }
+                window?.finishLater()
+                self.openNextAccountSetup()
+            }
         }
         setup = window
         window.show()
@@ -671,10 +727,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         "\"\(cliPath)\" login \(profile) --vendor \(vendor)"
     }
 
-    func setupStartLogin(profile: String, vendor: String) {
-        let done = "open -g 'n2agents://login-done?profile=\(profile)&vendor=\(vendor)'"
-        launchSession(loginCommand(profile: profile, vendor: vendor) + "; " + done,
-                      slug: "\(profile)-\(vendor)-setup", in: preferredTerminal)
+    func setupStartLogin(profile: String, vendor: String) -> NativeAuthSession? {
+        NativeAuthSession(executable: "/bin/sh",
+                          arguments: [cliPath, "login", profile, "--vendor", vendor],
+                          environment: Self.scriptEnvironment)
     }
 
     func setupCopyLoginCommand(profile: String, vendor: String) {
@@ -894,6 +950,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 
     func closeSettings() {
         settingsWindow?.dismiss()
+    }
+
+    func reonboardAccounts() {
+        guard !model.resettingAccounts, let snapshot = model.data?.snapshot else { return }
+        let ask = NSAlert()
+        ask.messageText = "Sign out of all accounts and set up again?"
+        ask.informativeText = "This signs out every listed profile, including Default, then opens the setup window to guide you through each profile again. Profiles, settings and session history stay in place. Close running agent sessions first. Browser accounts stay signed in, so choose the intended account at each login. Cursor uses one shared account across profiles."
+        ask.addButton(withTitle: "Sign Out and Set Up Again")
+        ask.addButton(withTitle: "Cancel")
+        ask.alertStyle = .warning
+        guard ask.runModal() == .alertFirstButtonReturn else { return }
+        setup?.finishLater()
+        closeSettings()
+        accountSetupQueue = snapshot.profiles.filter { !$0.slots.isEmpty }.map(\.name)
+        for profile in snapshot.profiles where !profile.slots.isEmpty {
+            setupPending(profile: profile.name, labs: snapshot.installedVendors.map(\.id).filter { profile.slots[$0] != nil })
+        }
+        model.resettingAccounts = true
+        clearAccountCache()
+        let session = NativeAuthSession(executable: "/bin/sh",
+                                        arguments: [cliPath, "reonboard", "--logout-only", "--yes"],
+                                        environment: Self.scriptEnvironment)
+        let controller = AccountSignOut(session: session)
+        controller.onClose = { [weak self, weak controller] in
+            guard let self else { return }
+            if self.accountSignOut === controller { self.accountSignOut = nil }
+            if self.model.resettingAccounts {
+                self.model.resettingAccounts = false
+                self.clearAccountCache()
+                self.refreshPanel()
+            }
+        }
+        session.onFinish = { [weak self, weak controller] status in
+            if status == 0 { controller?.close() }
+            self?.completeAccountReset(succeeded: status == 0)
+        }
+        accountSignOut = controller
+        controller.show()
     }
 
     func installCLI() -> String {

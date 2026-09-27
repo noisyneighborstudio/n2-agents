@@ -376,10 +376,10 @@ private struct ProfileCard: View {
     private var reading: (state: ProfileState, used: Int?) { model.reading(profile, data) }
     private var allOut: Bool { if case .allOut = reading.state { return true }; return false }
 
-    // A setup left unfinished: labs chosen, and some known to be signed out.
+    // Persisted unfinished labs, including vendors whose credentials cannot be inspected.
     private var pendingSetup: (labs: [String], done: Int, missing: [String])? {
         guard let labs = model.pendingSetups[profile.name] else { return nil }
-        let missing = labs.filter { data.snapshot.signedIn[profile.name]?[$0] == false }
+        let missing = labs
         return missing.isEmpty ? nil : (labs, labs.count - missing.count, missing)
     }
 

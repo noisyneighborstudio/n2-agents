@@ -26,6 +26,20 @@ struct SettingsWindowView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
+                    section("ACCOUNTS", subtitle: "Sign in again to check the account used by every listed profile.") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(model.resettingAccounts ? "Signing out. Setup will continue here when it finishes." : "Keep your profiles and sessions. Sign out, then the setup window guides you through each profile again.")
+                                .font(.system(size: 12)).foregroundStyle(Ink.secondary)
+                            Button("Sign Out of All Accounts and Set Up Again…") {
+                                actions.reonboardAccounts()
+                            }
+                            .disabled(model.resettingAccounts || model.data?.profiles.contains { !$0.slots.isEmpty } != true)
+                        }
+                        .padding(13)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Ink.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+
                     section("GENERAL", subtitle: "Choose where N2 Agents opens your sessions.") {
                         if let terminals = model.data?.terminals, !terminals.isEmpty {
                             VStack(spacing: 0) {

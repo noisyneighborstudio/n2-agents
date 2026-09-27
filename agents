@@ -12,6 +12,7 @@
 #   agents delete <Name> [--yes]
 #   agents adopt [--yes]                  import existing `claudes` profiles (shared, not copied)
 #   agents login <Profile> [--vendor <v>]  sign that slot out and back in
+#   agents reonboard                      sign out all listed slots, then sign in again
 #   agents authed <Profile>               per slot: signed in yes|no|unknown
 #   agents sessions [Profile] [--vendor <v>] [--porcelain [--limit N]]  newest first; no helpers or one-shots
 #   agents transfer <id> --to <Profile>|--next|--best [--from <Profile>] [--vendor <v>]
@@ -870,6 +871,10 @@ cmd_login() {
     ( exec_vendor "$v" "$name" "$cfg" "$cli" $out_args ) || \
       echo "agents: '$cli $out_args' reported an error — signing in anyway" >&2
   fi
+  login_slot
+}
+
+login_slot() {
   echo "Now sign in with the account '$name' should use."
   in_args=$(vendor_login "$v")
   if [ -z "$in_args" ]; then
@@ -885,6 +890,87 @@ cmd_login() {
     # shellcheck disable=SC2086
     ( exec_vendor "$v" "$name" "$cfg" "$cli" $who ) || true
   fi
+}
+
+# Reset the same installed slots shown in porcelain. Keep profile directories,
+# configuration and transcripts; only the vendor's logout touches credentials.
+cmd_reonboard() {
+  logout_only=false confirmed=false
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --logout-only) logout_only=true ;;
+      --yes) confirmed=true ;;
+      *) die "usage: agents reonboard [--logout-only] [--yes]" ;;
+    esac
+    shift
+  done
+  slots=""
+  for name in $(all_profiles); do
+    for v in $(vendors_installed); do
+      cfg=$(config_dir "$name" "$v")
+      [ -d "$cfg" ] || continue
+      slots="$slots $name:$v"
+    done
+  done
+  [ -n "$slots" ] || die "no listed accounts to set up"
+  echo "Sign out of all listed accounts, including Default. Profiles and sessions stay in place."
+  echo "Close running agent sessions first. Browser accounts stay signed in."
+  echo "Cursor uses one shared account for every profile; it will be set up once."
+  if [ "$confirmed" != true ]; then
+    printf 'Type SIGN OUT to continue: '
+    IFS= read -r answer || return 1
+    [ "$answer" = 'SIGN OUT' ] || { echo "Cancelled."; return 0; }
+  fi
+
+  # Complete every sign-out before opening any new sign-in. Never continue
+  # past a failed logout and imply that the old account was removed.
+  cursor_out=false
+  for slot in $slots; do
+    name=${slot%:*} v=${slot##*:}
+    if [ "$v" = cursor ] && [ "$cursor_out" = true ]; then continue; fi
+    cfg=$(config_dir "$name" "$v")
+    cli=$(vendor_cli "$v")
+    if vendor_authed "$v" "$cfg" "$name"; then authed=0; else authed=$?; fi
+    [ "$authed" != 1 ] || continue
+    out_args=$(vendor_logout "$v")
+    [ -n "$out_args" ] || die "$(vendor_label "$v") has no sign-out command"
+    echo "Signing $(vendor_label "$v") out of '$name'…"
+    # shellcheck disable=SC2086
+    ( exec_vendor "$v" "$name" "$cfg" "$cli" $out_args ) || \
+      die "sign-out failed for '$name' / $v. Resolve it and run agents reonboard again."
+    if vendor_authed "$v" "$cfg" "$name"; then
+      die "'$name' / $v still has credentials after sign-out. Resolve it before trying again."
+    fi
+    [ "$v" != cursor ] || cursor_out=true
+  done
+
+  if [ "$logout_only" = true ]; then
+    echo "Signed out. Continue in the N2 Agents setup window."
+    return 0
+  fi
+
+  cursor_done=false
+  for slot in $slots; do
+    name=${slot%:*} v=${slot##*:}
+    if [ "$v" = cursor ] && [ "$cursor_done" = true ]; then
+      echo "'$name' / Cursor uses the shared account you just confirmed."
+      continue
+    fi
+    cfg=$(config_dir "$name" "$v")
+    cli=$(vendor_cli "$v")
+    echo ""
+    echo "Set up '$name' / $(vendor_label "$v")"
+    printf 'Choose the intended account in your browser, then press Return to sign in: '
+    IFS= read -r answer || return 1
+    ( login_slot ) || die "setup stopped at '$name' / $v. Run agents reonboard to restart."
+    if vendor_authed "$v" "$cfg" "$name"; then authed=0; else authed=$?; fi
+    [ "$authed" != 1 ] || die "no login found for '$name' / $v. Setup is incomplete."
+    printf "Check the account shown by the lab. Type YES if it is the account '$name' should use: "
+    IFS= read -r answer || return 1
+    [ "$answer" = YES ] || die "account not confirmed. Run agents login $name --vendor $v to correct it."
+    [ "$v" != cursor ] || cursor_done=true
+  done
+  echo "All listed accounts have been set up and confirmed."
 }
 
 # --- shims -----------------------------------------------------------------
@@ -1663,6 +1749,7 @@ case $cmd in
   adopt)    cmd_adopt "$@" ;;
   sessions) cmd_sessions "$@" ;;
   login)    cmd_login "$@" ;;
+  reonboard) cmd_reonboard "$@" ;;
   authed)   cmd_authed "$@" ;;
   transfer) cmd_transfer "$@" ;;
   desktop)  cmd_desktop "$@" ;;
