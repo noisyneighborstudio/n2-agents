@@ -72,6 +72,17 @@ unverified execution routes and missing fresh physical-fleet observations.
 Remaining acceptance stays tracked in [fleet readiness](fleet-readiness.md). Grok, Muse and Cursor still use their
 existing collectors; their limitations have not been resolved by this change.
 
+Cursor and Muse preserve the credential-store command's reported failure category.
+An item-not-found exit produces `no-token`; other command failures, launch errors
+and the five-second read timeout produce `credential-store-unavailable`.
+Both statuses carry unknown capacity and are ineligible for scheduling. Muse's
+file-backed profile route and Cursor's shared-login scope are unchanged.
+The regression uses synthetic command results, never a real Keychain or provider
+request, and passes actual reader output through native and loop parsers.
+Apple's [security command implementation](https://github.com/apple-oss-distributions/Security/blob/main/SecurityTool/macOS/keychain_find.c)
+can collapse an earlier search error into item-not-found. Exit 44 therefore
+means reported absence, not independent proof that no credential exists.
+
 ## Primary references
 
 - [Codex app-server authentication and rate limits](https://learn.chatgpt.com/docs/app-server)

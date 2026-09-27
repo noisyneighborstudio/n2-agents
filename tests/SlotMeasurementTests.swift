@@ -58,6 +58,15 @@ import Foundation
         }
         let staleIdentity = try parse(windows: [healthy], age: 901, identity: ["status": "verified", "accountHash": account])
         precondition(staleIdentity.accountHash == nil)
+        if CommandLine.arguments.count > 1 {
+            let lines = try String(contentsOfFile: CommandLine.arguments[1], encoding: .utf8).split(separator: "\n")
+            precondition(lines.count == 4)
+            for (index, line) in lines.enumerated() {
+                let row = SlotMeasurement.parse(String(line))!
+                precondition(row.status == (index % 2 == 0 ? "no-token" : "credential-store-unavailable"))
+                precondition(row.used == nil && row.resets == nil, "failed store cannot supply loop capacity")
+            }
+        }
         print("Structured slot measurement tests passed")
     }
 }

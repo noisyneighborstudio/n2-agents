@@ -319,6 +319,39 @@ class ReaderTests(unittest.TestCase):
             self.assertEqual(run.call_count, 1)
             self.assertEqual(run.call_args.args[0][3], 'Claude Code-credentials-' + u.hashlib.sha256(directory.encode()).hexdigest()[:8])
 
+    def test_cursor_muse_credential_store_results(self):
+        for vendor in ('cursor', 'muse'):
+            for failure in (1, 36, 44, OSError('synthetic unavailable'),
+                            u.subprocess.TimeoutExpired('security', 5)):
+                expected = 'no-token' if failure == 44 else 'credential-store-unavailable'
+                with self.subTest(vendor=vendor, failure=str(failure)), tempfile.TemporaryDirectory() as cfg:
+                    for fmt in ('json', 'tsv'):
+                        output = io.StringIO()
+                        mocked = {'side_effect': failure} if isinstance(failure, Exception) else {
+                            'return_value': SimpleNamespace(returncode=failure, stdout='')}
+                        with patch.object(u.subprocess, 'run', **mocked), \
+                             patch.object(u.urllib.request, 'urlopen', side_effect=AssertionError('network forbidden')) as network, \
+                             patch.dict(os.environ, {'N2_USAGE_FORMAT': fmt}, clear=True), \
+                             patch.object(u.sys, 'argv', ['usage.py', vendor, 'Default='+cfg]), \
+                             contextlib.redirect_stdout(output):
+                            u.main()
+                        network.assert_not_called()
+                        if fmt == 'json':
+                            row = json.loads(output.getvalue())
+                            self.assertEqual(row['status'], expected)
+                            self.assertEqual(row['display']['shortUsed'], '-')
+                            self.assertEqual(row['display']['longUsed'], '-')
+                        else:
+                            self.assertEqual(output.getvalue().strip().split('\t')[4], expected)
+            with tempfile.TemporaryDirectory() as cfg:
+                token = 'synthetic-token' if vendor == 'cursor' else 'dca:synthetic'
+                stdout = token if vendor == 'cursor' else json.dumps({'access_token': token})
+                with patch.object(u.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=stdout)) as run:
+                    status, request = getattr(u, vendor)('Default', cfg)
+                self.assertEqual(status, 'ok')
+                self.assertEqual(request.get_header('Authorization'), 'Bearer '+token)
+                self.assertEqual(run.call_args.kwargs['timeout'], 5)
+
     def test_locked_keychain_is_not_logged_out(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(u.subprocess, 'run',
                 return_value=SimpleNamespace(returncode=36, stdout='')):

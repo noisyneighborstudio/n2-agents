@@ -63,6 +63,8 @@ import Darwin
         }
         for candidate in [slot("claude", "Unknown", used: nil),
                           slot("codex", "Failed", used: 10, quota: "fetch-error"),
+                          slot("muse", "Unreadable", used: 10, quota: "credential-store-unavailable"),
+                          slot("muse", "Missing", used: 10, quota: "no-token"),
                           slot("claude", "Throttled", used: 10, quota: "rate-limited")] {
             expect(pick([candidate], effort: .deep, cooldowns: [:], busy: [:]) == nil,
                    "missing or failed measurements cannot advertise capacity")

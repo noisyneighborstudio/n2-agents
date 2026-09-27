@@ -406,6 +406,20 @@ def grok_row(r):
         .strftime('%Y-%m-%dT%H:%M') if end else '-'
     return '-', c.get('creditUsagePercent', '-'), '-', reset
 
+def credential_store(service, account):
+    try:
+        result = subprocess.run(['security', 'find-generic-password', '-s', service,
+                                 '-a', account, '-w'], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return 'credential-store-unavailable', ''
+    # errSecItemNotFound (-25300), truncated to the process exit byte, is 44.
+    # Other failures do not establish that the user is signed out.
+    if result.returncode == 44:
+        return 'no-token', ''
+    if result.returncode != 0:
+        return 'credential-store-unavailable', ''
+    return 'ok', result.stdout
+
 def muse(name, cfg):
     # A profile's login is in its slot's auth.json (the file backend N2 pins);
     # Default's is the one keychain item a plain `muse` uses. Never the
@@ -415,10 +429,11 @@ def muse(name, cfg):
     except (OSError, ValueError):
         t = ''
     if not t and name == 'Default':
-        p = subprocess.run(['security', 'find-generic-password', '-s', 'ai.meta.dev.credentials',
-                            '-a', 'meta', '-w'], capture_output=True, text=True)
+        status, raw = credential_store('ai.meta.dev.credentials', 'meta')
+        if status != 'ok':
+            return status, None
         try:
-            t = json.loads(p.stdout).get('access_token', '') if p.returncode == 0 else ''
+            t = json.loads(raw).get('access_token', '')
         except ValueError:
             t = ''
     if not t.startswith('dca:'):
@@ -445,14 +460,15 @@ def cursor(name, cfg):
     # other slots say they share it rather than repeat the numbers.
     if name != 'Default':
         return 'shared-login', None
-    p = subprocess.run(['security', 'find-generic-password', '-s', 'cursor-access-token',
-                        '-a', 'cursor-user', '-w'], capture_output=True, text=True)
-    if p.returncode != 0 or not p.stdout.strip():
+    status, raw = credential_store('cursor-access-token', 'cursor-user')
+    if status != 'ok':
+        return status, None
+    if not raw.strip():
         return 'no-token', None
     url = os.environ.get('N2_CURSOR_USAGE_URL',
                          'https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage')
     return 'ok', urllib.request.Request(url, data=b'{}', method='POST',
-        headers={'Authorization': 'Bearer ' + p.stdout.strip(), 'Content-Type': 'application/json',
+        headers={'Authorization': 'Bearer ' + raw.strip(), 'Content-Type': 'application/json',
                  'Connect-Protocol-Version': '1', 'User-Agent': 'n2-agents'})
 
 def cursor_row(r):

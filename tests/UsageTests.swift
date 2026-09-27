@@ -127,6 +127,16 @@ import Foundation
             check(rows["ModelLimited"]?.used == 100 && rows["ModelLimited"]?.maxed == true,
                   "model limit must block native next-agent eligibility")
         }
+        if CommandLine.arguments.count > 2 {
+            let lines = try! String(contentsOfFile: CommandLine.arguments[2], encoding: .utf8).split(separator: "\n")
+            check(lines.count == 4, "both collectors must reach the UI")
+            for (index, line) in lines.enumerated() {
+                let provider = index < 2 ? "cursor" : "muse"
+                let row = Usage.parseJSON(String(line), provider: provider)["Default"]!
+                check(row.note == (index % 2 == 0 ? .noToken : .credentialStoreUnavailable), "preserve credential failure cause")
+                check(row.used == nil && row.availableRemaining == nil, "failed store cannot advertise capacity")
+            }
+        }
         print("Usage structured observations, freshness, restrictions, and failure tests passed")
     }
 }
