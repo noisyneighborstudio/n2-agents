@@ -78,6 +78,9 @@ swiftc tray/ShellPath.swift tests/ShellPathTests.swift -o "$path_test"
 icon_test=$(mktemp -d "$TMPDIR/statusicon.XXXXXX")/status-icon-tests
 swiftc tray/StatusIcon.swift tests/StatusIconTests.swift -o "$icon_test"
 "$icon_test"
+glass_test=$(mktemp -d "$TMPDIR/glasswindow.XXXXXX")/glass-window-tests
+swiftc tray/GlassWindow.swift tests/GlassWindowTests.swift -o "$glass_test"
+"$glass_test"
 
 # --- vendor adapter table --------------------------------------------------
 # The config-dir env var is the single most load-bearing fact in the app: it

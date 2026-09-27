@@ -290,6 +290,11 @@ final class GlassWindow: NSPanel {
               !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
             setFrame(target, display: true)
             surface.frame = contentView?.bounds ?? .zero
+            // An animated resize cut short by present() or dismiss() never
+            // ran its completion, so its mask may still be here. Left on, it
+            // hides part of the panel, and clicks there fall through to the
+            // app beneath and read as a click away.
+            surface.layer?.mask = nil
             placeContent()
             return
         }
