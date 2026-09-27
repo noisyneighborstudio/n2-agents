@@ -354,14 +354,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         for url in urls where url.scheme == "n2agents" {
             if url.host == "reonboard-done" || url.host == "reonboard-failed" {
                 guard model.resettingAccounts else { continue }
-                model.resettingAccounts = false
-                clearAccountCache()
-                refreshPanel()
-                if url.host == "reonboard-done" {
-                    openNextAccountSetup()
-                } else {
-                    alert("Sign-out did not finish", "Check the error in the terminal, then try again. Profiles remain marked as needing setup.")
-                }
+                completeAccountReset(succeeded: url.host == "reonboard-done")
                 continue
             }
             if url.host == "sessions" {
@@ -645,6 +638,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 
     private var setup: ProfileSetup?
     private var accountSetupQueue: [String] = []
+    private var accountSignOut: AccountSignOut?
+
+    private func completeAccountReset(succeeded: Bool) {
+        model.resettingAccounts = false
+        clearAccountCache()
+        refreshPanel()
+        if succeeded {
+            openNextAccountSetup()
+        } else {
+            alert("Sign-out did not finish", "Check the sign-out window for details, then try again. Profiles remain marked as needing setup.")
+        }
+    }
 
     private func clearAccountCache() {
         refreshGeneration += 1
@@ -722,10 +727,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         "\"\(cliPath)\" login \(profile) --vendor \(vendor)"
     }
 
-    func setupStartLogin(profile: String, vendor: String) {
-        let done = "open -g 'n2agents://login-done?profile=\(profile)&vendor=\(vendor)'"
-        launchSession(loginCommand(profile: profile, vendor: vendor) + "; " + done,
-                      slug: "\(profile)-\(vendor)-setup", in: preferredTerminal)
+    func setupStartLogin(profile: String, vendor: String) -> NativeAuthSession? {
+        NativeAuthSession(executable: "/bin/sh",
+                          arguments: [cliPath, "login", profile, "--vendor", vendor],
+                          environment: Self.scriptEnvironment)
     }
 
     func setupCopyLoginCommand(profile: String, vendor: String) {
@@ -964,9 +969,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         }
         model.resettingAccounts = true
         clearAccountCache()
-        let command = "\"\(cliPath)\" reonboard --logout-only --yes"
-        launchSession(command + " && open 'n2agents://reonboard-done' || open 'n2agents://reonboard-failed'",
-                      slug: "account-setup", in: preferredTerminal)
+        let session = NativeAuthSession(executable: "/bin/sh",
+                                        arguments: [cliPath, "reonboard", "--logout-only", "--yes"],
+                                        environment: Self.scriptEnvironment)
+        let controller = AccountSignOut(session: session)
+        controller.onClose = { [weak self, weak controller] in
+            guard let self else { return }
+            if self.accountSignOut === controller { self.accountSignOut = nil }
+            if self.model.resettingAccounts {
+                self.model.resettingAccounts = false
+                self.clearAccountCache()
+                self.refreshPanel()
+            }
+        }
+        session.onFinish = { [weak self, weak controller] status in
+            if status == 0 { controller?.close() }
+            self?.completeAccountReset(succeeded: status == 0)
+        }
+        accountSignOut = controller
+        controller.show()
     }
 
     func installCLI() -> String {

@@ -4,6 +4,7 @@ import Foundation
 final class FakeSetupHost: SetupHost {
     private let lock = NSLock()
     private var credentials: [String: Bool] = ["codex": false, "claude": false]
+    var session: NativeAuthSession?
     var started: [String] = []
     var pending: [String]?
     func authenticate(_ vendor: String) {
@@ -15,7 +16,7 @@ final class FakeSetupHost: SetupHost {
         lock.lock(); defer { lock.unlock() }
         return credentials
     }
-    func setupStartLogin(profile: String, vendor: String) { started.append(vendor) }
+    func setupStartLogin(profile: String, vendor: String) -> NativeAuthSession? { started.append(vendor); return session }
     func setupCopyLoginCommand(profile: String, vendor: String) {}
     func setupPending(profile: String, labs: [String]?) { pending = labs }
     func setupOpen(profile: String, vendor: String) {}
@@ -60,6 +61,16 @@ struct ProfileSetupTests {
         RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         precondition(cancelledHost.started.isEmpty)
         precondition(cancelledHost.pending == ["codex"])
+        let failedHost = FakeSetupHost()
+        failedHost.session = NativeAuthSession(executable: "/bin/sh", arguments: [], environment: [:])
+        let failed = ProfileSetup(profile: "Work", isNew: false, snapshot: snapshot,
+                                  resume: ["codex"], host: failedHost)
+        failed.beginSignIn()
+        waitUntil { failedHost.started == ["codex"] }
+        failedHost.session?.finish(1)
+        precondition(failed.model.states["codex"] == .failed)
+        precondition(failedHost.pending == ["codex"])
+        failed.windowWillClose(Notification(name: NSWindow.willCloseNotification))
         print("Profile setup tests passed")
     }
 }

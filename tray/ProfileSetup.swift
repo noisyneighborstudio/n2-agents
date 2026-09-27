@@ -1,19 +1,16 @@
 import AppKit
 import SwiftUI
 
-// Profile setup: pick the labs a profile holds, then sign in to each, one at a
-// time. It lives in a floating window rather than the panel: sign-in happens in
-// a terminal, and a transient popover closes the moment the terminal takes
-// focus. The window watches the profile's slots and ticks each lab the moment
-// its login lands — nobody comes back to say they're done. Closing it early is
-// fine: the unfinished setup surfaces on the profile's card.
+// Profile setup signs in to each lab in one window. Provider prompts run in
+// an embedded PTY; browser OAuth opens as needed. Unfinished labs remain on
+// the profile card when the window closes.
 
 enum LabState: Equatable {
     case waiting
     case signingIn
     case signedIn
-    case unconfirmed   // the terminal finished, but this lab keeps its login where we can't see
-    case failed        // the terminal finished and no login landed
+    case unconfirmed   // the provider finished, but its login cannot be inspected
+    case failed        // the provider failed or no login landed
     case skipped
 }
 
@@ -22,7 +19,7 @@ enum LabState: Equatable {
 protocol SetupHost: AnyObject {
     func setupCreate(profile: String, vendors: [String]) -> String?
     func setupAuthed(profile: String) -> [String: Bool]?
-    func setupStartLogin(profile: String, vendor: String)
+    func setupStartLogin(profile: String, vendor: String) -> NativeAuthSession?
     func setupCopyLoginCommand(profile: String, vendor: String)
     func setupPending(profile: String, labs: [String]?)
     func setupOpen(profile: String, vendor: String)
@@ -42,6 +39,7 @@ final class SetupModel: ObservableObject {
     @Published var picked: Set<String>
     @Published var labs: [String] = []
     @Published var states: [String: LabState] = [:]
+    @Published var authSession: NativeAuthSession?
     @Published var busy = false
     @Published var error: String?
 
@@ -83,8 +81,7 @@ final class ProfileSetup: NSObject, NSWindowDelegate {
     }
 
     func show() {
-        // Floating glass that stays when the app deactivates, so it sits above
-        // the terminal while you type a password there.
+        // Keep setup visible while the browser completes authorization.
         let glass = GlassWindow(rootView: SetupView(model: model, actions: self), behavior: .floating)
         glass.delegate = self
         window = glass
@@ -99,6 +96,7 @@ final class ProfileSetup: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         closed = true
+        model.authSession?.cancel()
         poll?.invalidate()
         poll = nil
         onClose?()
@@ -159,6 +157,8 @@ final class ProfileSetup: NSObject, NSWindowDelegate {
         var advanced = false
         for lab in model.labs where authed[lab] == true {
             let state = model.states[lab]
+            if state == .signingIn && model.authSession?.isRunning == true { continue }
+            if state == .failed && model.authSession != nil { continue }
             guard state != .signedIn, state != .skipped else { continue }
             if state == .signingIn || state == .failed { advanced = true }
             withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { model.states[lab] = .signedIn }
@@ -176,7 +176,7 @@ final class ProfileSetup: NSObject, NSWindowDelegate {
         guard model.current == nil, model.failed == nil else { return }
         if let next = model.labs.first(where: { model.states[$0] == .waiting }) {
             model.states[next] = .signingIn
-            host?.setupStartLogin(profile: model.profile, vendor: next)
+            startLogin(next)
         } else if model.step == .signIn {
             poll?.invalidate()
             poll = nil
@@ -185,9 +185,14 @@ final class ProfileSetup: NSObject, NSWindowDelegate {
         }
     }
 
-    /// The terminal running a lab's sign-in has finished.
-    func loginFinished(vendor: String) {
-        guard model.states[vendor] == .signingIn else { return }
+    /// The embedded provider process has finished.
+    func loginFinished(vendor: String, succeeded: Bool = true) {
+        guard !closed, model.states[vendor] == .signingIn else { return }
+        if !succeeded {
+            model.states[vendor] = .failed
+            persist()
+            return
+        }
         check { authed in
             guard self.model.states[vendor] == .signingIn else { return }   // ticked by this read
             // A lab that keeps its login out of sight can only be taken at
@@ -208,13 +213,18 @@ final class ProfileSetup: NSObject, NSWindowDelegate {
 
     // MARK: - Row actions
 
-    func reopen(_ vendor: String) {
-        host?.setupStartLogin(profile: model.profile, vendor: vendor)
+    private func startLogin(_ vendor: String) {
+        model.authSession?.cancel()
+        let session = host?.setupStartLogin(profile: model.profile, vendor: vendor)
+        model.authSession = session
+        session?.onFinish = { [weak self] status in
+            self?.loginFinished(vendor: vendor, succeeded: status == 0)
+        }
     }
 
     func tryAgain(_ vendor: String) {
         model.states[vendor] = .signingIn
-        host?.setupStartLogin(profile: model.profile, vendor: vendor)
+        startLogin(vendor)
     }
 
     func copyCommand(_ vendor: String) {
@@ -222,6 +232,8 @@ final class ProfileSetup: NSObject, NSWindowDelegate {
     }
 
     func skip(_ vendor: String) {
+        model.authSession?.cancel()
+        model.authSession = nil
         model.states[vendor] = .skipped
         persist()
         advance()
@@ -263,7 +275,7 @@ struct SetupView: View {
             }
         }
         .transition(.opacity)
-        .frame(width: 400)
+        .frame(width: model.authSession == nil ? 400 : 640)
     }
 }
 
@@ -287,7 +299,7 @@ private struct PickStep: View {
                 Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 32, height: 32)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Set up “\(model.profile)”").font(.system(size: 13, weight: .semibold))
-                    Text("Pick the labs this identity holds. You’ll sign in to each one next — this window stays with you until you do.")
+                    Text("Pick the labs this identity holds. You’ll sign in to each one in this window.")
                         .font(.system(size: 11)).foregroundStyle(Ink.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -375,12 +387,8 @@ private struct SignInStep: View {
             .padding(.horizontal, 14)
             .padding(.top, 14)
 
-            if model.current != nil {
-                Text("Leave this open. It watches each config dir and ticks the row the moment the token lands — you don’t come back and tell it.")
-                    .font(.system(size: 10.5)).foregroundStyle(Ink.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.06)))
+            if let session = model.authSession {
+                NativeAuthView(session: session)
                     .padding(.horizontal, 20)
                     .padding(.top, 14)
             }
@@ -430,9 +438,6 @@ private struct LabRow: View {
                 }
             }
             Spacer(minLength: 6)
-            if state == .signingIn {
-                Button("Reopen") { actions.reopen(lab) }.controlSize(.small)
-            }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 9)
@@ -455,11 +460,11 @@ private struct LabRow: View {
         case .signedIn:
             return model.vendor(lab)?.hasUsageAPI == true ? "Signed in · quota reading now" : "Signed in"
         case .unconfirmed:
-            return "Finished in the terminal — \(label) keeps its login where N2 can’t check it"
+            return "Sign-in finished; \(label) keeps its login where N2 can’t check it"
         case .signingIn:
-            return "Signing in — finish in \(actions.terminalName)"
+            return "Follow the sign-in prompts below"
         case .failed:
-            return "The terminal closed without writing a token to \(actions.slotPath(lab))."
+            return "Sign-in did not complete for \(actions.slotPath(lab))."
         case .skipped:
             return "Skipped — sign in later from the profile card"
         case .waiting:
