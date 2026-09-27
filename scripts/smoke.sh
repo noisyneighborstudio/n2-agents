@@ -1,7 +1,25 @@
 #!/bin/sh
-# Real CLI, private HOME/root and signed synthetic owner; no provider calls.
+# Real CLI against disposable homes: synthetic providers and a signed
+# synthetic owner; no provider calls.
 set -eu
 cd "$(dirname "$0")/.."
+(
+smoke_root=$(mktemp -d)
+trap 'rm -rf "$smoke_root"' EXIT HUP INT TERM
+mkdir -p "$smoke_root/home/.n2-agents/Fixture/codex" "$smoke_root/bin"
+cat > "$smoke_root/bin/codex" <<'PROVIDER'
+#!/bin/sh
+printf '%s\n' "$CODEX_HOME"
+PROVIDER
+chmod +x "$smoke_root/bin/codex"
+export HOME="$smoke_root/home" PATH="$smoke_root/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+unset CODEX_HOME CLAUDE_CONFIG_DIR OPENAI_API_KEY
+./agents help > "$smoke_root/help"
+grep -Fq 'agents loop' "$smoke_root/help"
+./agents run Fixture --vendor codex --version > "$smoke_root/route"
+test "$(cat "$smoke_root/route")" = "$HOME/.n2-agents/Fixture/codex"
+)
+echo 'Smoke: real CLI routes to isolated profile.'
 python3 scripts/test-fleet-auth-bridge.py \
   BridgeIntegrationTests.test_n2_session_browser_and_resume_discover_original_profile \
   BridgeIntegrationTests.test_killed_record_publisher_recovers_in_discovery_and_resume \

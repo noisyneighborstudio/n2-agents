@@ -36,8 +36,8 @@ jobs:
             *) exit 64 ;;
           esac
           echo "N2_CHANNEL=$channel" >> "$GITHUB_ENV"
-      - name: Test
-        run: ./scripts/test.sh
+      - name: Verify release checkout
+        run: scripts/verify.sh
       - name: Import Developer ID certificate
         env:
           CERTIFICATE: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}

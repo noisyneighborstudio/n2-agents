@@ -32,6 +32,28 @@ Move fast by never being far from something that works.
    before a slice needs it. Anything worth doing outside the slice goes under
    **Noticed**.
 
+## Integrate frequently
+
+Integration is part of delivering each slice. Do not accumulate verified work on
+long-lived branches while starting unrelated slices.
+
+- Before starting a slice, fetch the target branch and inspect changes since the
+  last integration point. Prioritize incoming hotfixes. Once a hotfix lands,
+  reconcile it into affected working branches before further dependent work.
+- After each verified slice, integrate the smallest independently useful change
+  into its intended target before starting unrelated work. If integration needs
+  release authorization or is blocked, record the exact blocker and bring the
+  concrete candidate to the user; do not silently grow the stack.
+- Use ordinary merges for shared branches. Never force-push. Run affected proofs
+  and all required gates on the combined result, and verify CI on its exact SHA.
+  Green CI on the pre-integration branch is not proof of the combined result.
+- After integration, update the queue and reconcile remaining branches so fixed
+  work is not repeated. Report what is verified, merged, published and installed
+  separately, with the target commit and any remaining divergence.
+- Promote accepted improvements incrementally. Unrelated fleet or adapter work
+  must not hold up an otherwise ready fix. Existing release and live-state
+  authorization requirements still apply.
+
 ## The slice queue
 
 `docs/slices.md` holds:
@@ -74,8 +96,10 @@ Run commands from the repository root on macOS 26 with its Xcode SDK.
   style or type analysis.
 - Tests: `scripts/test.sh`.
 - Smoke run: `scripts/smoke.sh` starts the real CLI against throwaway state and
-  a signed synthetic owner. It checks session discovery, resume, transport descendant cleanup, provider caller-lifetime cleanup, terminal frontend cleanup, and migration peer barriers without
-  live provider credentials. Extend it when a slice adds observable behavior.
+  a signed synthetic owner and synthetic vendor executables. It checks profile routing,
+  session discovery, resume, transport descendant cleanup, provider caller-lifetime cleanup,
+  terminal frontend cleanup, and migration peer barriers without live provider credentials.
+  Extend it when a slice adds observable behavior.
 
 CI must be green on the exact pushed commit before reporting a slice complete.
 

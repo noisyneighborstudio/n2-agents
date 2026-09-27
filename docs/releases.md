@@ -7,7 +7,7 @@ N2 Agents updates itself with Sparkle 2, on two channels:
 | `main`   | Continuous | `1.4.0-continuous.3`       | `$N2_FEED_BASE_URL/continuous/appcast.xml` |
 | `stable` | Stable     | `1.4.0`                    | `$N2_FEED_BASE_URL/stable/appcast.xml`     |
 
-`.github/workflows/release.yml` runs `scripts/test.sh`, then semantic-release. semantic-release reads conventional commits (`feat:` minor, `fix:` patch, `!`/`BREAKING CHANGE:` major), tags the repo and creates the GitHub release; a push with no releasable commits publishes nothing. Runs are serialized, so the two channels never race.
+`.github/workflows/release.yml` runs `scripts/verify.sh` on the release checkout before importing signing credentials or running semantic-release. Formatting, lint, tests and smoke must all pass; a separate branch CI result is not used as permission to publish. semantic-release reads conventional commits (`feat:` minor, `fix:` patch, `!`/`BREAKING CHANGE:` major), tags the repo and creates the GitHub release; a push with no releasable commits publishes nothing. Runs are serialized, so the two channels never race.
 
 - **Version.** `CFBundleShortVersionString` is semantic-release's version. `CFBundleVersion` is the workflow run number (`N2_BUILD_NUMBER`), which only increases, across both channels — Sparkle orders updates by it. Renaming the workflow file resets the run number, so don't.
 - **Build.** `scripts/release-prepare.sh` → `scripts/release-build.sh` → `tray/build.sh` builds `N2 Agents.app`, Developer ID signs it, notarizes and staples it, and zips it twice: `N2Agents.zip` (what `install.sh` downloads) and `N2Agents-<channel>-<version>.zip` (the appcast enclosure).
@@ -37,6 +37,22 @@ Builds publish to this (public) repo: release zips as assets, feeds on the `appc
 Without the notary secrets the run publishes a signed but un-notarized build and logs a warning. Key material stays in runner-temporary files or stdin and is removed in an `always()` step; never pass a private key as an argument or store it in the checkout.
 
 ## Promoting to Stable
+
+Do not collect unrelated fleet/T3 work into one stable promotion. After each small
+improvement is accepted on an explicitly opted-in Continuous installation, prepare
+a separately authorized Stable promotion of the smallest accepted prefix of main.
+List every intervening change; an unaccepted change blocks that candidate.
+
+Before promotion, record source SHA, passing gate run, Continuous artifact digest,
+installed version and a receipt demonstrating the changed behavior. After the
+Stable build, record its channel, artifact digest, installed version and behavior
+receipt separately. Stable is the default channel; merging to main alone does not
+deliver to those users. Keep account-level receipts outside the public repo.
+
+Promotion is a release action requiring explicit authorization. A code-only revert
+still needs a new verified release; persisted-state changes require their own
+backward-compatibility proof.
+
 
 Fast-forward `stable` to the `main` commit you want (`git push origin <sha>:stable`), or merge `stable` back into `main` afterwards. Otherwise the stable tag isn't in `main`'s history and continuous versions keep counting toward a version already shipped.
 

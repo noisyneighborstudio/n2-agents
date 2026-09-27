@@ -1,5 +1,8 @@
 #!/bin/zsh
 set -euo pipefail
+# Provider fixtures must not inherit the invoking agent's route or credentials.
+unset CODEX_HOME CLAUDE_CONFIG_DIR GROK_HOME CURSOR_CONFIG_DIR XDG_CONFIG_HOME
+unset OPENAI_API_KEY ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN
 TRAPZERR() { print -u2 -- "Test command failed at ${funcfiletrace[1]}"; }
 cd "${0:A:h}/.."
 
@@ -825,5 +828,6 @@ python3 scripts/test-fleet-prompt-binding.py
 python3 scripts/test-fleet-claude.py
 python3 scripts/test-fleet-shell.py
 sh scripts/test-tool-disruption-approval.sh
+python3 scripts/test-release-gates.py
 
 echo "All tests passed"

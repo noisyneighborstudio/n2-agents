@@ -15,11 +15,5 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - name: Formatting
-        run: scripts/check.sh format
-      - name: Lint with compiler warnings as errors
-        run: scripts/check.sh lint
-      - name: Tests
-        run: scripts/test.sh
-      - name: Smoke
-        run: scripts/smoke.sh
+      - name: Verify checkout
+        run: scripts/verify.sh
