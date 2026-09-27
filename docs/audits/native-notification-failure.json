@@ -1,0 +1,57 @@
+{
+  "fixture": "disposable ad-hoc-signed accessory app; no permission request; no provider/profile access",
+  "productionSourceSHA256": "bb1fc4bb5088cff3f5e991b9c81972b6c522fbf050e483b448193d7c76d1f9b1",
+  "settings": {
+    "alert": 0,
+    "authorization": 0,
+    "bundle": "dev.sethwebster.n2agents.delivery-spike",
+    "notificationCenter": 0,
+    "sound": 0
+  },
+  "receipts": [
+    {
+      "alert": 0,
+      "authorization": 0,
+      "bundle": "dev.sethwebster.n2agents.delivery-spike",
+      "notificationCenter": 0,
+      "sound": 0
+    },
+    {
+      "accepted": false,
+      "error": "Error Domain=UNErrorDomain Code=1 \"Notifications are not allowed for this application\" UserInfo={NSLocalizedDescription=Notifications are not allowed for this application}",
+      "kind": "completed"
+    },
+    {
+      "accepted": false,
+      "error": "Error Domain=UNErrorDomain Code=1 \"Notifications are not allowed for this application\" UserInfo={NSLocalizedDescription=Notifications are not allowed for this application}",
+      "kind": "failed"
+    },
+    {
+      "accepted": false,
+      "error": "Error Domain=UNErrorDomain Code=1 \"Notifications are not allowed for this application\" UserInfo={NSLocalizedDescription=Notifications are not allowed for this application}",
+      "kind": "disconnected"
+    },
+    {
+      "deliveredAtReceipt": []
+    }
+  ],
+  "limits": [
+    "This is an OS interface probe, not the production notification method.",
+    "No authorized delivery or visible banner established.",
+    "Delivered notifications sampled after submission callbacks; no delayed delivery assertion."
+  ],
+  "sources": [
+    "https://developer.apple.com/documentation/usernotifications/unusernotificationcenterdelegate",
+    "https://developer.apple.com/documentation/usernotifications/unusernotificationcenter/getdeliverednotifications(completionhandler:)"
+  ],
+  "repairSourceSHA256": {
+    "tray/FleetControl.swift": "ebb79e0eefe375fa4dc32f1ec067c153fac2455711fd49a92e4922ddc85b4f5b",
+    "tray/FleetView.swift": "918ef162348e7487311760b8cf2e873f4274df6ed8a13df678e776bcb4a6ca6a",
+    "tray/PanelModel.swift": "d319e5f8d9aec30f06f92b2483bc74338ef9e204845b664a25dfb9dd3adb8c63",
+    "tests/FleetNotificationTests.swift": "a3cc11f9e9040d225fb586bce9dedd19d724fee3858223e9f61dc9689acde5bf"
+  },
+  "renders": {
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/native-notification-failure/submission.png": "a695c0fb84865774cb15c5522eec708bd6cd16f798200b9f217cc7e08fdf886d",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/native-notification-failure/permission.png": "45947efa272b29918d105c7b9faee6aace91dddc7250190ccb1bf9a78d5be1fe"
+  }
+}

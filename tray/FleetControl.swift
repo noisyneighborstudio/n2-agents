@@ -101,17 +101,36 @@ extension AppDelegate {
         let fresh = announcer.adopt(notices)
         guard !fresh.isEmpty else { return }
 
+        let attempt = UUID()
+        notificationAttempt = attempt
         let center = UNUserNotificationCenter.current()
-        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
-            guard granted else { return }
-            for n in fresh.suffix(5) {
-                let content = UNMutableNotificationContent()
-                content.title = n.title
-                content.body = n.text
-                content.subtitle = n.task
-                if n.kind == .failed || n.kind == .disconnected { content.sound = .default }
-                center.add(UNNotificationRequest(identifier: "fleet-\(n.id)",
-                                                 content: content, trigger: nil))
+        center.requestAuthorization(options: [.alert, .sound]) { granted, error in
+            DispatchQueue.main.async {
+                guard granted && error == nil else {
+                    if self.notificationAttempt == attempt {
+                        self.model.fleetNotificationError = "Desktop notifications are unavailable. Check notification permission in System Settings."
+                    }
+                    return
+                }
+                let batch = fresh.suffix(5)
+                var remaining = batch.count
+                var failed = false
+                for n in batch {
+                    let content = UNMutableNotificationContent()
+                    content.title = n.title
+                    content.body = n.text
+                    content.subtitle = n.task
+                    if n.kind == .failed || n.kind == .disconnected { content.sound = .default }
+                    center.add(UNNotificationRequest(identifier: "fleet-\(n.id)", content: content, trigger: nil)) { error in
+                        DispatchQueue.main.async {
+                            failed = failed || error != nil
+                            remaining -= 1
+                            if remaining == 0 && self.notificationAttempt == attempt {
+                                self.model.fleetNotificationError = failed ? "A desktop notification couldn't be submitted." : nil
+                            }
+                        }
+                    }
+                }
             }
         }
     }

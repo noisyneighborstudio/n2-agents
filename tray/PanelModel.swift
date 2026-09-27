@@ -403,6 +403,7 @@ final class PanelModel: ObservableObject {
     /// Every session, for the standalone window; the panel itself keeps the
     /// two newest. Kept between opens, so the window never starts empty.
     @Published var fleet: FleetData?
+    @Published var fleetNotificationError: String?
     @Published var allSessions: [SessionInfo] = []
     @Published var sessionsLoading = false
 

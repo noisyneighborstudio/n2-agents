@@ -51,6 +51,11 @@ struct FleetSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             FleetLabel(title: "Fleet", detail: headline)
+            if let error = model.fleetNotificationError {
+                Text(error + " Task activity remains available below.")
+                    .font(.system(size: 11)).foregroundStyle(Color(nsColor: .systemOrange))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let error = fleet?.readError {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(error).foregroundStyle(Color(nsColor: .systemOrange))

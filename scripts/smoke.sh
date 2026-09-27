@@ -31,6 +31,7 @@ sh scripts/test-native-session-transfer.sh
 python3 scripts/test-native-reconcile.py
 python3 scripts/test-native-fleet-read.py
 python3 scripts/test-native-fleet-ordering.py
+python3 scripts/test-native-notification.py
 sh scripts/test-owner-auth-status.sh
 sh scripts/test-fleet-settings.sh
 
