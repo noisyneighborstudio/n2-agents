@@ -12,6 +12,7 @@ struct Usage {
         case staleToken = "stale-token"
         case rateLimited = "rate-limited"
         case fetchError = "fetch-error"
+        case expired
         case noUsageAPI = "no-usage-api"
         /// The lab has one login for the machine; Default's row carries it.
         case sharedLogin = "shared-login"
@@ -20,16 +21,39 @@ struct Usage {
     let fiveHour: Int?
     let sevenDay: Int?
     let resets: Date?       // when the 5h window resets
-    let note: Note
+    var note: Note
     let sevenResets: Date?  // when the 7d window resets
     /// What the long window is for this lab ("7d", or Cursor's "mo").
     var longWindow = "7d"
     var fetchedAt = Date()
 
+    static let maximumAge: TimeInterval = 15 * 60
+    func isFresh(at now: Date) -> Bool {
+        let age = now.timeIntervalSince(fetchedAt)
+        return age >= 0 && age < Self.maximumAge
+    }
+    var isFresh: Bool { isFresh(at: Date()) }
+    var unavailableLabel: String {
+        note == .expired || (note == .ok && !isFresh) ? "stale reading" : "usage unavailable"
+    }
+    var historyLabel: String {
+        guard fetchedAt != .distantPast else { return "No successful reading" }
+        let values = [fiveHour.map { "5h \($0)%" }, sevenDay.map { "\(longWindow) \($0)%" }].compactMap { $0 }
+        return "Last reading: " + values.joined(separator: ", ") + " · " +
+            fetchedAt.formatted(date: .abbreviated, time: .standard)
+    }
+    static func expire(_ rows: [String: Usage], at now: Date) -> [String: Usage] {
+        rows.mapValues { row in
+            var result = row
+            if row.note == .ok && !row.isFresh(at: now) { result.note = .expired }
+            return result
+        }
+    }
+
     /// Used in whichever window is tighter — the one that stops you first.
     /// A plan may have only one of the two.
     var used: Int? {
-        guard note == .ok, fiveHour != nil || sevenDay != nil else { return nil }
+        guard note == .ok, isFresh, fiveHour != nil || sevenDay != nil else { return nil }
         return max(fiveHour ?? 0, sevenDay ?? 0)
     }
 
@@ -41,7 +65,7 @@ struct Usage {
     /// The window that binds — the one that stops you first — with its reset.
     /// Depth 2 shows this one; depth 3 shows both.
     var binding: (tag: String, percent: Int, resets: Date?)? {
-        guard note == .ok else { return nil }
+        guard note == .ok, isFresh else { return nil }
         let f = fiveHour ?? -1, d = sevenDay ?? -1
         guard f >= 0 || d >= 0 else { return nil }
         return f >= d ? ("5h", max(f, 0), resets) : (longWindow, max(d, 0), sevenResets)
@@ -62,27 +86,49 @@ struct Usage {
         return f
     }()
 
+    private static func percent(_ text: String) -> Int? {
+        guard let number = Double(text), number.isFinite, number >= 0, number <= 100 else { return nil }
+        return Int(number.rounded())
+    }
+
     /// profile -> usage. Unknown notes are dropped: a newer CLI may add some.
     static func parse(_ text: String, longWindow: String = "7d") -> [String: Usage] {
         var rows: [String: Usage] = [:]
         for line in text.split(separator: "\n") {
             let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
             guard f.count >= 5, let note = Note(rawValue: f[4]) else { continue }
-            rows[f[0]] = Usage(fiveHour: Double(f[1]).map { Int($0.rounded()) },
-                               sevenDay: Double(f[2]).map { Int($0.rounded()) },
+            rows[f[0]] = Usage(fiveHour: percent(f[1]),
+                               sevenDay: percent(f[2]),
                                resets: resetFormat.date(from: f[3]),
                                note: note,
                                sevenResets: f.count > 5 ? resetFormat.date(from: f[5]) : nil,
-                               longWindow: longWindow)
+                               longWindow: longWindow,
+                               fetchedAt: note == .ok && (percent(f[1]) != nil || percent(f[2]) != nil)
+                                   ? Date() : .distantPast)
         }
         return rows
     }
 
-    /// A failed read doesn't erase a good one: the last numbers stay, dated by
-    /// their own fetchedAt so the panel can say how old they are.
-    static func merge(_ old: [String: Usage], _ new: [String: Usage]) -> [String: Usage] {
-        new.mapValues { $0 }.merging(old) { fresh, previous in
-            (fresh.note == .rateLimited || fresh.note == .fetchError) && previous.note == .ok ? previous : fresh
+    /// A command failure is not an authoritative empty profile list.
+    static func merge(_ old: [String: Usage], _ new: [String: Usage],
+                      commandFailed: Bool = false, profiles: [String] = []) -> [String: Usage] {
+        if commandFailed {
+            var failed = old
+            for profile in profiles where failed[profile] == nil {
+                failed[profile] = Usage(fiveHour: nil, sevenDay: nil, resets: nil,
+                                       note: .fetchError, sevenResets: nil, fetchedAt: .distantPast)
+            }
+            return failed.mapValues { row in
+                var failed = row
+                failed.note = .fetchError
+                return failed
+            }
+        }
+        return new.merging(old) { fresh, previous in
+            guard fresh.note == .rateLimited || fresh.note == .fetchError else { return fresh }
+            var historical = previous
+            historical.note = fresh.note
+            return historical
         }.filter { new[$0.key] != nil }
     }
 }
@@ -126,6 +172,7 @@ struct Selection: Equatable {
 }
 
 enum NextBest {
+    case usageUnknown
     case slot(profile: String, vendor: String, used: Int?)
     /// Every signed-in slot is out of quota; the soonest one back, if known.
     case allMaxed(firstBack: Date?)
@@ -137,6 +184,7 @@ enum NextBest {
 /// that isn't capacity (a desktop app's process, a pending rebuild) lives
 /// deeper or in the banner, never here.
 enum ProfileState: Equatable {
+    case usageUnknown
     case ready
     case checking
     /// Some labs are out; `until` is the soonest one back.
@@ -188,11 +236,16 @@ final class PanelModel: ObservableObject {
     /// maxed and six with room is genuinely usable — the mean says so while the
     /// strip below it shows where the hole is. Labs with no quota API and labs
     /// that aren't signed in contribute no number rather than a guessed one.
+    func effectiveUsage(_ profile: String, _ vendor: String) -> Usage? {
+        guard let row = usage[vendor]?[profile] else { return nil }
+        return row.note == .sharedLogin ? usage[vendor]?["Default"] : row
+    }
+
     func reading(_ profile: Profile, _ data: PanelData) -> (state: ProfileState, used: Int?) {
         let slotted = data.snapshot.installedVendors.filter { profile.slots[$0.id] != nil }
         let metered = slotted.filter(\.hasUsageAPI)
         func signedIn(_ v: Vendor) -> Bool { data.snapshot.signedIn[profile.name]?[v.id] != false }
-        func row(_ v: Vendor) -> Usage? { usage[v.id]?[profile.name] }
+        func row(_ v: Vendor) -> Usage? { effectiveUsage(profile.name, v.id) }
 
         let live = metered.filter(signedIn)
         let readable = live.compactMap { row($0) }.filter { $0.note == .ok }
@@ -206,6 +259,7 @@ final class PanelModel: ObservableObject {
         // No labs at all is nothing to run, not "Ready".
         if signedOut.count == slotted.count { return (.notSignedIn, nil) }
         if !live.isEmpty, live.allSatisfy({ row($0) == nil }) { return (.checking, nil) }
+        if live.contains(where: { row($0)?.used == nil }) { return (.usageUnknown, nil) }
         if !live.isEmpty, out.count == live.count {
             // A lab with no quota API can still be opened, so it keeps the
             // profile out of the red even when every metered one is spent.
@@ -226,7 +280,7 @@ final class PanelModel: ObservableObject {
             data.quotaVendors
                 .filter { p.slots[$0.id] != nil && data.snapshot.signedIn[p.name]?[$0.id] != false }
                 .compactMap { v in
-                    usage[v.id]?[p.name].flatMap { u in u.used.map { (p.name, v, u.maxed ? 0 : 100 - $0) } }
+                    effectiveUsage(p.name, v.id).flatMap { u in u.used.map { (p.name, v, u.maxed ? 0 : 100 - $0) } }
                 }
         }
     }
@@ -238,7 +292,11 @@ final class PanelModel: ObservableObject {
     /// Each profile's quota left — the mean over its slots — in panel order,
     /// with how many slots it's taken over. Profiles with no reading are out.
     private var profilesLeft: [(name: String, left: Int, slots: Int)] {
-        let byProfile = Dictionary(grouping: slotsLeft, by: \.profile)
+        let complete = slotsLeft.filter { slot in
+            guard let data, let profile = data.profiles.first(where: { $0.name == slot.profile }) else { return false }
+            return reading(profile, data).used != nil
+        }
+        let byProfile = Dictionary(grouping: complete, by: \.profile)
         return (data?.profiles ?? []).compactMap { p in
             byProfile[p.name].map { (p.name, Self.mean($0.map(\.left)), $0.count) }
         }
@@ -248,6 +306,10 @@ final class PanelModel: ObservableObject {
     /// numbers, so each profile weighs the same however many labs it holds.
     /// Nil until a slot has read.
     var remaining: Int? {
+        guard let data, !data.profiles.contains(where: {
+            let state = reading($0, data).state
+            return state == .usageUnknown || state == .checking
+        }) else { return nil }
         let left = profilesLeft.map(\.left)
         return left.isEmpty ? nil : Self.mean(left)
     }
@@ -286,17 +348,19 @@ final class PanelModel: ObservableObject {
         } ?? -1
         var firstBack: [Date] = []
         var sawMaxed = false
+        var sawUnknown = false
         for i in slots.indices {
             let (profile, vendor) = slots[(after + 1 + i) % slots.count]
             guard snap.signedIn[profile]?[vendor.id] != false else { continue }
             guard vendor.hasUsageAPI else { return .slot(profile: profile, vendor: vendor.id, used: nil) }
             guard let rows = usage[vendor.id] else {
                 if usageLoading { return nil }
+                sawUnknown = true
                 continue
             }
-            guard var u = rows[profile] else { continue }
+            guard var u = rows[profile] else { sawUnknown = true; continue }
             if u.note == .sharedLogin, let shared = rows["Default"] { u = shared }
-            guard u.note == .ok else { continue }
+            guard u.used != nil else { sawUnknown = true; continue }
             if u.maxed {
                 sawMaxed = true
                 if let back = u.maxedUntil { firstBack.append(back) }
@@ -304,6 +368,7 @@ final class PanelModel: ObservableObject {
             }
             return .slot(profile: profile, vendor: vendor.id, used: u.used)
         }
+        if sawUnknown { return .usageUnknown }
         return sawMaxed ? .allMaxed(firstBack: firstBack.min()) : .nothingSignedIn
     }
 }

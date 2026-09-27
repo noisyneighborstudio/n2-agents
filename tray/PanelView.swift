@@ -336,6 +336,8 @@ private struct NextBestButton: View {
                 }
             }
             .buttonStyle(RowButtonStyle(radius: 8, border: true))
+        case .usageUnknown?:
+            row(icon: "questionmark.circle", iconColor: Ink.amber, title: "Usage unavailable") { EmptyView() }
         case .nothingSignedIn?:
             row(icon: "bolt.slash", iconColor: Ink.secondary, title: "Nothing is signed in") { EmptyView() }
                 .background(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.12)))
@@ -501,6 +503,7 @@ private struct ProfileCard: View {
     private var status: (icon: String?, text: String, tint: Color) {
         switch reading.state {
         case .ready:             return (nil, "Ready", Ink.secondary)
+        case .usageUnknown:      return ("questionmark.circle", "Usage unavailable", Ink.amber)
         case .checking:          return (nil, "Checking…", Ink.secondary)
         case .allOut:            return ("clock", "All out", maxedRed)
         case .labsOut(let out, let of, _):
@@ -600,10 +603,8 @@ private struct SlotRow: View {
                 .foregroundStyle(u.maxed ? maxedRed : .primary)
                 .frame(width: 56, alignment: .trailing)
             meta(u, b)
-        } else if usage?.note == .ok {
-            // Read cleanly with nothing to show: no window open (Muse between
-            // its 5-hour windows). Normal, so not amber.
-            flat(nil, "idle", Ink.secondary)
+        } else if let u = usage, u.note == .ok || u.note == .expired {
+            flat("clock", u.unavailableLabel, Ink.amber)
         } else if let note = usage?.note {
             if note == .sharedLogin {
                 flat("link", label(for: note), Ink.secondary)
@@ -671,7 +672,7 @@ private struct SlotActions: View {
     let actions: PanelActions
     @State private var copied: String?   // which row just copied
 
-    private var usage: Usage? { model.usage[vendor.id]?[profile.name] }
+    private var usage: Usage? { model.effectiveUsage(profile.name, vendor.id) }
     private var signedOut: Bool {
         data.snapshot.signedIn[profile.name]?[vendor.id] == false
             || usage?.note == .staleToken || usage?.note == .noToken
@@ -680,7 +681,10 @@ private struct SlotActions: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if let u = usage, u.note == .ok {
+            if model.usage[vendor.id]?[profile.name]?.note == .sharedLogin {
+                Text("Shared login · Default").font(.caption).foregroundStyle(Ink.secondary)
+            }
+            if let u = usage, u.used != nil {
                 if let five = u.fiveHour {
                     MeterRow(label: "5h", percent: five,
                              meta: u.resets.map(clockTime) ?? "", delay: 0)
@@ -689,6 +693,11 @@ private struct SlotActions: View {
                     MeterRow(label: u.longWindow, percent: seven,
                              meta: u.sevenResets.map(clockTime) ?? "", delay: 0)
                 }
+            }
+
+            if let u = usage, u.used == nil {
+                Text(u.unavailableLabel).foregroundStyle(Ink.amber)
+                Text(u.historyLabel).font(.caption).foregroundStyle(Ink.secondary)
             }
 
             group("Start", "bolt")
