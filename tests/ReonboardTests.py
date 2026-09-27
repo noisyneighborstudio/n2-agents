@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 
 
-def run_case(answer, failure=""):
+def run_case(answer, failure="", args=()):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         bin_dir = root / "bin"
@@ -38,7 +38,7 @@ echo "cursor:$CURSOR_CONFIG_DIR:$*" >> "$HOME/calls"
 ''')
         cursor.chmod(0o755)
         env = dict(os.environ, HOME=str(root), PATH=f"{bin_dir}:/usr/bin:/bin", FAILURE=failure)
-        result = subprocess.run(["./agents", "reonboard"], input=answer,
+        result = subprocess.run(["./agents", "reonboard", *args], input=answer,
                                 text=True, capture_output=True, env=env)
         calls = (root / "calls").read_text().splitlines() if (root / "calls").exists() else []
         for slot in slots:
@@ -64,3 +64,10 @@ assert result.returncode != 0 and "setup stopped" in result.stderr
 result, calls = run_case("SIGN OUT\n\nNO\n")
 assert result.returncode != 0 and "account not confirmed" in result.stderr
 print("Reonboard tests passed")
+
+result, calls = run_case("", args=("--logout-only", "--yes"))
+assert result.returncode == 0, result.stdout + result.stderr
+assert len(calls) == 3 and all(call.endswith(":logout") for call in calls), calls
+assert "Continue in the N2 Agents setup window" in result.stdout
+result, calls = run_case("", "logout", ("--logout-only", "--yes"))
+assert result.returncode != 0 and not any(call.endswith(":login") for call in calls)

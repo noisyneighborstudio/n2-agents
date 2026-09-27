@@ -73,6 +73,8 @@ final class ProfileSetup: NSObject, NSWindowDelegate {
     private var polling = false
     private var waiters: [([String: Bool]?) -> Void] = []
     var onClose: (() -> Void)?
+    var onContinue: (() -> Void)?
+    private var closed = false
 
     init(profile: String, isNew: Bool, snapshot: Snapshot, resume: [String]?, host: SetupHost) {
         model = SetupModel(profile: profile, isNew: isNew, snapshot: snapshot, resume: resume)
@@ -96,6 +98,7 @@ final class ProfileSetup: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        closed = true
         poll?.invalidate()
         poll = nil
         onClose?()
@@ -123,7 +126,8 @@ final class ProfileSetup: NSObject, NSWindowDelegate {
         }
     }
 
-    private func beginSignIn() {
+    func beginSignIn() {
+        for lab in model.labs { model.states[lab] = .waiting }
         persist()
         check { _ in self.advance() }
         poll?.invalidate()
@@ -141,6 +145,7 @@ final class ProfileSetup: NSObject, NSWindowDelegate {
         DispatchQueue.global(qos: .utility).async {
             let authed = host.setupAuthed(profile: profile)
             DispatchQueue.main.async {
+                guard !self.closed else { return }
                 self.polling = false
                 if let authed { self.apply(authed) }
                 let waiting = self.waiters
@@ -167,6 +172,7 @@ final class ProfileSetup: NSObject, NSWindowDelegate {
 
     /// Starts the next waiting lab, or finishes when none is left.
     private func advance() {
+        guard !closed else { return }
         guard model.current == nil, model.failed == nil else { return }
         if let next = model.labs.first(where: { model.states[$0] == .waiting }) {
             model.states[next] = .signingIn
@@ -194,7 +200,9 @@ final class ProfileSetup: NSObject, NSWindowDelegate {
     }
 
     private func persist() {
-        let remaining = model.labs.filter { model.states[$0] != .skipped }
+        let remaining = model.labs.filter {
+            model.states[$0] != .skipped && model.states[$0] != .signedIn && model.states[$0] != .unconfirmed
+        }
         host?.setupPending(profile: model.profile, labs: remaining.isEmpty ? nil : remaining)
     }
 
@@ -546,7 +554,12 @@ private struct ReadyStep: View {
                     .background(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.primary.opacity(0.2)))
                 }
             }
-            if let first = model.finishedLabs.first, let v = model.vendor(first) {
+            if let onContinue = actions.onContinue {
+                Button("Continue") { onContinue() }
+                    .controlSize(.large)
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+            } else if let first = model.finishedLabs.first, let v = model.vendor(first) {
                 Button { actions.openFirst() } label: {
                     Text("Open \(v.label) in “\(model.profile)”").frame(maxWidth: .infinity)
                 }

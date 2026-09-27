@@ -28,12 +28,12 @@ struct SettingsWindowView: View {
                 VStack(alignment: .leading, spacing: 22) {
                     section("ACCOUNTS", subtitle: "Sign in again to check the account used by every listed profile.") {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text("Keep your profiles and sessions. A terminal will guide you through signing out and signing back in to each lab.")
+                            Text(model.resettingAccounts ? "Signing out in the terminal. Setup will open automatically when it finishes." : "Keep your profiles and sessions. Sign out, then the setup window guides you through each profile again.")
                                 .font(.system(size: 12)).foregroundStyle(Ink.secondary)
                             Button("Sign Out of All Accounts and Set Up Again…") {
                                 actions.reonboardAccounts()
                             }
-                            .disabled(model.data?.profiles.contains { !$0.slots.isEmpty } != true)
+                            .disabled(model.resettingAccounts || model.data?.profiles.contains { !$0.slots.isEmpty } != true)
                         }
                         .padding(13)
                         .frame(maxWidth: .infinity, alignment: .leading)

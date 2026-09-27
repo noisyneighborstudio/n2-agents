@@ -895,7 +895,15 @@ login_slot() {
 # Reset the same installed slots shown in porcelain. Keep profile directories,
 # configuration and transcripts; only the vendor's logout touches credentials.
 cmd_reonboard() {
-  [ $# -eq 0 ] || die "usage: agents reonboard"
+  logout_only=false confirmed=false
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --logout-only) logout_only=true ;;
+      --yes) confirmed=true ;;
+      *) die "usage: agents reonboard [--logout-only] [--yes]" ;;
+    esac
+    shift
+  done
   slots=""
   for name in $(all_profiles); do
     for v in $(vendors_installed); do
@@ -908,9 +916,11 @@ cmd_reonboard() {
   echo "Sign out of all listed accounts, including Default. Profiles and sessions stay in place."
   echo "Close running agent sessions first. Browser accounts stay signed in."
   echo "Cursor uses one shared account for every profile; it will be set up once."
-  printf 'Type SIGN OUT to continue: '
-  IFS= read -r answer || return 1
-  [ "$answer" = 'SIGN OUT' ] || { echo "Cancelled."; return 0; }
+  if [ "$confirmed" != true ]; then
+    printf 'Type SIGN OUT to continue: '
+    IFS= read -r answer || return 1
+    [ "$answer" = 'SIGN OUT' ] || { echo "Cancelled."; return 0; }
+  fi
 
   # Complete every sign-out before opening any new sign-in. Never continue
   # past a failed logout and imply that the old account was removed.
@@ -933,6 +943,11 @@ cmd_reonboard() {
     fi
     [ "$v" != cursor ] || cursor_out=true
   done
+
+  if [ "$logout_only" = true ]; then
+    echo "Signed out. Continue in the N2 Agents setup window."
+    return 0
+  fi
 
   cursor_done=false
   for slot in $slots; do
