@@ -29,6 +29,7 @@ sh scripts/test-account-ownership.sh
 sh scripts/test-native-signin.sh
 sh scripts/test-native-session-transfer.sh
 python3 scripts/test-native-reconcile.py
+python3 scripts/test-native-fleet-read.py
 sh scripts/test-owner-auth-status.sh
 sh scripts/test-fleet-settings.sh
 

@@ -1,0 +1,16 @@
+{
+  "scope": "360-point production FleetSection/FleetModel component renders with synthetic two-machine state; no packaged-app or physical-peer acceptance",
+  "sources": {
+    "tray/FleetControl.swift": "7cdc2817b27be996bc9eaf92dfa71c09b2816f87a7a28a9665bd49d7def6bcfb",
+    "tray/FleetModel.swift": "61bcb82fbfb299bfe25600e8ecd2206827dcd7281b32c8faec9151ea4d96399f",
+    "tray/FleetView.swift": "3520d0123b57e61dcc53bb905f501c1a718e62a40c0eb51af23fabde1f260351"
+  },
+  "images": {
+    "recovery.png": "08473df8b849b0ff4bd7b9345250a62e19d6698f0ae37199567ae7895eaf883a",
+    "retained-tasks.png": "0b8644c5fd6904418d3aaff843213f5a07fa1dc48fc98904190edeea7a5983b6",
+    "first-failure.png": "1db193533c8119dcd3d3e39e13160e8e5dfb4b60cf88d7e1b6a944154bd2ac78",
+    "retained-stranded.png": "cdc93397e42a8f8ec4c443afe85e0f135194869e1da95602ec97eb12c9546f72"
+  },
+  "negativeControl": "Old refresh with metadata fields failed the runtime assertion: every failed read must publish its failure.",
+  "proof": "python3 scripts/test-native-fleet-read.py: 17 sequential cases passed, including every required command failure, malformed status/task output, valid empty tasks, recovery, uninitialized state, retained timestamp, no failure announcements and dispatch/retry admission."
+}

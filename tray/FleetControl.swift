@@ -22,31 +22,49 @@ extension AppDelegate {
     /// verbs would only print usage errors, so they are not run at all.
     func refreshFleet() {
         DispatchQueue.global(qos: .utility).async {
-            let status = self.runCLI(["fleet", "status", "--no-probe"])
-            guard status.status == 0 else { return }
-            var data = FleetData.parseStatus(status.output)
-            if data.initialized {
-                // Probed peers separately: reachability is the slow part, and
-                // a stale roster beside fresh probes is still one consistent
-                // read because both come from this pass.
-                let probed = self.runCLI(["fleet", "peers"])
-                if probed.status == 0 {
-                    let peers = FleetPeer.parse(probed.output)
-                    if !peers.isEmpty { data.peers = peers }
-                }
-                data.sync = FleetSync.parse(self.runCLI(["fleet", "sync", "status"]).output)
-                data.conflicts = FleetConflict.parse(self.runCLI(["fleet", "sync", "conflicts"]).output)
-                data.exceptions = FleetException.parse(self.runCLI(["fleet", "sync", "except", "list"]).output)
-                data.tools = FleetTool.join(list: self.runCLI(["fleet", "tools", "list"]).output,
-                                            status: self.runCLI(["fleet", "tools", "status"]).output,
-                                            deferred: self.runCLI(["fleet", "tools", "deferred"]).output)
-                data.tasks = FleetTask.parse(self.runCLI(["fleet", "task", "list"]).output)
-                data.notices = FleetNotice.parse(self.runCLI(["fleet", "task", "notices"]).output)
+            struct ReadFailure: Error { let message: String }
+            func read(_ label: String, _ args: [String]) throws -> String {
+                let result = self.runCLI(["fleet"] + args)
+                guard result.status == 0 else { throw ReadFailure(message: "Couldn't read \(label).") }
+                return result.output
             }
-            DispatchQueue.main.async {
-                self.model.fleet = data
-                self.announce(data.notices)
-                self.updateFleetAttention(data)
+            do {
+                let status = try read("fleet state", ["status", "--no-probe"])
+                var data = FleetData.parseStatus(status)
+                guard data.initialized || status.trimmingCharacters(in: .whitespacesAndNewlines) == "fleet\tuninitialized" else {
+                    throw ReadFailure(message: "Couldn't understand fleet state.")
+                }
+                if data.initialized {
+                    data.peers = FleetPeer.parse(try read("machines", ["peers"]))
+                    data.sync = FleetSync.parse(try read("sync state", ["sync", "status"]))
+                    data.conflicts = FleetConflict.parse(try read("conflicts", ["sync", "conflicts"]))
+                    data.exceptions = FleetException.parse(try read("sync exceptions", ["sync", "except", "list"]))
+                    data.tools = FleetTool.join(list: try read("shared tools", ["tools", "list"]),
+                                               status: try read("tool status", ["tools", "status"]),
+                                               deferred: try read("pending tool updates", ["tools", "deferred"]))
+                    let tasks = try read("tasks", ["task", "list"])
+                    data.tasks = FleetTask.parse(tasks)
+                    guard tasks.split(separator: "\n").allSatisfy({ $0.split(separator: "\t", omittingEmptySubsequences: false).count >= 7 }),
+                          data.tasks.count == tasks.split(separator: "\n").count,
+                          !data.tasks.contains(where: { $0.state == .unknown }) else {
+                        throw ReadFailure(message: "Couldn't understand the task list.")
+                    }
+                    data.notices = FleetNotice.parse(try read("task activity", ["task", "notices"]))
+                }
+                data.observedAt = Date()
+                DispatchQueue.main.async {
+                    self.model.fleet = data
+                    self.announce(data.notices)
+                    self.updateFleetAttention(data)
+                }
+            } catch {
+                let message = (error as? ReadFailure)?.message ?? "Couldn't read fleet state."
+                DispatchQueue.main.async {
+                    var previous = self.model.fleet ?? FleetData()
+                    previous.readError = message
+                    self.model.fleet = previous
+                    self.updateFleetAttention(previous)
+                }
             }
         }
     }
@@ -56,8 +74,8 @@ extension AppDelegate {
     /// Routine dispatch is not an interruption and gets no badge.
     private func updateFleetAttention(_ data: FleetData) {
         guard let button = statusItem.button else { return }
-        button.toolTip = data.initialized && data.needsAttention
-            ? "N2 Agents — the fleet needs your attention" : nil
+        button.toolTip = data.readError != nil ? "N2 Agents — fleet state unavailable"
+            : (data.initialized && data.needsAttention ? "N2 Agents — the fleet needs your attention" : nil)
     }
 
     // MARK: - Native notifications
@@ -220,8 +238,13 @@ extension AppDelegate {
     /// anything is sent — the estimate the dispatcher will use, not a second
     /// estimate computed here.
     func fleetDispatch() {
+        guard let fleet = model.fleet else { return }
+        guard fleet.readError == nil else {
+            alert("Fleet state unavailable", "Wait for a successful fleet refresh before sending work.")
+            return
+        }
         dismissPanel()
-        guard let fleet = model.fleet, fleet.initialized else { return }
+        guard fleet.initialized else { return }
         let box = NSView(frame: NSRect(x: 0, y: 0, width: 440, height: 310))
         func field(_ label: String, _ placeholder: String, y: CGFloat) -> NSTextField {
             let title = NSTextField(labelWithString: label)
@@ -321,6 +344,10 @@ extension AppDelegate {
     /// A retry is a new task the user asked for. It is never automatic, and the
     /// CLI links it to the original rather than reusing its identity.
     func fleetRetry(task: String) {
+        guard let fleet = model.fleet, fleet.readError == nil else {
+            alert("Fleet state unavailable", "Wait for a successful fleet refresh before starting more work.")
+            return
+        }
         dismissPanel()
         let confirm = NSAlert()
         confirm.messageText = "Run this work somewhere else?"

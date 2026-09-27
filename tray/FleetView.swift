@@ -51,6 +51,18 @@ struct FleetSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             FleetLabel(title: "Fleet", detail: headline)
+            if let error = fleet?.readError {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(error).foregroundStyle(Color(nsColor: .systemOrange))
+                    if let observed = fleet?.observedAt {
+                        Text("Showing last known state from \(observed.formatted(date: .omitted, time: .shortened)). Sending work is paused.")
+                    } else {
+                        Text("Fleet state is unavailable. Waiting for a successful refresh.")
+                    }
+                }
+                .font(.system(size: 11))
+                .fixedSize(horizontal: false, vertical: true)
+            }
             if let fleet, fleet.initialized {
                 MachinesBlock(fleet: fleet, model: model, actions: actions)
                 SyncBlock(fleet: fleet, actions: actions)
@@ -60,7 +72,7 @@ struct FleetSection: View {
             } else if fleet == nil {
                 Text("Reading fleet state…")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
-            } else {
+            } else if fleet?.readError == nil {
                 FleetFirstRun(actions: actions)
             }
         }
@@ -70,7 +82,9 @@ struct FleetSection: View {
 
     /// The one-line truth at the top: this machine, and how many others answered.
     private var headline: String {
-        guard let fleet, fleet.initialized else { return "" }
+        guard let fleet else { return "" }
+        if fleet.readError != nil { return "unavailable" }
+        guard fleet.initialized else { return "" }
         let online = fleet.online.count, others = fleet.others.count
         if others == 0 { return "\(fleet.machine) · only machine" }
         return "\(fleet.machine) · \(online)/\(others) online"
@@ -394,6 +408,7 @@ private struct TasksBlock: View {
                 TaskRow(task: task, fleet: fleet, actions: actions)
             }
             Button("Send Work to Another Mac…") { actions.fleetDispatch() }
+                .disabled(fleet.readError != nil)
                 .buttonStyle(FleetPill(prominent: fleet.destinations.count > 1))
                 .disabled(fleet.destinations.count < 2)
         }
@@ -430,6 +445,7 @@ private struct TaskRow: View {
                         .fixedSize(horizontal: false, vertical: true)
                     if task.canRetry {
                         Button("Run It Somewhere Else") { actions.fleetRetry(task: task.id) }
+                            .disabled(fleet.readError != nil)
                             .buttonStyle(FleetPill())
                     }
                 }
@@ -567,6 +583,7 @@ private struct FleetChip: View {
 }
 
 private struct FleetPill: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
     var prominent = false
     var destructive = false
     var small = false
@@ -580,6 +597,6 @@ private struct FleetPill: ButtonStyle {
             .background(
                 Capsule().fill(prominent ? Color.accentColor : Color.primary.opacity(0.08))
             )
-            .opacity(configuration.isPressed ? 0.7 : 1)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.45)
     }
 }

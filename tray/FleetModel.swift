@@ -340,6 +340,8 @@ struct FleetException: Identifiable, Equatable {
 /// Everything one fleet refresh read, published as a unit for the same reason
 /// PanelData is: the panel never shows half of one read beside half of another.
 struct FleetData: Equatable {
+    var readError: String? = nil
+    var observedAt: Date? = nil
     /// `agents fleet status` says this when there is no identity yet. The panel
     /// offers to create one rather than pretending an empty fleet exists.
     var initialized = false
@@ -357,7 +359,7 @@ struct FleetData: Equatable {
     var others: [FleetPeer] { peers.filter { !$0.isSelf } }
     var online: [FleetPeer] { others.filter { $0.isOnline } }
     /// Where a task could actually go, self included.
-    var destinations: [FleetPeer] { peers.filter { $0.canDispatch } }
+    var destinations: [FleetPeer] { readError == nil ? peers.filter { $0.canDispatch } : [] }
     var activeTasks: [FleetTask] { tasks.filter { !$0.isFinished } }
     var needsAttention: Bool {
         !pending.isEmpty || sync.conflicts > 0 || tasks.contains(where: \.isStranded)
