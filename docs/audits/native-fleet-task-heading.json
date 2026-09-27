@@ -1,0 +1,29 @@
+{
+  "parent": "c5598c2baa1adf269c292b522f2c3a4691e631ff",
+  "width_points": 360,
+  "fixtures": {
+    "queued": "t-queued\tqueued\tcodex\t0\tQueued task\tworker\tdispatcher",
+    "running": "t-running\trunning\tcodex\t0\tRunning task\tworker\tdispatcher",
+    "unreachable": "t-unreachable\tunreachable\tcodex\t0\tUnreachable task\tworker\tdispatcher",
+    "completed": "t-completed\tcompleted\tcodex\t0\tCompleted task\tworker\tdispatcher",
+    "mixed": "t-queued\tqueued\tcodex\t0\tQueued task\tworker\tdispatcher\nt-running\trunning\tcodex\t0\tRunning task\tworker\tdispatcher\nt-unreachable\tunreachable\tcodex\t0\tUnreachable task\tworker\tdispatcher\nt-completed\tcompleted\tcodex\t0\tCompleted task\tworker\tdispatcher"
+  },
+  "asserted_counts": {
+    "queued": 1,
+    "running": 1,
+    "unreachable": 1,
+    "completed": 0,
+    "mixed": 3
+  },
+  "source_sha256": {
+    "FleetView.swift": "7a7447dd84544de4b591677783b8fe46ff793c151858aa6019d72df8ad345c21",
+    "FleetModel.swift": "aabd1dbf831a9a7dccae607bbed003f2b2bc4092e523b22aa93365ad258af16e"
+  },
+  "image_sha256": {
+    "queued": "878e5da14e4872554f709af38a5be5a5550d12817d0db3dcf56caa90890df43d",
+    "running": "fb40127c3357623e644ac47d12fb034b349021bba788b73db14015812c446105",
+    "unreachable": "5597c4869ff484a6458cfcec8f3df8801b00d5613beaaabbbc5d94c3a9248cde",
+    "completed": "33d551ca61e0d85c65225c08ff45e1716cadcde30d892fcdf44d9fc620e7ca4a",
+    "mixed": "a200275b7b6b7bdc9f4dd7cca313a6b219875f8c8f14d2f7ef00862905ea8701"
+  }
+}

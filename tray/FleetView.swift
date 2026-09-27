@@ -389,7 +389,7 @@ private struct TasksBlock: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            FleetLabel(title: "Tasks", detail: fleet.activeTasks.isEmpty ? "" : "\(fleet.activeTasks.count) running")
+            FleetLabel(title: "Tasks", detail: fleet.activeTasks.isEmpty ? "" : "\(fleet.activeTasks.count) unfinished")
             ForEach(fleet.tasks.prefix(6)) { task in
                 TaskRow(task: task, fleet: fleet, actions: actions)
             }
