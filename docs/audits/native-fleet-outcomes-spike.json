@@ -1,0 +1,56 @@
+{
+  "commit": "d670567e81471a2eb237e2c58c30251f919f5225",
+  "scope": "Disposable native component rendering and extracted production reconciliation/CLI methods; not whole-app or desktop-banner acceptance",
+  "render_width_points": 400,
+  "fixtures": {
+    "completed": {
+      "task": "t-demo\tcompleted\tcodex\t0\tBuild release\tworker\tdispatcher",
+      "notice": "1790467200\tcompleted\tt-demo\tworker\tfinished rc=0"
+    },
+    "failed": {
+      "task": "t-demo\tfailed\tcodex\t1\tBuild release\tworker\tdispatcher",
+      "notice": "1790467201\tfailed\tt-demo\tworker\texit 1"
+    },
+    "disconnected": {
+      "task": "t-demo\tunreachable\tcodex\t\tBuild release\tworker\tdispatcher",
+      "notice": "1790467202\tdisconnected\tt-demo\tworker\tworker unreachable"
+    },
+    "reconciled": {
+      "task": "t-demo\tcompleted\tcodex\t0\tBuild release\tworker\tdispatcher",
+      "notice": "1790467203\tcompleted\tt-demo\tworker\treconciled rc=0"
+    }
+  },
+  "blocking_reconcile": {
+    "events": [
+      "cli-started; main-pulse=false",
+      "refresh-requested",
+      "action-returned",
+      "main-pulse"
+    ]
+  },
+  "discarded_async_control": {
+    "events": [
+      "action-returned",
+      "main-pulse",
+      "cli-started; main-pulse=true",
+      "refresh-requested"
+    ]
+  },
+  "extraction": {
+    "commit": "d670567e81471a2eb237e2c58c30251f919f5225",
+    "methods": {
+      "fleetReconcileTasks": "ead35df8506279d4602c5339429394c9548f158aa63ed2f5b3548bd6040686fa",
+      "runCLI": "381a366c1110f6cb9952ef579adecd39ab405317ca62d5635ad531557cacc89c"
+    }
+  },
+  "render_sources": {
+    "FleetView.swift": "d99699a7c43470a69c073b2de751b2f623c675e7f6627a8f72bf6c2add232d7a",
+    "FleetModel.swift": "aabd1dbf831a9a7dccae607bbed003f2b2bc4092e523b22aa93365ad258af16e"
+  },
+  "images": {
+    "completed": "09e94b8fce4b96b9e9b1b07c34863f9d294c97d6487f98d1a51b21bdf61a8e58",
+    "failed": "1d4e409ebb160dbeda5027a48ccb42b26609531ba3c0e603d4a3815b86c56dfb",
+    "disconnected": "5a394de99e5d8578b6d9694243deb791274ebae479f61a6267a981c4e83b3407",
+    "reconciled": "09e94b8fce4b96b9e9b1b07c34863f9d294c97d6487f98d1a51b21bdf61a8e58"
+  }
+}
