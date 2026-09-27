@@ -1224,3 +1224,14 @@ its fail-first regression and repaired result are retained in
 `/private/tmp/n2-fleet-journal-recovery-negative.log` and
 `/private/tmp/n2-fleet-journal-recovery-positive.log`. Final correctness and
 security source reviews found no remaining actionable issue in this slice.
+
+### Physical dispatched Codex accounting
+
+Actual signed Codex tasks now have cross-machine acceptance from seth-agent to
+the disposable M5 peer. Five remote turns produced success, quota rejection,
+different-selection success, matching recovery and interruption. Original events
+arrived through signed sync; replay did not execute or count work twice. Totals
+reached 240 known tokens with one additional unconfirmed task. See
+[audited receipts and limitations](audits/physical-prompt-accounting.md). This
+closes physical acceptance of the new Codex task path, not live-provider or UI
+acceptance. The local variant is part of the full test gate.
