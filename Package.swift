@@ -17,6 +17,7 @@ let package = Package(
             name: "N2AgentsTray",
             dependencies: ["Sparkle", "SwiftTerm"],
             path: "tray",
+            exclude: ["build"],
             sources: ["main.swift", "NativeAuth.swift", "UpdateChannel.swift", "ShellPath.swift", "Vendors.swift", "ProfileColor.swift", "StatusIcon.swift", "QuotaToast.swift", "Ink.swift", "LabMark.swift", "ProfileSetup.swift", "GlassWindow.swift",
                       "PanelModel.swift", "PanelView.swift", "SettingsWindowView.swift", "Hotkey.swift"],
             // Sparkle.framework ships in Contents/Frameworks; without this rpath
