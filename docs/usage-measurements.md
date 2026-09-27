@@ -97,6 +97,12 @@ hashing. [Selector fixtures](audits/claude-keychain-selector-spike.md) cover
 conflicting synthetic records; default-path normalization and alternate provider
 suffixes remain unverified. No real Keychain or provider request ran.
 
+A [provider cache spike](audits/claude-store-error-precedence-spike.md) confirms
+that a running external process can select cached credentials independently of
+current stored credentials. Current-store measurements therefore do not prove
+that process's execution account. Fleet/T3 runtime binding remains a separate
+acceptance requirement; this finding does not diagnose the historical M4 event.
+
 ## Primary references
 
 - [Codex app-server authentication and rate limits](https://learn.chatgpt.com/docs/app-server)
