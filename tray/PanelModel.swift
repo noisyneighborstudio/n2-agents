@@ -401,6 +401,7 @@ protocol PanelActions: AnyObject {
     func showSettings()
     func closeSettings()
     func reonboardAccounts()
+    func signInMissingAccounts()
     func installCLI() -> String
     func addVendor(profile: String)
     func deleteProfile(_ name: String)

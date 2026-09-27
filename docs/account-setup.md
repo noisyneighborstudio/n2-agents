@@ -1,8 +1,11 @@
 # Account setup
 
-First-use onboarding, Finish setup, and Settings account reset use the same
-`ProfileSetup` window and provider sign-in actions. Reset queues the existing
-profiles through that window after sign-out.
+First-use onboarding, Finish setup, and the Settings account actions use the
+same `ProfileSetup` window and provider sign-in actions. Reset queues the
+existing profiles through that window after sign-out. Sign In to Missing
+Accounts reads logins fresh and queues only profiles with labs known to be
+signed out or left pending by setup. Labs whose login can't be inspected are
+skipped rather than guessed.
 
 While a provider is signing in, Reopen cancels its embedded login process and
 starts a fresh login for the same profile and provider. Use it when a browser

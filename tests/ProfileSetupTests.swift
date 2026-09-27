@@ -39,7 +39,22 @@ struct ProfileSetupTests {
         precondition(condition(), "Setup did not advance")
     }
 
+    // Only known-missing or pending labs are queued; unknown and uninstalled are not.
+    static func missingSignIns() {
+        let snapshot = Snapshot.parse([
+            "V\tcodex\t1\t-\tcodex\tCodex", "V\tclaude\t1\t-\tclaude\tClaude", "V\tgemini\t0\t-\tnone\tGemini",
+            "P\tDefault\t0\tcodex:active,claude:ok", "P\tWork\t0\tcodex:ok", "P\tHome\t0\tclaude:ok,gemini:ok",
+            "S\tDefault\tcodex\t/d\t\tyes", "S\tDefault\tclaude\t/d\t\tno", "S\tWork\tcodex\t/w\t\tunknown",
+            "S\tHome\tclaude\t/h\t\tyes", "S\tHome\tgemini\t/h\t\tno",
+        ].joined(separator: "\n"))
+        let missing = snapshot.missingSignIns(pending: ["Home": ["claude"]])
+        precondition(missing.map(\.profile) == ["Default", "Home"])
+        precondition(missing.map(\.labs) == [["claude"], ["claude"]])
+        precondition(snapshot.missingSignIns(pending: [:]).map(\.profile) == ["Default"])
+    }
+
     static func main() {
+        missingSignIns()
         reopenSignIn(isNew: true)
         reopenSignIn(isNew: false)
         let snapshot = Snapshot.parse("P\tWork\t0\tcodex:ok,claude:ok\n")
