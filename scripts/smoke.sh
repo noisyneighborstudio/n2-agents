@@ -36,5 +36,6 @@ sh scripts/test-owner-auth-status.sh
 sh scripts/test-fleet-settings.sh
 
 python3 scripts/test-physical-reconcile.py --peer local
+python3 scripts/test-task-admission-race.py
 
 exec python3 scripts/test-codex-rpc.py ParentLifetimeTests

@@ -384,20 +384,30 @@ fleet_handle_task_start() {  # <from> <payload> <dir>
   hts_d=$(exec_task_dir "$hts_id")
   # Re-delivery of a task we already hold is an acknowledgement, never a second
   # run: a retried delivery must not start the work twice.
-  if [ -d "$hts_d" ]; then
-    printf 'accepted %s %s\n' "$hts_id" "$(exec_meta "$hts_id" state)" > "$3/out"
+  # mkdir is the admission claim: checking first lets concurrent deliveries
+  # both observe absence and launch. An incomplete claim is not an acceptance.
+  if ! mkdir "$hts_d" 2>/dev/null; then
+    [ -d "$hts_d" ] || { echo "ERR task-store"; return 1; }
+    hts_state=$(exec_meta "$hts_id" state 2>/dev/null || true)
+    [ -n "$hts_state" ] || { echo "ERR task-pending"; return 1; }
+    printf 'accepted %s %s\n' "$hts_id" "$hts_state" > "$3/out"
     fleet_ok "$3/out"; return 0
   fi
   hts_w=$(exec_work_dir "$hts_id")
-  mkdir -p "$hts_d" "$hts_w" || { echo "ERR task-store"; return 1; }
+  if ! mkdir -p "$hts_w"; then
+    rmdir "$hts_d" 2>/dev/null || true
+    echo "ERR task-store"; return 1
+  fi
+  # Keep the claim until workspace deletion succeeds; a concurrent retry must
+  # not populate a workspace that this failed request is still removing.
   awk 'f{print} /^--$/{f=1}' "$2" | base64 -d > "$3/bundle" 2>/dev/null
-  [ -s "$3/bundle" ] || { rm -rf "$hts_d" "$hts_w"; echo "ERR empty-bundle"; return 1; }
+  [ -s "$3/bundle" ] || { rm -rf "$hts_w" && rm -rf "$hts_d"; echo "ERR empty-bundle"; return 1; }
   if ! exec_ws_unpack "$3/bundle" "$hts_w"; then
-    rm -rf "$hts_d" "$hts_w"; echo "ERR unsafe-bundle"; return 1
+    rm -rf "$hts_w" && rm -rf "$hts_d"; echo "ERR unsafe-bundle"; return 1
   fi
   if [ -f "$hts_w/spec/workspace.tar" ]; then
     if ! exec_ws_unpack "$hts_w/spec/workspace.tar" "$hts_w/workspace"; then
-      rm -rf "$hts_d" "$hts_w"; echo "ERR unsafe-workspace"; return 1
+      rm -rf "$hts_w" && rm -rf "$hts_d"; echo "ERR unsafe-workspace"; return 1
     fi
     rm -f "$hts_w/spec/workspace.tar"
   fi

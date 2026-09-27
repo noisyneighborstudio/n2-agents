@@ -1074,6 +1074,26 @@ covered account ownership/login/migration/bridge boundaries, signed transport,
 enrollment/revocation, replication/conflicts, managed tools, task/workspace/result
 handling, session import and usage journal trust. It found two P2 issues:
 non-atomic task-ID admission and disruptive-classification removal retaining
-installer approval. Both are queued for reproduction, repair and independent
-recheck. This source review did not perform runtime/adversarial archive probes,
+installer approval. Task admission is repaired and independently rechecked below;
+the managed-tool finding remains queued. This source review did not perform runtime/adversarial archive probes,
 credential access or live-provider operations; those requirements remain.
+
+
+## Concurrent task admission
+
+`python3 scripts/test-task-admission-race.py` sends signed concurrent deliveries
+with distinct nonces to isolated peers. The original admission path produced two
+launches and two command executions. Atomic directory creation now admits one
+initializer. Repeated delivery acknowledges a published record; an unpublished
+claim returns `ERR task-pending` without launching work.
+
+A second event barrier pauses failed-initialization cleanup. The old deletion
+order accepted a retry while its workspace was still being deleted. All three
+failure branches now remove the workspace before releasing the task claim. The
+regression proves refusal during cleanup and successful retry afterward. An
+interrupted unpublished claim stays pending; this change does not automatically
+recover or rerun it. The test runs in both repository and smoke gates.
+
+Independent correctness review reran the focused proof successfully. Independent
+source security review cleared the admission and cleanup findings. No provider
+jobs, real peers or credentials were used.

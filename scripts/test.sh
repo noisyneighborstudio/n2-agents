@@ -812,5 +812,6 @@ python3 scripts/test-fleet-auth-websocket.py
 python3 scripts/test-fleet-session.py
 
 python3 scripts/test-physical-reconcile.py --peer local
+python3 scripts/test-task-admission-race.py
 
 echo "All tests passed"
