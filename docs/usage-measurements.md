@@ -84,7 +84,11 @@ The regression uses synthetic command results and actual reader JSON passed to
 native and loop parsers; no real Keychain or provider is accessed. The old mapping
 failed the new assertion for both providers. [Canonical source evidence](audits/credential-store-observation-spike.md)
 also shows why changing to SecItemCopyMatching alone would not remove ambiguity.
-Claude's separate credential fallback path still requires its own precedence audit.
+Claude now preserves primary-store selection: a successful object without OAuth
+reports `no-token`, even if a fallback file contains a different login. The
+[provider accessor fixtures](audits/claude-credential-fallback-spike.md) establish
+this narrow rule. Existing nonzero-exit fallback and malformed-data behavior are
+unchanged; their broader precedence and execution-binding audit remains open.
 
 ## Primary references
 

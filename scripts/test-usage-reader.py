@@ -319,6 +319,42 @@ class ReaderTests(unittest.TestCase):
             self.assertEqual(run.call_count, 1)
             self.assertEqual(run.call_args.args[0][3], 'Claude Code-credentials-' + u.hashlib.sha256(directory.encode()).hexdigest()[:8])
 
+    def test_claude_primary_store_prevents_field_fallback(self):
+        fixture = json.loads((Path(__file__).resolve().parents[1] /
+                              'docs/audits/claude-credential-fallback-spike.json').read_text())
+        expected = {row['case']: row['selected'] for row in fixture['oauthAccessorObservations']}
+        primary_token = {'accessToken': 'synthetic-primary', 'expiresAt': 9999999999999}
+        file_token = {'accessToken': 'synthetic-file', 'expiresAt': 9999999999999}
+        with tempfile.TemporaryDirectory() as cfg, patch.dict(os.environ, {}, clear=True):
+            Path(cfg, '.credentials.json').write_text(json.dumps({'claudeAiOauth': file_token}))
+            for name, primary in [('empty-primary', {}), ('non-oauth-primary', {'other': 'synthetic'}),
+                                  ('primary-oauth', {'claudeAiOauth': primary_token})]:
+                with self.subTest(case=name), patch.object(u.subprocess, 'run', return_value=SimpleNamespace(
+                        returncode=0, stdout=json.dumps(primary))):
+                    got, status = u.claude_creds(cfg, True)
+                    self.assertEqual((got, status), (primary_token, 'ok') if expected[name] == 'primary'
+                                     else (None, 'no-token'))
+                    if expected[name] != 'none':
+                        continue
+                    for fmt in ('json', 'tsv'):
+                        output = io.StringIO()
+                        with patch.dict(os.environ, {'N2_USAGE_FORMAT': fmt}), \
+                             patch.object(u.urllib.request, 'urlopen', side_effect=AssertionError('network forbidden')) as network, \
+                             patch.object(u.sys, 'argv', ['usage.py', 'claude', 'Default='+cfg]), \
+                             contextlib.redirect_stdout(output):
+                            u.main()
+                        network.assert_not_called()
+                        if fmt == 'json':
+                            row = json.loads(output.getvalue())
+                            self.assertEqual(row['status'], 'no-token')
+                            self.assertEqual(row['display']['shortUsed'], '-')
+                            self.assertEqual(row['display']['longUsed'], '-')
+                        else:
+                            self.assertEqual(output.getvalue().strip().split('\t')[4], 'no-token')
+            for code in (1, 44):
+                with patch.object(u.subprocess, 'run', return_value=SimpleNamespace(returncode=code, stdout='')):
+                    self.assertEqual(u.claude_creds(cfg, True), (file_token, 'ok'))
+
     def test_cursor_muse_credential_store_results(self):
         for vendor in ('cursor', 'muse'):
             for failure in (1, 36, 44, OSError('synthetic unavailable'),

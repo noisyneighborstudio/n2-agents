@@ -24,7 +24,9 @@ def claude_creds(cfg, is_default):
             return None, 'fetch-error'
     elif result.returncode not in (1, 44):
         return None, 'credential-store-unavailable'
-    if not credential:
+    # The provider selects the primary object, not its OAuth field.
+    # A successful object without OAuth must not select another file login.
+    if result.returncode != 0:
         try:
             with open(os.path.join(cfg, '.credentials.json')) as f:
                 credential = json.load(f).get('claudeAiOauth')
