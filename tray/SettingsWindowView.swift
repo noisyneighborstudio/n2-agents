@@ -28,10 +28,15 @@ struct SettingsWindowView: View {
                 VStack(alignment: .leading, spacing: 22) {
                     section("ACCOUNTS", subtitle: "Sign in again to check the account used by every listed profile.") {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text(model.resettingAccounts ? "Signing out. Setup will continue here when it finishes." : "Keep your profiles and sessions. Sign out, then the setup window guides you through each profile again.")
+                            Text(model.resettingAccounts ? "Signing out. Setup will continue here when it finishes." : "Keep your profiles and sessions. Sign in to accounts that are missing, or sign out and let the setup window guide you through each profile again.")
                                 .font(.system(size: 12)).foregroundStyle(Ink.secondary)
-                            Button("Sign Out of All Accounts and Set Up Again…") {
-                                actions.reonboardAccounts()
+                            HStack(spacing: 10) {
+                                Button("Sign In to Missing Accounts…") {
+                                    actions.signInMissingAccounts()
+                                }
+                                Button("Sign Out of All Accounts and Set Up Again…") {
+                                    actions.reonboardAccounts()
+                                }
                             }
                             .disabled(model.resettingAccounts || model.data?.profiles.contains { !$0.slots.isEmpty } != true)
                         }

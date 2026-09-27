@@ -36,6 +36,10 @@ branch with current main before resuming its implementation.
   at scripts/test.sh:682 during freshness validation. The unchanged loop source
   passed in the prior slice. Retain the assertion; investigate a recurrence with
   fixture receipts rather than changing usage-display code to accommodate it.
+  Recurred twice (now line 685) on sign-in-missing-accounts, which does not touch
+  the loop; unchanged main and a third run passed. Suspect: tests/fake-loop-agent.sh
+  decrements worker-quota-<profile> without a lock, so concurrent chunks on one
+  slot can both fail while the counter drops once. Capture turns on failure.
 
 - Fleet crash-accounting, archive safety, notifications and provider logout stay
   deferred on PR #3. They do not block independent measurement fixes. No dispatch

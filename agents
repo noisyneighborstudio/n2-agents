@@ -883,8 +883,11 @@ cmd_login() {
 
   out_args=$(vendor_logout "$v")
   if vendor_authed "$v" "$cfg" "$name"; then authed=0; else authed=$?; fi
-  # authed=1: nothing to sign out of — a slot being set up for the first time
-  if [ "$authed" != 1 ] && [ -n "$out_args" ]; then
+  # authed=1: nothing to sign out of, but leftovers from an older backend can
+  # still block the new login from saving (Muse FM-008), so clear them.
+  if [ "$authed" = 1 ]; then
+    vendor_clear_logged_out_credentials "$v" "$cfg" "$name" || die "credential cleanup failed for '$name' / $v"
+  elif [ -n "$out_args" ]; then
     echo "Signing $(vendor_label "$v") out of '$name'…"
     # shellcheck disable=SC2086
     if ( exec_vendor "$v" "$name" "$cfg" "$cli" $out_args ); then

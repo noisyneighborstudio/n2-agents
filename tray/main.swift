@@ -997,6 +997,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         controller.show()
     }
 
+    // Reads logins fresh, then queues only the profiles missing one through
+    // the same setup window reset uses.
+    func signInMissingAccounts() {
+        guard !model.resettingAccounts else { return }
+        closeSettings()
+        DispatchQueue.global(qos: .userInitiated).async {
+            let porcelain = self.runCLI(["porcelain"])
+            DispatchQueue.main.async {
+                guard !self.model.resettingAccounts else { return }
+                guard porcelain.status == 0 else {
+                    self.alert("Couldn't check sign-ins", porcelain.output)
+                    return
+                }
+                let missing = Snapshot.parse(porcelain.output).missingSignIns(pending: self.model.pendingSetups)
+                guard !missing.isEmpty else {
+                    self.alert("All accounts are signed in", "Every listed profile has a login for each of its labs.")
+                    return
+                }
+                self.setup?.finishLater()
+                for entry in missing { self.setupPending(profile: entry.profile, labs: entry.labs) }
+                self.accountSetupQueue = missing.map(\.profile)
+                self.openNextAccountSetup()
+            }
+        }
+    }
+
     func installCLI() -> String {
         let source = URL(fileURLWithPath: cliPath).standardizedFileURL
         let agentAs = scriptsDir + "/agent-as"

@@ -1,8 +1,11 @@
 # Account setup
 
-First-use onboarding, Finish setup, and Settings account reset use the same
-`ProfileSetup` window and provider sign-in actions. Reset queues the existing
-profiles through that window after sign-out.
+First-use onboarding, Finish setup, and the Settings account actions use the
+same `ProfileSetup` window and provider sign-in actions. Reset queues the
+existing profiles through that window after sign-out. Sign In to Missing
+Accounts reads logins fresh and queues only profiles with labs known to be
+signed out or left pending by setup. Labs whose login can't be inspected are
+skipped rather than guessed.
 
 While a provider is signing in, Reopen cancels its embedded login process and
 starts a fresh login for the same profile and provider. Use it when a browser
@@ -19,3 +22,8 @@ both input routes reach a real PTY using a synthetic clipboard action.
 with a fake host. It verifies restart, cancellation, profile binding, stale
 callbacks, failure retry and subsequent progress. It does not claim acceptance
 against Anthropic's live browser flow.
+
+Sign-in clears a signed-out slot's leftover credentials before logging in, not
+only after a logout. A named Muse slot can keep a keychain reference from an
+older backend; Muse's file backend then refuses to save the new login (FM-008).
+`python3 tests/ReonboardTests.py` reproduces that failure with a fake `muse`.
