@@ -355,6 +355,39 @@ class ReaderTests(unittest.TestCase):
                 with patch.object(u.subprocess, 'run', return_value=SimpleNamespace(returncode=code, stdout='')):
                     self.assertEqual(u.claude_creds(cfg, True), (file_token, 'ok'))
 
+    def test_claude_keychain_selectors_choose_provider_account(self):
+        fixture = json.loads((Path(__file__).resolve().parents[1] /
+                              'docs/audits/claude-keychain-selector-spike.json').read_text())
+        cases = fixture['providerCases'] + [dict(name=row['name'],
+                 env={'USER': row['user'], 'CLAUDE_CONFIG_DIR': '/fixture'},
+                 username='os-user', account=row['account'], osFailure=row['osFailure'],
+                 service=fixture['providerCases'][0]['service']) for row in fixture['extraAccountCases']]
+        for case in cases:
+            with self.subTest(case=case['name']):
+                wanted = {'accessToken': 'synthetic-correct', 'expiresAt': 9999999999999}
+                wrong = {'accessToken': 'synthetic-wrong', 'expiresAt': 9999999999999}
+                records = [(case['service'], 'another-account', wrong),
+                           (case['service'], case['account'], wanted)]
+                def query(args, **kwargs):
+                    service = args[args.index('-s')+1]
+                    account = args[args.index('-a')+1] if '-a' in args else None
+                    for stored_service, stored_account, token in records:
+                        if service == stored_service and (account is None or account == stored_account):
+                            return SimpleNamespace(returncode=0, stdout=json.dumps({'claudeAiOauth': token}))
+                    return SimpleNamespace(returncode=44, stdout='')
+                user_lookup = {'side_effect': KeyError('synthetic missing user')} if case.get('osFailure') else {
+                    'return_value': SimpleNamespace(pw_name=case['username'])}
+                with patch.dict(os.environ, case['env'], clear=True), \
+                     patch('pwd.getpwuid', **user_lookup) as lookup, patch.object(u.os, 'geteuid', return_value=12345), \
+                     patch.object(u.subprocess, 'run', side_effect=query), \
+                     patch.object(u.urllib.request, 'urlopen', side_effect=AssertionError('network forbidden')) as network:
+                    self.assertEqual(u.claude_creds(case['env']['CLAUDE_CONFIG_DIR'], True), (wanted, 'ok'))
+                network.assert_not_called()
+                if not case['env'].get('USER'):
+                    lookup.assert_called_once_with(12345)
+                else:
+                    lookup.assert_not_called()
+
     def test_cursor_muse_credential_store_results(self):
         for vendor in ('cursor', 'muse'):
             for failure in (1, 36, 44, OSError('synthetic unavailable'),

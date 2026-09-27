@@ -13,8 +13,17 @@ def claude_creds(cfg, is_default):
     secure_dir = os.environ.get('CLAUDE_SECURESTORAGE_CONFIG_DIR', cfg)
     if secure_dir != cfg:
         return None, 'credential-override'
-    svc = 'Claude Code-credentials-' + hashlib.sha256(cfg.encode()).hexdigest()[:8]
-    result = subprocess.run(['security', 'find-generic-password', '-s', svc, '-w'],
+    import pwd, re, unicodedata
+    try:
+        account = os.environ.get('USER') or pwd.getpwuid(os.geteuid()).pw_name
+    except (KeyError, OSError):
+        account = 'claude-code-user'
+    if not re.fullmatch(r'[a-zA-Z0-9._-]+', account):
+        account = 'claude-code-user'
+    # NFC is established for the provider's explicit secure-storage override.
+    key_path = unicodedata.normalize('NFC', secure_dir) if 'CLAUDE_SECURESTORAGE_CONFIG_DIR' in os.environ else cfg
+    svc = 'Claude Code-credentials-' + hashlib.sha256(key_path.encode()).hexdigest()[:8]
+    result = subprocess.run(['security', 'find-generic-password', '-s', svc, '-a', account, '-w'],
                             capture_output=True, text=True, timeout=5)
     credential = None
     if result.returncode == 0:

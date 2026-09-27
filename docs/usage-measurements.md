@@ -90,6 +90,13 @@ reports `no-token`, even if a fallback file contains a different login. The
 this narrow rule. Existing nonzero-exit fallback and malformed-data behavior are
 unchanged; their broader precedence and execution-binding audit remains open.
 
+Claude Keychain reads now include the provider's account selector: nonempty USER,
+otherwise the effective OS username, with the provider's fallback for invalid
+names or lookup failure. Explicit secure-storage paths use NFC before service
+hashing. [Selector fixtures](audits/claude-keychain-selector-spike.md) cover
+conflicting synthetic records; default-path normalization and alternate provider
+suffixes remain unverified. No real Keychain or provider request ran.
+
 ## Primary references
 
 - [Codex app-server authentication and rate limits](https://learn.chatgpt.com/docs/app-server)
