@@ -801,11 +801,14 @@ cmd_reonboard() {
     esac
     shift
   done
-  slots=""
+  slots="" kept=""
   for name in $(all_profiles); do
     for v in $(vendors_installed); do
       cfg=$(config_dir "$name" "$v")
       [ -d "$cfg" ] || continue
+      # An owner-managed login belongs to its account owner. Signing it out
+      # here would break that binding, so the slot keeps its account.
+      if sync_owner_managed "$name" "$v"; then kept="$kept $name:$v"; continue; fi
       slots="$slots $name:$v"
     done
   done
@@ -813,6 +816,9 @@ cmd_reonboard() {
   echo "Sign out of all listed accounts, including Default. Profiles and sessions stay in place."
   echo "Close running agent sessions first. Browser accounts stay signed in."
   echo "Cursor uses one shared account for every profile; it will be set up once."
+  for slot in $kept; do
+    echo "'${slot%:*}' / $(vendor_label "${slot##*:}") keeps its account: its account owner manages that sign-in."
+  done
   if [ "$confirmed" != true ]; then
     printf 'Type SIGN OUT to continue: '
     IFS= read -r answer || return 1

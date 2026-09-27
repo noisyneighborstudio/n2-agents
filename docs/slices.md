@@ -15,23 +15,13 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
 
 ## Queue
 
-1. **Keep owner-managed slots out of account reset** (`fleet-reonboard-owner-slots`).
-   Behavior: "Sign Out of All Accounts" and `agents reonboard` leave owner-managed
-   Codex slots signed in on their owner, say so, and finish every other slot. Today
-   the reset stops at such a slot after signing out the slots before it.
-   Proof: reonboard with a synthetic owner-managed Codex slot between two ordinary
-   slots completes, keeps the owner binding and credentials, and lists the kept slot;
-   the setup queue offers no local sign-in for it. Control: an ordinary slot whose
-   logout fails still stops the reset.
-   Scope: reset and setup routing only; no provider logout or owner-side changes.
-
-2. **Build and accept the merged fleet candidate** (`fleet-candidate-package`).
+1. **Build and accept the merged fleet candidate** (`fleet-candidate-package`).
    Behavior: a QA package built from this branch passes packaged CLI and native
    acceptance for enrollment, sync, dispatch and usage without touching live roots.
    Proof: isolated package build, signature check, packaged acceptance receipts.
    Scope: prepare only; no live install, enrollment or publication.
 
-3. **Independent adversarial and security review** (`fleet-security-review`).
+2. **Independent adversarial and security review** (`fleet-security-review`).
    Behavior: reviewed findings are fixed or recorded with evidence.
    Proof: review report against the candidate SHA; fixes each carry their own proof.
    Scope: the merged fleet diff against main.
