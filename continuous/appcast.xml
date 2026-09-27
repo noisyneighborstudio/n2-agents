@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
 <channel><title>N2 Agents Updates</title><item>
-<title>N2 Agents 1.5.0-continuous.6</title><pubDate>Sun, 27 Sep 2026 19:15:41 +0000</pubDate>
+<title>N2 Agents 1.5.0-continuous.7</title><pubDate>Sun, 27 Sep 2026 19:29:12 +0000</pubDate>
 <sparkle:channel>continuous</sparkle:channel>
-<enclosure url="https://github.com/noisyneighborstudio/n2-agents/releases/download/v1.5.0-continuous.6/N2Agents-continuous-1.5.0-continuous.6.zip" sparkle:version="64" sparkle:shortVersionString="1.5.0-continuous.6" length="4402280" type="application/octet-stream" sparkle:edSignature="Ao4KEKN+ZGBSCBjF+wPuZ3s/NYMIdbfSzwF2tnjdBQvhE7NFkqYzFYn8NGAVxw7239xl78nLOYW+C7JI8IN0Ag=="/>
+<enclosure url="https://github.com/noisyneighborstudio/n2-agents/releases/download/v1.5.0-continuous.7/N2Agents-continuous-1.5.0-continuous.7.zip" sparkle:version="65" sparkle:shortVersionString="1.5.0-continuous.7" length="4403970" type="application/octet-stream" sparkle:edSignature="WA6r5HpwWDle1YU4fInVRg+IspUn0QZ4o5g09rqZqBWXlKhBOsHdTQnwW1YbyouLysDOfEOt6HhBKbs3Q/ptAQ=="/>
 </item></channel></rss>
