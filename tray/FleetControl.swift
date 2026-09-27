@@ -21,6 +21,12 @@ extension AppDelegate {
     /// One fleet read. `status` first: if there is no identity the rest of the
     /// verbs would only print usage errors, so they are not run at all.
     func refreshFleet() {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { self.refreshFleet() }
+            return
+        }
+        let requestID = UUID()
+        fleetReadID = requestID
         DispatchQueue.global(qos: .utility).async {
             struct ReadFailure: Error { let message: String }
             func read(_ label: String, _ args: [String]) throws -> String {
@@ -53,6 +59,7 @@ extension AppDelegate {
                 }
                 data.observedAt = Date()
                 DispatchQueue.main.async {
+                    guard self.fleetReadID == requestID else { return }
                     self.model.fleet = data
                     self.announce(data.notices)
                     self.updateFleetAttention(data)
@@ -60,6 +67,7 @@ extension AppDelegate {
             } catch {
                 let message = (error as? ReadFailure)?.message ?? "Couldn't read fleet state."
                 DispatchQueue.main.async {
+                    guard self.fleetReadID == requestID else { return }
                     var previous = self.model.fleet ?? FleetData()
                     previous.readError = message
                     self.model.fleet = previous

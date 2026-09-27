@@ -71,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     var statusItem: NSStatusItem!
     let model = PanelModel()
     var announcer = FleetAnnouncer()
+    var fleetReadID: UUID?
     private var statusIcon: StatusIcon?
     private var quotaWatch: AnyCancellable?
     private var menuBarAppearance: NSKeyValueObservation?

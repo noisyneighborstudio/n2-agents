@@ -17,6 +17,7 @@ final class ReadModel {
     var fleet: FleetData? { didSet { precondition(Thread.isMainThread); publications += 1 } }
 }
 final class AppDelegate {
+    var fleetReadID: UUID?
     let model = ReadModel()
     var mode = "first-failure"
     var announcements = 0
