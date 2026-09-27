@@ -896,6 +896,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         settingsWindow?.dismiss()
     }
 
+    func reonboardAccounts() {
+        let ask = NSAlert()
+        ask.messageText = "Sign out of all accounts and set up again?"
+        ask.informativeText = "This signs out every listed profile, including Default, then guides you through signing in again in a terminal. Profiles, settings and session history stay in place. Close running agent sessions first. Browser accounts stay signed in, so choose the intended account at each login. Cursor uses one shared account across profiles."
+        ask.addButton(withTitle: "Sign Out and Set Up Again")
+        ask.addButton(withTitle: "Cancel")
+        ask.alertStyle = .warning
+        guard ask.runModal() == .alertFirstButtonReturn else { return }
+        setup?.finishLater()
+        closeSettings()
+        launchSession("\"\(cliPath)\" reonboard; open -g 'n2agents://refresh'",
+                      slug: "account-setup", in: preferredTerminal)
+    }
+
     func installCLI() -> String {
         let source = URL(fileURLWithPath: cliPath).standardizedFileURL
         let agentAs = scriptsDir + "/agent-as"
