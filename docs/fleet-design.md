@@ -1998,7 +1998,11 @@ Every received task bundle, workspace, result and deliverable archive passes
 `tar -tv` listing, whose text is ambiguous when a name holds " -> " or a
 newline. One bad member refuses the whole archive: anything but a regular file,
 directory, symlink or hard link (so no fifo or device); an absolute path or any
-`..` component in a name or link target; or a control character in either.
+`..` component in a name or link target; a control character in either;
+compressed or sparse input; or more file bytes than the destination disk can
+spare after a reserve of 5% of the disk (at least 1 GiB). Fleet sends plain tar,
+so the bytes received bound the bytes written, and the check runs as members are
+read, so an oversized archive is refused at its first excess member.
 Links get no lexical containment test, because a chain such as `a -> .` then
 `b -> a/a/..` defeats it. tar's own refusal of `..` and of writes through
 symlinks stays a second layer. Proof: `scripts/test-archive-guard.sh`.

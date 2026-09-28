@@ -332,15 +332,16 @@ exec_ws_pack() {  # <srcdir> <outfile>
 
 # A received archive is inspected BEFORE extraction: an absolute member, a
 # member that climbs out with .., a link whose target does either, or a
-# special file (fifo, device) is a refusal for the whole archive — we do not
+# special file (fifo, device), compressed or sparse input, or more bytes than
+# the destination disk can spare is a refusal for the whole archive — we do not
 # extract "the safe part" of a hostile one. tar's own refusals stay a second
 # layer.
-exec_ws_verify() {  # <archive>
-  /usr/bin/python3 "${scripts_dir:-$repo}/workspace-pack.py" --verify "$1" 2>/dev/null
+exec_ws_verify() {  # <archive> <destdir>; the refusal names its reason
+  /usr/bin/python3 "${scripts_dir:-$repo}/workspace-pack.py" --verify "$1" "$2"
 }
 
 exec_ws_unpack() {  # <archive> <destdir>
-  exec_ws_verify "$1" || { echo "agents: refusing unsafe archive" >&2; return 1; }
+  exec_ws_verify "$1" "$2" || return 1
   mkdir -p "$2" || return 1
   ( cd "$2" && tar -xf - ) < "$1" 2>/dev/null
 }
@@ -791,7 +792,7 @@ exec_fetch() {  # <id> <destdir>
   if ! fleet_call "$ef_p" task-fetch "$ef_t/req" > "$ef_t/tar" 2>/dev/null; then
     rm -rf "$ef_t"; echo "agents: $(exec_meta "$ef_id" machine) did not answer" >&2; return 2
   fi
-  if ! exec_ws_verify "$ef_t/tar"; then
+  if ! exec_ws_verify "$ef_t/tar" "$ef_dest"; then
     rm -rf "$ef_t"; echo "agents: refused an unsafe result archive" >&2; return 1
   fi
   mkdir -p "$ef_dest" || { rm -rf "$ef_t"; return 1; }
@@ -807,7 +808,7 @@ fleet_handle_task_deliver() {  # <from> <payload> <dir>
   case ${htd_n:-} in ''|*/*|.*) echo "ERR bad-name"; return 1 ;; esac
   awk 'f{print} /^--$/{f=1}' "$2" | base64 -d > "$3/payload.tar" 2>/dev/null
   [ -s "$3/payload.tar" ] || { echo "ERR empty"; return 1; }
-  exec_ws_verify "$3/payload.tar" || { echo "ERR unsafe-archive"; return 1; }
+  exec_ws_verify "$3/payload.tar" "$fleet_root/tasks/inbox" || { echo "ERR unsafe-archive"; return 1; }
   htd_dest=$fleet_root/tasks/inbox/$htd_n
   # A delivery replaces only its own named slot. Unrelated content at the
   # destination is not touched.
@@ -827,7 +828,7 @@ exec_distribute() {  # <srcdir> <name> <target: peerid|machine|--all>
   ed2_any=1
   if [ "$ed2_to" = "$(fleet_self_id)" ] || [ "$ed2_to" = "$(fleet_self_machine)" ]; then
     ed2_local=$fleet_root/tasks/inbox/$ed2_name
-    if exec_ws_verify "$ed2_t/tar" && mkdir -p "$fleet_root/tasks/inbox"; then
+    if exec_ws_verify "$ed2_t/tar" "$fleet_root/tasks/inbox" && mkdir -p "$fleet_root/tasks/inbox"; then
       rm -rf "$ed2_local"
       if exec_ws_unpack "$ed2_t/tar" "$ed2_local"; then
         printf 'sent\t%s\t%s\n' "$(fleet_self_machine)" "$ed2_local"

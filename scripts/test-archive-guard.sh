@@ -29,6 +29,13 @@ cases = {
     'accept-workspace': [('src', tarfile.DIRTYPE, '', 0o755), ('src/a', REG), ('src/b', SYM, 'a'),
                          ('src/c', LNK, 'src/a'), ('run.sh', REG, '', 0o4755)],
 }
+with tarfile.open(f'{base}/refuse-compressed.tar', 'w:gz') as archive:
+    info = tarfile.TarInfo('zeros'); info.size = 1 << 20
+    archive.addfile(info, io.BytesIO(bytes(info.size)))
+# The header claims more bytes than any disk has; the body is never sent.
+with open(f'{base}/refuse-too-large.tar', 'wb') as raw:
+    info = tarfile.TarInfo('huge'); info.size = 1 << 60
+    raw.write(info.tobuf(tarfile.PAX_FORMAT))
 for name, members in cases.items():
     with tarfile.open(f'{base}/{name}.tar', 'w', format=tarfile.PAX_FORMAT) as archive:
         for member in members:
@@ -45,12 +52,13 @@ echo outside > "$base/outside"
 for archive in "$base"/refuse-*.tar; do
   name=$(basename "$archive" .tar)
   mkdir -p "$base/work/$name"
-  if ( cd "$base/work/$name" && exec_ws_unpack "$archive" "$base/dest-$name" ) 2>/dev/null; then
+  if ( cd "$base/work/$name" && exec_ws_unpack "$archive" "$base/dest-$name" ) 2>"$base/why-$name"; then
     bad "$name: accepted"
   elif [ -e "$base/dest-$name" ] && [ -n "$(ls -A "$base/dest-$name")" ]; then
     bad "$name: extracted before refusing"
   else printf 'ok   %s\n' "$name"; fi
 done
+grep -q 'MiB free after the reserve' "$base/why-refuse-too-large" || bad "the size refusal names the limit"
 [ -e "$base/escaped" ] && bad "a member escaped the destination"
 [ "$(cat "$base/outside")" = outside ] && [ "$(stat -f %l "$base/outside")" = 1 ] || bad "the outside file changed"
 

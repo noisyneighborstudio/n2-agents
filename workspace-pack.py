@@ -65,14 +65,28 @@ def pack(source, output):
         subprocess.run(['tar', '-cf', str(output), '-C', str(stage), '.'], check=True)
 
 
-def verify(archive):
+def verify(archive, destination):
     # A `tar -tv` listing is ambiguous text: a name may hold " -> " or a newline.
     # Read the members themselves. Links may not use ".." at all: lexical
     # containment is fooled by chains such as `a -> .` then `b -> a/a/..`.
-    with tarfile.open(archive) as members:
+    # Fleet only sends plain tar, so the bytes received bound the bytes written:
+    # compressed or sparse input could expand without limit.
+    target = Path(destination).absolute()
+    while not target.exists():
+        target = target.parent
+    disk = shutil.disk_usage(target)
+    # Keep room for the machine itself: 5% of the disk, at least 1 GiB.
+    free = disk.free - max(1 << 30, disk.total // 20)
+    total = 0
+    with tarfile.open(archive, 'r:') as members:
         for member in members:
+            if member.issparse():
+                raise ValueError('sparse file')
             if not (member.isreg() or member.isdir() or member.issym() or member.islnk()):
                 raise ValueError('special file')
+            total += member.size if member.isreg() else 0
+            if total > free:
+                raise ValueError(f'needs over {total >> 20} MiB, {max(free, 0) >> 20} MiB free after the reserve')
             paths = (member.name, member.linkname) if member.issym() or member.islnk() else (member.name,)
             for path in paths:
                 if path.startswith('/') or '..' in PurePosixPath(path).parts:
@@ -85,10 +99,12 @@ def verify(archive):
 if __name__ == '__main__':
     try:
         if sys.argv[1] == '--verify':
-            verify(sys.argv[2])
+            verify(sys.argv[2], sys.argv[3])
         else:
             pack(sys.argv[1], sys.argv[2])
-    except (ValueError, OSError, tarfile.TarError, subprocess.SubprocessError, IndexError):
-        if sys.argv[1:2] != ['--verify']:
+    except (ValueError, OSError, tarfile.TarError, subprocess.SubprocessError, IndexError) as error:
+        if sys.argv[1:2] == ['--verify']:
+            print(f'agents: refusing archive: {error}', file=sys.stderr)
+        else:
             print('agents: could not pack a self-contained workspace', file=sys.stderr)
         sys.exit(1)

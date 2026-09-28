@@ -16,12 +16,19 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
 
 ## Queue
 
-1. **Bound received archive size** (`fleet-archive-limits`).
-   Behavior: a signed peer cannot exhaust disk or inodes with an oversized,
-   highly compressed or very deep task/result archive; the refusal names the limit.
-   Proof: synthetic archives just under and over each limit through
-   `exec_ws_unpack`; the over-limit case extracts nothing.
-   Scope: limits and their message; choose limits from real workspace sizes first.
+1. **Show held profiles in the tray** (`fleet-review-ui`).
+   Behavior: after joining, Fleet settings lists profiles held for review, each
+   with a Share action that runs `agents fleet sync share`; the list empties
+   when nothing is held.
+   Proof: native fleet UI test with a disposable home that has held profiles;
+   sharing one removes it from the list and from `agents fleet sync review`.
+   Scope: list and share only; no conflict resolution UI changes.
+
+2. **Mark PR #3 ready** (`fleet-pr-ready`).
+   Behavior: PR #3's description states what fleet does, its evidence and its
+   remaining limitations; the PR leaves draft.
+   Proof: PR body cross-checked against `docs/fleet-readiness.md`; CI green on
+   the head SHA. Scope: description and draft state only; merging needs approval.
 
 ## Noticed
 
@@ -30,9 +37,6 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
 
 - CI's verify job takes about 24 of its 30 minutes. Split it or raise the limit
   before it starts timing out.
-
-- The tray has no view of profiles held for review after joining; the CLI's
-  `agents fleet sync review` / `share` are the only surface.
 
 - The inherited full-suite quota fixture fails intermittently (main saw it at
   scripts/test.sh:682 and :685). Suspect: tests/fake-loop-agent.sh decrements
