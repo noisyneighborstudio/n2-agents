@@ -21,6 +21,7 @@
 #   agents shims [--remove]               sync <vendor>-<profile> commands on PATH
 #   agents loop "goal" --budget 2h [...]  fan a goal out across slots until its definition of done holds
 #   agents version
+#   agents update [--check] [--channel stable|continuous]   install the newest build on the app's channel
 #
 # A profile is an IDENTITY, not a login: "Work" holds one slot per vendor, so
 # `agents use Work` moves Claude, Codex, Grok and the rest in one step.
@@ -1689,7 +1690,43 @@ cmd_porcelain() {
 }
 
 cmd_help() {
-  sed -n '3,24p' "$self" | sed 's/^# \{0,3\}//'
+  sed -n '3,25p' "$self" | sed 's/^# \{0,3\}//'
+}
+
+# The newest build from the app's own update feed: the appcast Sparkle reads,
+# so Continuous stays on Continuous. GitHub's "latest release" skips
+# prereleases, which is why install.sh alone would move a Continuous install
+# back to stable.
+cmd_update() {
+  up_check="" up_channel=""
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --check) up_check=--check; shift ;;
+      --channel) up_channel=${2:-}; shift 2 ;;
+      --channel=*) up_channel=${1#--channel=}; shift ;;
+      *) die "usage: agents update [--check] [--channel stable|continuous]" ;;
+    esac
+  done
+  up_app=$(CDPATH= cd -- "$scripts_dir/../.." 2>/dev/null && pwd -P)
+  case $up_app in
+    *.app) [ -f "$up_app/Contents/Info.plist" ] || up_app="" ;;
+    *) up_app="" ;;
+  esac
+  [ -n "$up_app" ] || die "update runs from the CLI inside an installed N2 Agents.app"
+  up_plist=$up_app/Contents/Info.plist
+  [ "$(/usr/libexec/PlistBuddy -c 'Print :N2QABuild' "$up_plist" 2>/dev/null)" = true ] &&
+    die "a QA build never updates itself; build and install a new one"
+  if [ -z "$up_channel" ]; then
+    up_channel=$(defaults read "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$up_plist")" updateChannel 2>/dev/null) || up_channel=stable
+  fi
+  case $up_channel in
+    stable) up_key=N2AgentsStableFeedURL ;;
+    continuous) up_key=N2AgentsContinuousFeedURL ;;
+    *) die "unknown update channel: $up_channel (stable or continuous)" ;;
+  esac
+  up_feed=$(/usr/libexec/PlistBuddy -c "Print :$up_key" "$up_plist" 2>/dev/null) ||
+    die "this app has no $up_channel update feed"
+  /usr/bin/python3 "$scripts_dir/app-update.py" "$up_app" "$up_feed" $up_check
 }
 
 cmd=${1:-help}
@@ -1725,6 +1762,7 @@ case $cmd in
   _fleet-auth-call) fleet_auth_call "$@" ;;
   porcelain) cmd_porcelain ;;
   version)  cmd_version ;;
+  update)   cmd_update "$@" ;;
   help|-h|--help) cmd_help ;;
   *) die "unknown command: $cmd (try: agents help)" ;;
 esac

@@ -287,7 +287,7 @@ agents new Client --vendors codex,grok
 - **Add Vendor…** to give an existing profile another lab
 - Claude Desktop and Codex, opened as any profile, several at once
 - Claude session transfer between profiles
-- Sparkle self-updates on a stable or continuous channel
+- Sparkle self-updates on a stable or continuous channel; `agents update` installs the newest build on the same channel from a terminal (`--check` only reports)
 
 ## Troubleshooting
 
