@@ -22,7 +22,7 @@ _n2agents_vendors() {
 _n2agents_complete() {
   local prev=${COMP_WORDS[COMP_CWORD-1]} words
   if [ "$COMP_CWORD" -eq 1 ]; then
-    words="list vendors active use run best new delete adopt sessions transfer fleet desktop shims loop porcelain profiles version help"
+    words="list vendors active use run best new delete adopt sessions transfer fleet desktop shims loop porcelain profiles version update help"
   elif [ "${COMP_WORDS[1]}" = "fleet" ]; then
     if [ "$COMP_CWORD" -eq 2 ]; then
       words="init id invite join pair pending approve deny revoke discover reconcile rehost route roster peers ping status sync tools task session send serve help"

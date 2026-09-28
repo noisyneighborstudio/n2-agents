@@ -26,7 +26,7 @@ _n2agents_profiles() {
 _n2agents_cli() {
   if (( CURRENT == 2 )); then
     _values 'command' list vendors active use run best new delete adopt \
-      sessions transfer fleet desktop shims loop porcelain profiles version help
+      sessions transfer fleet desktop shims loop porcelain profiles version update help
   elif [[ ${words[2]} == fleet ]]; then
     if (( CURRENT == 3 )); then
       _values 'fleet verb' init id invite join pair pending approve deny revoke discover reconcile rehost route roster peers ping status sync tools task session send serve help
