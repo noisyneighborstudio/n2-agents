@@ -27,7 +27,7 @@ new usage journal. Neither establishes fresh fleet headroom.
 - [x] Verify dispatch eligibility, preferences and expected-completion ranking: 97 execution checks and focused preference/prompt/delivery checks pass.
 - [x] Verify ordinary dirty and linked-workspace/context handoff and declared deliverable destinations. Nested submodule metadata remains a documented limitation.
 - [ ] Verify native and in-app notifications, disconnection handling and reconciliation. The packaged app's activity feed shows the disconnection and the completion after Check in (M5 run on `29a2ceb`, asserted by `scripts/accept-native-physical-reconcile.py`), and a missing notification permission is shown rather than hidden. Desktop banner delivery remains unverified.
-- [ ] Verify complete CLI/native UI flows and source/release packaging.
+- [ ] Verify complete CLI/native UI flows and source/release packaging. CLI flows through the QA package's bundled CLI pass on `e50743f` (`scripts/accept-packaged-fleet-flows.sh`); native UI flows and a release-signed package remain.
 - [x] Pass regression suites and native builds on the candidate. CI runs `scripts/verify.sh` and `scripts/test-fleet.sh` (live SSH required, no skips) on every push; see "Integrated candidate acceptance".
 - [x] Complete independent adversarial and security reviews; fix and recheck findings. Merge-resolution and post-04c5331 reviews are clear; runtime archive probes found three gaps, fixed with `scripts/test-archive-guard.sh`.
 - [ ] Update PR #3's body to reflect the final implementation and evidence, then mark ready.
@@ -1328,3 +1328,13 @@ they live under the 0700 fleet root and are empty until chmodded, so no other
 user can read them; and `n2agents://reonboard-done` can be triggered by any
 same-user process, the same pattern as `login-done`. Runtime adversarial archive
 probes, credential access and live-provider operations were out of scope.
+
+## Packaged CLI fleet flows
+
+`scripts/accept-packaged-fleet-flows.sh` runs the fleet suites and the
+review/share flow through the QA package's bundled CLI, with every runtime file
+taken from the app bundle rather than the checkout. On a package built from
+`e50743f`: transport 341 passed, 0 skipped (live SSH required); sync 639 passed;
+execution 97 passed; native fleet UI and review/share passed (752 seconds).
+Removing one runtime file from the bundle copy fails the flows, so a file the
+build leaves out cannot pass unnoticed. Disposable peers only.

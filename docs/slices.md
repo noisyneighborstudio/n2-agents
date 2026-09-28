@@ -16,11 +16,13 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
 
 ## Queue
 
-1. **Walk the complete fleet flows in the packaged app** (`fleet-ui-flows`).
-   Behavior: enroll, sync (including review and share), dispatch, fetch and
-   revoke work from the QA app and CLI against disposable peers.
-   Proof: packaged acceptance receipts for each flow on one candidate SHA.
-   Scope: disposable peers only; no live installation.
+1. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
+   Behavior: from the QA app, pair two disposable peers, sync (with a held
+   profile shared from Fleet settings), send work, show its result and revoke.
+   Proof: packaged acceptance driven through accessibility events with
+   disposable homes; each step asserts CLI state, and one negative control
+   per step fails.
+   Scope: disposable peers only; no live installation or real machines.
 
 2. **Mark PR #3 ready** (`fleet-pr-ready`).
    Behavior: PR #3's description states what fleet does, its evidence and its
