@@ -812,6 +812,14 @@ included set is an allowlist per class, not an exclude list:
 `sessions/` and transcript layouts stay local: `agents transfer` already exists
 for moving a session deliberately, and the `execution` task owns handoff.
 
+The manifest walk prunes those excluded directories and drops any path the
+classifier cannot accept before spending a process on it. A real `~/.claude`
+holds tens of thousands of transcripts; walking them one file at a time made a
+manifest take minutes. `agents fleet sync status` therefore reports the
+resource count recorded by the last pass rather than rebuilding the manifest,
+because the panel polls it; `agents fleet sync scope` lists the live set.
+Proof: `scripts/test-sync-status.sh`.
+
 ## Versioning: a base digest, not a clock, and never last-writer-wins
 
 Each machine keeps, per resource, the digest it last **agreed** with the fleet

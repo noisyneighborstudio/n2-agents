@@ -752,9 +752,25 @@ sync_manifest() {
         continue
       fi
       # -L so an adopted slot (a symlink) is descended into for contents.
-      find -L "$slot" \( -name .trash -o -name node_modules -o -name __pycache__ -o -name .git \) -prune -o -type f -print 2>/dev/null | while IFS= read -r f; do
+      # Directories sync_excluded_relpath refuses are pruned here: a real
+      # ~/.claude holds tens of thousands of transcripts, and walking them
+      # file by file made every manifest take minutes.
+      find -L "$slot" \( -name .trash -o -name node_modules -o -name __pycache__ -o -name .git \
+          -o -path "$slot/projects" -o -path "$slot/sessions" -o -path "$slot/todos" \
+          -o -path "$slot/shell-snapshots" -o -path "$slot/ide" -o -path "$slot/statsig" \
+          -o -path "$slot/history*" \) -prune -o -type f -print 2>/dev/null | while IFS= read -r f; do
         rel=${f#"$slot"/}
         [ "$rel" = "$f" ] && continue
+        # The same shapes sync_classify accepts, checked without a fork: only
+        # a candidate pays for the containment, secret and digest checks.
+        case $rel in
+          skills/*|mcp/*|agents/*|commands/*|rules/*|prompts/*|hooks/*) ;;
+          */*) case ${rel##*/} in
+                 .credentials.json|auth.json|oauth_creds.json|credentials.json|.mcp.json|mcp.json|mcp_servers.json) ;;
+                 *) continue ;;
+               esac ;;
+          *) ;;
+        esac
         sync_safe_relpath "$rel" || continue
         # find -L descends *through* a symlinked directory, so the file is
         # not itself a link: resolve its parent too or an inside-the-slot
@@ -1605,6 +1621,9 @@ sync_pass_peer() {  # sync_pass_peer <peer> [dryrun]
     printf 'unreachable\t%s\n' "$spp_peer"; rm -rf "$spp_t"; return 2
   fi
   sync_manifest > "$spp_t/local" 2>/dev/null
+  # `sync status` reports this count rather than rebuilding the manifest,
+  # which takes minutes on real profiles and is polled by the panel.
+  [ -n "$spp_dry" ] || grep -c . "$spp_t/local" > "$(sync_root)/resources" 2>/dev/null
   # Establish live profile identity before any child resource. Profile
   # tombstones follow child removals so existing deletion blockers still apply.
   awk -F'\t' '{seen[$1]=1; if($2=="-") deleted[$1]=1}
@@ -2320,7 +2339,7 @@ agents fleet sync <verb>
   auto [--interval <sec>] [--rounds <n>]  repeat tick on a timer (default: forever)
   service install [--interval <sec>]  install the launchd timer that runs tick
   service uninstall | service status   remove it / show plist, load state, last run
-  status [--porcelain]                scope, exceptions, conflicts, last pass
+  status [--porcelain]                resources at the last pass, exceptions, conflicts
   scope                               what this machine would advertise
   conflicts                           unresolved conflicts awaiting a choice
                                       (scope:out = an exception now covers it,
@@ -2411,7 +2430,9 @@ cmd_fleet_sync() {
     status)
       sync_need
       printf 'self\t%s\t%s\n' "$(fleet_self_machine)" "$(fleet_self_id)"
-      printf 'resources\t%s\n' "$(sync_num "$(cmd_fleet_sync scope | grep -c . 2>/dev/null)")"
+      # As of the last pass: rebuilding the manifest here made the panel's
+      # poll take minutes. `agents fleet sync scope` lists it live.
+      printf 'resources\t%s\n' "$(sync_num "$(cat "$(sync_root)/resources" 2>/dev/null)")"
       printf 'agreed\t%s\n' "$(sync_num "$(grep -c . "$(sync_state_file)" 2>/dev/null)")"
       printf 'exceptions\t%s\n' "$(sync_num "$(grep -cv '^#\|^$' "$(sync_exceptions_file)" 2>/dev/null)")"
       printf 'conflicts\t%s\n' "$(sync_conflict_count)"
