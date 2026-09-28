@@ -14,6 +14,19 @@ sh "$repo/scripts/test-embedded-credentials.sh" || exit 1
 # on fixture state, so they cannot simply be skipped in place: the run re-execs
 # a trimmed copy of this file -- the same preamble, then section <n> onward --
 # which is why the preamble above must be re-enterable against existing state.
+# N2_SYNC_FRESH_FROM=<n> runs sections <n>..end on a fresh fixture instead. Only
+# a section that builds its own peers may start a shard: CI runs 1..47
+# (N2_SYNC_STOP_AFTER=47) and 48..end in parallel.
+if [ -n "${N2_SYNC_FRESH_FROM:-}" ] && [ -z "${N2_SYNC_TRIMMED:-}" ]; then
+  _first=$(grep -n '^# --- 1\.' "$0" | head -1 | cut -d: -f1)
+  _from=$(grep -n "^# --- ${N2_SYNC_FRESH_FROM}\." "$0" | head -1 | cut -d: -f1)
+  [ -n "$_from" ] || { echo "no section $N2_SYNC_FRESH_FROM in $0" >&2; exit 2; }
+  _trim=$(mktemp "${TMPDIR:-/tmp}/n2sync-trim.XXXXXX")
+  { sed -n "1,$((_first-1))p" "$0"; sed -n "${_from},\$p" "$0"; } > "$_trim"
+  N2_SYNC_TRIMMED=1 N2_SYNC_START_AT=$N2_SYNC_FRESH_FROM N2_SYNC_REPO="$repo" \
+    N2_SYNC_SECTIONS=$(grep -c '^mark "' "$0") sh "$_trim"; _rc=$?
+  rm -f "$_trim"; exit $_rc
+fi
 if [ -n "${N2_SYNC_START_AT:-}" ] && [ -z "${N2_SYNC_TRIMMED:-}" ]; then
   [ -n "${N2_SYNC_BASE:-}" ] || { echo "N2_SYNC_START_AT needs N2_SYNC_BASE" >&2; exit 2; }
   if [ ! -f "${N2_SYNC_BASE}/.ids" ]; then

@@ -2,7 +2,7 @@ tray/build/
 .DS_Store
 .build/
 Package.resolved
-.test-tmp/
+.test-tmp*/
 node_modules/
 N2Agents*.zip
 

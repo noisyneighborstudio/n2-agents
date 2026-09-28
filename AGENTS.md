@@ -86,6 +86,10 @@ the queue is meant to be thrown away.
 
 Every gate runs locally and in `.github/workflows/ci.yml` on every push.
 Run commands from the repository root on macOS 26 with its Xcode SDK.
+`scripts/verify.sh` runs them all in sequence. CI runs them as parallel jobs on
+the self-hosted `n2` runners (the M4 and the Mac mini, registered to this repo);
+a fork's pull request runs on GitHub-hosted macOS instead. Publication starts
+only from a successful CI run of a push, for that exact commit.
 
 - Formatting check: `scripts/check.sh format`.
   This checks introduced whitespace errors against `HEAD^`; set `N2_CHECK_BASE`
@@ -94,10 +98,12 @@ Run commands from the repository root on macOS 26 with its Xcode SDK.
   This compiles tracked Python sources with compiler warnings treated as errors
   and checks the CLI and gate shell scripts for syntax errors. It does not claim
   style or type analysis.
-- Tests: `scripts/test.sh`.
+- Tests: `scripts/test.sh`, or one group: `scripts/test.sh swift|cli|loop|auth|dispatch`.
 - Fleet suites: `sh scripts/test-fleet.sh` (transport, replication, execution,
-  native fleet UI). CI runs it as a parallel job with live SSH required, and
-  publication waits for it. Run it locally when a slice touches fleet code.
+  native fleet UI). CI runs it as parallel shards with live SSH required: transport,
+  sync sections 1-47 (`N2_SYNC_STOP_AFTER=47`), sync 48 onward
+  (`N2_SYNC_FRESH_FROM=48`), and exec plus native UI. Run it locally when a slice
+  touches fleet code.
 - Smoke run: `scripts/smoke.sh` starts the real CLI against throwaway state and
   a signed synthetic owner and synthetic vendor executables. It checks profile routing,
   session discovery, resume, transport descendant cleanup, provider caller-lifetime cleanup,
