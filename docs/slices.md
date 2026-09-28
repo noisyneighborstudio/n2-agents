@@ -37,8 +37,9 @@ Blocked on authorization:
 - Any same-user process can open `n2agents://reonboard-done` (or `login-done`)
   and make the app treat a running account reset as finished.
 
-- CI's verify job takes about 24 of its 30 minutes. Split it or raise the limit
-  before it starts timing out.
+- test-fleet-auth-manage.py's SIGINT cancel case allows 5s for exit and failed
+  once with three test groups running on one Mac; it passes alone. Runners share
+  each Mac, so capture exit receipts if it recurs in CI.
 
 - The inherited full-suite quota fixture fails intermittently (main saw it at
   scripts/test.sh:682 and :685). Suspect: tests/fake-loop-agent.sh decrements

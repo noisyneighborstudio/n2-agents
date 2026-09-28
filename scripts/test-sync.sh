@@ -15,8 +15,8 @@ sh "$repo/scripts/test-embedded-credentials.sh" || exit 1
 # a trimmed copy of this file -- the same preamble, then section <n> onward --
 # which is why the preamble above must be re-enterable against existing state.
 # N2_SYNC_FRESH_FROM=<n> runs sections <n>..end on a fresh fixture instead. Only
-# a section that builds its own peers may start a shard: CI runs 1..47
-# (N2_SYNC_STOP_AFTER=47) and 48..end in parallel.
+# a section that passes from a fresh fixture may start a shard: CI runs 1..35,
+# 36..47 and 48..end in parallel.
 if [ -n "${N2_SYNC_FRESH_FROM:-}" ] && [ -z "${N2_SYNC_TRIMMED:-}" ]; then
   _first=$(grep -n '^# --- 1\.' "$0" | head -1 | cut -d: -f1)
   _from=$(grep -n "^# --- ${N2_SYNC_FRESH_FROM}\." "$0" | head -1 | cut -d: -f1)

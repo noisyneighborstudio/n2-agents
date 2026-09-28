@@ -7,13 +7,14 @@ permissions:
 concurrency:
   group: verify-${{ github.ref }}
   cancel-in-progress: true
-# Every gate runs on every push, split into jobs that run at the same time.
-# Trusted runs (pushes, and pull requests from this repository) use the n2
-# self-hosted Macs; a fork's pull request runs on GitHub-hosted macOS instead,
-# so outside code never executes on those machines.
+# Every gate runs on every push, split into jobs that run at the same time on
+# the n2 self-hosted Macs. A pull request from this repository runs nothing: the
+# push run already checks its head commit. A fork's pull request runs on
+# GitHub-hosted macOS, so outside code never executes on those machines.
 jobs:
   checks:
-    runs-on: ${{ (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","n2"]') || 'macos-26' }}
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.fork
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","macOS","n2"]') || 'macos-26' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
@@ -26,7 +27,8 @@ jobs:
       - name: Smoke
         run: scripts/smoke.sh
   tests:
-    runs-on: ${{ (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","n2"]') || 'macos-26' }}
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.fork
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","macOS","n2"]') || 'macos-26' }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -40,14 +42,15 @@ jobs:
         run: zsh scripts/test.sh ${{ matrix.group }}
   fleet:
     # Transport, replication, execution and native fleet suites. Live SSH is
-    # required, not skipped. Sync sections 48 onward build their own peers, so
-    # the suite runs as two halves in parallel.
-    runs-on: ${{ (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","n2"]') || 'macos-26' }}
+    # required, not skipped. Sync sections 36 and 48 each pass from a fresh
+    # fixture, so the replication suite runs as three shards.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.fork
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","macOS","n2"]') || 'macos-26' }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        suite: [transport, sync-early, sync-late, exec]
+        suite: [transport, sync-1, sync-36, sync-48, exec]
     env:
       N2_FLEET_REQUIRE_LIVE_SSH: "1"
     steps:
@@ -58,7 +61,8 @@ jobs:
         run: |
           case "${{ matrix.suite }}" in
             transport) N2_FLEET_SUITES=transport sh scripts/test-fleet.sh ;;
-            sync-early) N2_SYNC_STOP_AFTER=47 sh scripts/test-sync.sh ;;
-            sync-late) N2_SYNC_FRESH_FROM=48 sh scripts/test-sync.sh ;;
+            sync-1) N2_SYNC_STOP_AFTER=35 sh scripts/test-sync.sh ;;
+            sync-36) N2_SYNC_FRESH_FROM=36 N2_SYNC_STOP_AFTER=47 sh scripts/test-sync.sh ;;
+            sync-48) N2_SYNC_FRESH_FROM=48 sh scripts/test-sync.sh ;;
             exec) sh scripts/test-exec.sh && sh scripts/test-native-ui.sh ;;
           esac

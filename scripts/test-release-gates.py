@@ -14,13 +14,16 @@ ci = (repo / '.github/workflows/ci.yml').read_text()
 assert ci.startswith('name: Verify slices\n')
 for gate in ('run: scripts/check.sh format', 'run: scripts/check.sh lint', 'run: scripts/smoke.sh',
              'run: zsh scripts/test.sh ${{ matrix.group }}', 'group: [swift, cli, loop, auth, dispatch]',
-             'suite: [transport, sync-early, sync-late, exec]', 'N2_FLEET_REQUIRE_LIVE_SSH: "1"',
-             'N2_FLEET_SUITES=transport sh scripts/test-fleet.sh', 'N2_SYNC_STOP_AFTER=47 sh scripts/test-sync.sh',
+             'suite: [transport, sync-1, sync-36, sync-48, exec]', 'N2_FLEET_REQUIRE_LIVE_SSH: "1"',
+             'N2_FLEET_SUITES=transport sh scripts/test-fleet.sh', 'N2_SYNC_STOP_AFTER=35 sh scripts/test-sync.sh',
+             'N2_SYNC_FRESH_FROM=36 N2_SYNC_STOP_AFTER=47 sh scripts/test-sync.sh',
              'N2_SYNC_FRESH_FROM=48 sh scripts/test-sync.sh', 'sh scripts/test-exec.sh && sh scripts/test-native-ui.sh'):
     assert gate in ci, gate
-# A fork's pull request never runs on the self-hosted Macs.
-trusted = "(github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
-assert ci.count('runs-on: ${{ ' + trusted) == 3 and ci.count('runs-on:') == 3
+# Only pushes run on the self-hosted Macs. A pull request runs only from a fork,
+# and then on GitHub-hosted macOS.
+guard = ("    if: github.event_name == 'push' || github.event.pull_request.head.repo.fork\n"
+         "    runs-on: ${{ github.event_name == 'push' && fromJSON('[\"self-hosted\",\"macOS\",\"n2\"]') || 'macos-26' }}\n")
+assert ci.count(guard) == 3 and ci.count('runs-on:') == 3 and ci.count('if:') == 3
 # Publication starts only from a successful CI run of a push, and publishes the
 # exact commit that run verified, before any signing or release step.
 assert 'workflow_run:\n    workflows: [Verify slices]\n    types: [completed]' in workflow

@@ -832,11 +832,12 @@ wait_for DONE
 [ "$(field 'len([t for t in s["turns"] if t["role"] == "planner" and t["outcome"] == "quota"])')" -ge 5 ]
 
 run_agents help | grep -Fq 'agents loop "goal"'
+# Parent death leaves recoverable account-bound planner work.
+python3 scripts/test-bound-planner.py
 fi
 
 # --- fleet auth and profile identity ---------------------------------------
 if in_group auth; then
-python3 scripts/test-bound-planner.py
 python3 scripts/test-profile-metadata.py
 python3 scripts/test-profile-routing.py
 python3 scripts/test-fleet-auth-response.py
