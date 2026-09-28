@@ -43,6 +43,11 @@ import Foundation
                      "the empty-review sentence is not a profile")
         precondition(FleetSettingsLoader.heldProfiles("Client\nShared") == ["Client", "Shared"],
                      "held profiles are listed in order")
+        // `agents fleet peers` before `agents fleet init`.
+        precondition(!FleetSettingsLoader.hasIdentity("agents: no fleet identity yet (run: agents fleet init)"),
+                     "a Mac outside a fleet shows the create-identity hint")
+        precondition(FleetSettingsLoader.hasIdentity("SHA256:abc\talpha\tself\tapproved\tself"),
+                     "an initialized fleet shows its controls")
         print("Fleet settings concurrent reads, main-actor responsiveness, result order and held profiles passed")
     }
 }

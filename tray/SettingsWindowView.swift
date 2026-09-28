@@ -26,9 +26,7 @@ struct SettingsWindowView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    if Bundle.main.object(forInfoDictionaryKey: "N2FleetQA") as? Bool == true {
-                        FleetSyncSettings()
-                    }
+                    FleetSyncSettings()
 
                     section("ACCOUNTS", subtitle: "Sign in again to check the account used by every listed profile.") {
                         VStack(alignment: .leading, spacing: 10) {

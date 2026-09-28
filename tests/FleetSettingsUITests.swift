@@ -4,8 +4,10 @@ import SwiftUI
 // Only the surrounding app model/actions are stubbed. The Settings view,
 // Fleet view, GlassWindow, PATH lookup and subprocess code are production code.
 final class PanelModel: ObservableObject {
-    struct Data { var terminals = ["Terminal"] }
+    struct Profile { var slots: [String: String] = [:] }
+    struct Data { var terminals = ["Terminal"]; var profiles: [Profile] = [] }
     @Published var data: Data? = Data()
+    @Published var resettingAccounts = false
 }
 
 final class PanelActions {
@@ -16,6 +18,8 @@ final class PanelActions {
     func setUpdateChannel(_ value: UpdateChannel) {}
     func setPanelShortcut() {}
     func checkForUpdates() {}
+    func reonboardAccounts() {}
+    func signInMissingAccounts() {}
 }
 
 @main struct FleetSettingsUITests {
@@ -107,7 +111,7 @@ final class PanelActions {
             let commands = (try? String(contentsOfFile: directory + "/commands"))?
                 .split(separator: "\n").map(String.init) ?? []
             let expected = ["fleet sync categories", "fleet sync auth list", "fleet peers",
-                            "fleet sync service status", "fleet sync conflicts"]
+                            "fleet sync service status", "fleet sync conflicts", "fleet sync review"]
             let complete = commands.sorted() == expected.sorted() &&
                 files.fileExists(atPath: directory + "/peers-finished")
             let passed = maxGap < 0.5 && scrollDistance > 100 && pendingTicks >= 10 && complete

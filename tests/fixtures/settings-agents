@@ -18,5 +18,8 @@ case "$*" in
     printf 'Fixture background sync stopped\n' ;;
   'fleet sync conflicts')
     /bin/sleep 0.1 ;;
+  'fleet sync review')
+    /bin/sleep 0.1
+    printf 'nothing to review\n' ;;
   *) printf 'Unexpected fixture command\n' >&2; exit 1 ;;
 esac

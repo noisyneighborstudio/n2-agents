@@ -15,6 +15,11 @@ enum FleetSettingsLoader {
         ["sync", "review"],
     ]
 
+    /// Every fleet verb refuses before `agents fleet init`, with this reason.
+    static func hasIdentity(_ output: String) -> Bool {
+        !output.contains("no fleet identity yet")
+    }
+
     /// `sync review` lists one held profile per line, or a sentence when none
     /// are held. Profile names are letters and digits only, so the sentence
     /// never reads as a profile.
