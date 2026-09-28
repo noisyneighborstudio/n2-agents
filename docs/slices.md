@@ -24,17 +24,10 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
    per step fails.
    Scope: disposable peers only; no live installation or real machines.
 
-2. **Mark PR #3 ready** (`fleet-pr-ready`).
-   Behavior: PR #3's description states what fleet does, its evidence and its
-   remaining limitations; the PR leaves draft.
-   Proof: PR body cross-checked against `docs/fleet-readiness.md`; CI green on
-   the head SHA. Scope: description and draft state only; merging needs approval.
-
 Blocked on authorization:
 - Per-provider sign-in lifecycle evidence needs live provider accounts
   (readiness: "provider-specific authentication lifecycle").
-- Desktop banner delivery needs notification permission for a fixed QA bundle
-  id; the acceptance copies use a unique id and never change OS permissions.
+- Merging PR #3 publishes a Continuous build and needs explicit approval.
 
 ## Noticed
 
