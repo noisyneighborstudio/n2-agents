@@ -4,21 +4,22 @@ import Foundation
     @MainActor static func main() async {
         let commands = FleetSettingsLoader.commands
         let started = AsyncStream<Int>.makeStream()
-        let finished = AsyncStream<Int>.makeStream()
+        let delivered = AsyncStream<(Int, String)>.makeStream()
         let releases = commands.map { _ in DispatchSemaphore(value: 0) }
         // Only a stuck-test guard, never a performance assertion.
-        DispatchQueue.global().asyncAfter(deadline: .now() + 30) {
-            preconditionFailure("settings concurrency proof did not finish")
+        DispatchQueue.global().asyncAfter(deadline: .now() + 40) {
+            preconditionFailure("settings loading proof did not finish")
         }
         let loading = Task {
-            await FleetSettingsLoader.load { command in
+            await FleetSettingsLoader.load(run: { command in
                 precondition(!Thread.isMainThread, "settings read blocked the main thread")
                 let index = commands.firstIndex(of: command)!
                 started.continuation.yield(index)
                 precondition(releases[index].wait(timeout: .now() + 20) == .success,
                              "reads did not all start before release")
-                finished.continuation.yield(index)
                 return command.joined(separator: " ")
+            }) { index, value in
+                delivered.continuation.yield((index, value))
             }
         }
         var seen = Set<Int>()
@@ -26,18 +27,27 @@ import Foundation
             precondition(seen.insert(index).inserted, "duplicate command")
             if seen.count == commands.count { break }
         }
-        // The main actor remains runnable while every blocking read is held.
-        // Release reads in reverse order to exercise indexed result collection.
-        var completions = finished.stream.makeAsyncIterator()
+        // Every read is blocked, and the main actor is still free to run this.
+        // Release one at a time: each result must reach the view while every
+        // earlier read is still held, so a slow read never gates the others.
+        var deliveries = delivered.stream.makeAsyncIterator()
         for index in commands.indices.reversed() {
             releases[index].signal()
-            let completed = await completions.next()
-            precondition(completed == index, "unexpected completion receipt")
+            let result = await deliveries.next()
+            precondition(result?.0 == index && result?.1 == commands[index].joined(separator: " "),
+                         "a released read was not delivered while others were held")
         }
-        let values = await loading.value
-        precondition(values == commands.map { $0.joined(separator: " ") },
-                     "loader changed command result order: \(values)")
-        started.continuation.finish(); finished.continuation.finish()
+        await loading.value
+        started.continuation.finish(); delivered.continuation.finish()
+
+        // A read that never answers reports a timeout instead of holding its section.
+        let agents = URL(fileURLWithPath: Bundle.main.resourcePath!).appendingPathComponent("agents")
+        try! "#!/bin/sh\nexec /bin/sleep 30\n".write(to: agents, atomically: true, encoding: .utf8)
+        try! FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: agents.path)
+        FleetSettingsLoader.timeout = 1
+        let hung = await Task.detached { FleetSettingsLoader.command(["peers"]) }.value
+        precondition(hung.output == FleetSettingsLoader.timedOut, "a hung read did not time out: \(hung)")
+
         // The exact `agents fleet sync review` output (scripts/test-sync-review.sh).
         precondition(FleetSettingsLoader.heldProfiles("nothing to review").isEmpty,
                      "the empty-review sentence is not a profile")
@@ -48,6 +58,6 @@ import Foundation
                      "a Mac outside a fleet shows the create-identity hint")
         precondition(FleetSettingsLoader.hasIdentity("SHA256:abc\talpha\tself\tapproved\tself"),
                      "an initialized fleet shows its controls")
-        print("Fleet settings concurrent reads, main-actor responsiveness, result order and held profiles passed")
+        print("Fleet settings: reads deliver independently, a hung read times out, held profiles and identity parse")
     }
 }

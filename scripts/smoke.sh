@@ -20,9 +20,8 @@ grep -Fq 'agents loop' "$smoke_root/help"
 test "$(cat "$smoke_root/route")" = "$HOME/.n2-agents/Fixture/codex"
 )
 echo 'Smoke: real CLI routes to isolated profile.'
-sh scripts/test-usage.sh
-python3 scripts/test-usage-ranking.py
-sh scripts/test-profile-setup.sh
+# The behaviors a real run depends on (AGENTS.md "Smoke run"). Full suites run
+# in scripts/test.sh; smoke repeats none of them.
 python3 scripts/test-fleet-auth-bridge.py \
   BridgeIntegrationTests.test_n2_session_browser_and_resume_discover_original_profile \
   BridgeIntegrationTests.test_killed_record_publisher_recovers_in_discovery_and_resume \
@@ -41,26 +40,5 @@ python3 scripts/test-fleet-auth-migration.py \
   MigrationTests.test_peer_preparation_requires_consent_and_preserves_legacy_bytes \
   MigrationTests.test_lost_reply_keeps_coordinator_pending_without_fabricating_acknowledgement \
   MigrationTests.test_coordinated_abandon_waits_for_peers_and_rejects_late_prepare
-
-python3 scripts/test-usage-reader.py ReaderTests.test_current_claude_limits_exclude_product_share_and_retain_model_limit
-
-python3 scripts/test-fleet-session.py
-
-sh scripts/test-account-ownership.sh
-sh scripts/test-native-signin.sh
-sh scripts/test-native-session-transfer.sh
-python3 scripts/test-native-reconcile.py
-python3 scripts/test-native-fleet-read.py
-python3 scripts/test-native-fleet-ordering.py
-python3 scripts/test-native-notification.py
-sh scripts/test-owner-auth-status.sh
-sh scripts/test-fleet-settings.sh
-
-python3 scripts/test-physical-reconcile.py --peer local
-python3 scripts/test-task-admission-race.py
-python3 scripts/test-fleet-prompt-binding.py
-python3 scripts/test-fleet-claude.py
-python3 scripts/test-fleet-shell.py
-sh scripts/test-tool-disruption-approval.sh
 
 exec python3 scripts/test-codex-rpc.py ParentLifetimeTests
