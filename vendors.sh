@@ -332,7 +332,19 @@ except (OSError, ValueError, AttributeError):
 sys.exit(0 if signed_in else 1)
 PYAUTH
       ;;
-    codex|grok) [ -s "$2/auth.json" ] ;;
+    codex)
+      # An owner binding is routing intent, not a local auth.json. Never use a
+      # leftover credential file when ownership, migration or conflicts apply.
+      if [ -e "$2/.n2-owner.json" ] || [ -L "$2/.n2-owner.json" ] ||
+         [ -e "$2/.n2-migration.json" ] || [ -L "$2/.n2-migration.json" ] ||
+         { command -v sync_owner_managed >/dev/null 2>&1 && sync_owner_managed "$3" codex; }; then
+        if /usr/bin/python3 "${scripts_dir:-}/fleet-auth-manage.py" authed "${root:-}" "$3" "$2" >/dev/null 2>&1; then
+          return 0
+        else va_status=$?; fi
+        case $va_status in 1) return 1 ;; *) return 2 ;; esac
+      fi
+      [ -s "$2/auth.json" ] ;;
+    grok) [ -s "$2/auth.json" ] ;;
     muse)
       # Default can sign in through the keychain without a local auth.json.
       # Check only the item's presence: polling must not read the secret.

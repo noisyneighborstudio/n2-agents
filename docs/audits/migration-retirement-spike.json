@@ -1,0 +1,150 @@
+{
+  "observedAt": "2026-09-26",
+  "sourceCommit": "d6dad7eaeb82ac9eec6e0fe674eee69ac6d04cdc",
+  "cases": [
+    {
+      "configuredStorage": "file",
+      "probeScope": "N2 disposable inventory only; no keychain/provider probe",
+      "credentialFiles": [
+        {
+          "name": "auth.json",
+          "state": "file"
+        },
+        {
+          "name": ".credentials.json",
+          "state": "absent"
+        },
+        {
+          "name": "oauth_creds.json",
+          "state": "absent"
+        },
+        {
+          "name": "credentials.json",
+          "state": "absent"
+        }
+      ],
+      "retainedSyncCopies": [
+        {
+          "category": "auth",
+          "credentialContent": "not-inspected",
+          "local": "file",
+          "remote": "file"
+        }
+      ],
+      "keychain": "not-inspected",
+      "providerRevocation": "unconfirmed",
+      "unmanagedProcesses": "unknown",
+      "inventoryComplete": false,
+      "status": "migration-pending",
+      "fixtureBytesPreserved": true
+    },
+    {
+      "configuredStorage": "keyring",
+      "probeScope": "N2 disposable inventory only; no keychain/provider probe",
+      "credentialFiles": [
+        {
+          "name": "auth.json",
+          "state": "absent"
+        },
+        {
+          "name": ".credentials.json",
+          "state": "absent"
+        },
+        {
+          "name": "oauth_creds.json",
+          "state": "absent"
+        },
+        {
+          "name": "credentials.json",
+          "state": "absent"
+        }
+      ],
+      "retainedSyncCopies": [
+        {
+          "category": "auth",
+          "credentialContent": "not-inspected",
+          "local": "file",
+          "remote": "file"
+        }
+      ],
+      "keychain": "not-inspected",
+      "providerRevocation": "unconfirmed",
+      "unmanagedProcesses": "unknown",
+      "inventoryComplete": false,
+      "status": "migration-pending",
+      "fixtureBytesPreserved": true
+    },
+    {
+      "configuredStorage": "auto",
+      "probeScope": "N2 disposable inventory only; no keychain/provider probe",
+      "credentialFiles": [
+        {
+          "name": "auth.json",
+          "state": "absent"
+        },
+        {
+          "name": ".credentials.json",
+          "state": "absent"
+        },
+        {
+          "name": "oauth_creds.json",
+          "state": "absent"
+        },
+        {
+          "name": "credentials.json",
+          "state": "absent"
+        }
+      ],
+      "retainedSyncCopies": [
+        {
+          "category": "auth",
+          "credentialContent": "not-inspected",
+          "local": "file",
+          "remote": "file"
+        }
+      ],
+      "keychain": "not-inspected",
+      "providerRevocation": "unconfirmed",
+      "unmanagedProcesses": "unknown",
+      "inventoryComplete": false,
+      "status": "migration-pending",
+      "fixtureBytesPreserved": true
+    },
+    {
+      "configuredStorage": "ephemeral",
+      "probeScope": "N2 disposable inventory only; no keychain/provider probe",
+      "credentialFiles": [
+        {
+          "name": "auth.json",
+          "state": "absent"
+        },
+        {
+          "name": ".credentials.json",
+          "state": "absent"
+        },
+        {
+          "name": "oauth_creds.json",
+          "state": "absent"
+        },
+        {
+          "name": "credentials.json",
+          "state": "absent"
+        }
+      ],
+      "retainedSyncCopies": [
+        {
+          "category": "auth",
+          "credentialContent": "not-inspected",
+          "local": "file",
+          "remote": "file"
+        }
+      ],
+      "keychain": "not-inspected",
+      "providerRevocation": "unconfirmed",
+      "unmanagedProcesses": "unknown",
+      "inventoryComplete": false,
+      "status": "migration-pending",
+      "fixtureBytesPreserved": true
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "provenance": "Disposable real CLI, synthetic credentials and generated fixture identities; no provider calls",
+  "missing": {
+    "exitCode": 1,
+    "stdout": "",
+    "stderr": "agents: owner registration unavailable; check profile identity, grant state, migration and conflicts\n"
+  },
+  "active": {
+    "binding": {
+      "accountHash": "45f01d4b6f08a2de562009a269b814d5f52c2ceb8573ff8a0b7cbe624003b9b0",
+      "credentialStore": "owner-file",
+      "grantId": "2244ff49-0e9e-4a1b-8310-3f599d37757d",
+      "owner": "SHA256:OLzaQr4pVmofnJ2tD09it3P7gIMWTUF1bfnqNYQVHxA",
+      "ownershipGeneration": "27399dc7-5e5d-43f7-a3d9-d9502b52245a",
+      "profileId": "8c96d785-7314-4fd8-ad06-399e0ae97690",
+      "provider": "codex",
+      "schemaVersion": 1
+    },
+    "revision": "4a83fd8df9026aa5c96ae11a08efc114dc9d5584fb020453856f753f952afe6a",
+    "status": "active"
+  },
+  "retired": {
+    "binding": {
+      "accountHash": "45f01d4b6f08a2de562009a269b814d5f52c2ceb8573ff8a0b7cbe624003b9b0",
+      "credentialStore": "owner-file",
+      "grantId": "2244ff49-0e9e-4a1b-8310-3f599d37757d",
+      "owner": "SHA256:OLzaQr4pVmofnJ2tD09it3P7gIMWTUF1bfnqNYQVHxA",
+      "ownershipGeneration": "27399dc7-5e5d-43f7-a3d9-d9502b52245a",
+      "profileId": "8c96d785-7314-4fd8-ad06-399e0ae97690",
+      "provider": "codex",
+      "schemaVersion": 1
+    },
+    "revision": "4a83fd8df9026aa5c96ae11a08efc114dc9d5584fb020453856f753f952afe6a",
+    "status": "retired"
+  }
+}

@@ -1,0 +1,153 @@
+{
+  "sourceCommit": "57fa2439b7a64931de12897d08433bd8d284d1e3",
+  "scope": "Retained observations and static installed-source inspection; no provider polling or credential access",
+  "observations": [
+    {
+      "available": true,
+      "collectedAt": "2026-09-27T06:26:59.485360+00:00",
+      "deduplicatedTaskEvents": 0,
+      "eventCount": 6,
+      "eventKinds": {
+        "measurement": 6
+      },
+      "host": "seth-agent",
+      "measurements": [
+        {
+          "ageSeconds": 77390,
+          "credits": {
+            "codex": {
+              "balance": "0",
+              "hasCredits": false,
+              "unlimited": false
+            }
+          },
+          "eventId": "22a99312e3eb19e8511b55086ba3824db9ca4f664d3034bd2d845caee04be951",
+          "identity": {
+            "accountHash": "0051c0af88fc3b46277fe3fd783c613a1eb9f018188e384d12b88ca2d028150a",
+            "organizationHash": "d5e8fcac4225ab843ba3322500793a453a2c32249e758f013d36df0afaf5efa2",
+            "status": "verified"
+          },
+          "kind": "measurement",
+          "observedAt": 1790413028.7393548,
+          "origin": "local:f190ef8b-90b2-4d8b-9ecc-72ff4501619a",
+          "ownerOrigin": "local:f190ef8b-90b2-4d8b-9ecc-72ff4501619a",
+          "profile": "ExpoIO",
+          "provider": "codex",
+          "restrictions": [
+            {
+              "reason": "rate_limit_reached",
+              "scope": "codex"
+            }
+          ],
+          "status": "restricted",
+          "windows": [
+            {
+              "durationSeconds": 604800,
+              "resetsAt": 1790436012,
+              "scope": "codex:primary",
+              "usedPercent": 100
+            }
+          ]
+        },
+        {
+          "ageSeconds": 77391,
+          "credits": {
+            "codex": {
+              "balance": "0",
+              "hasCredits": false,
+              "unlimited": false
+            }
+          },
+          "eventId": "65cbc372cf38d06a455e6f36b7998dd9188c81714899014298714c2564373f96",
+          "identity": {
+            "accountHash": "2ddea33d1f4be9e891cdb1032ff57c19840d359bd5aaf1e21f9d8a48b5ea87af",
+            "organizationHash": "21af5a181014d83cddd3aabd3844857ace60985a1c559d417047d0d999270d78",
+            "status": "verified"
+          },
+          "kind": "measurement",
+          "observedAt": 1790413027.756917,
+          "origin": "local:f190ef8b-90b2-4d8b-9ecc-72ff4501619a",
+          "ownerOrigin": "local:f190ef8b-90b2-4d8b-9ecc-72ff4501619a",
+          "profile": "Default",
+          "provider": "codex",
+          "restrictions": [],
+          "status": "ok",
+          "windows": [
+            {
+              "durationSeconds": 604800,
+              "resetsAt": 1791015916,
+              "scope": "codex:primary",
+              "usedPercent": 2
+            }
+          ]
+        }
+      ],
+      "providerPoll": false,
+      "queryOnly": true,
+      "readOnly": true,
+      "root": "/Users/sethwebster/.n2-agents",
+      "snapshotValidated": true,
+      "tasks": [],
+      "uniqueTasks": 0
+    },
+    {
+      "host": "Seth-Webster-M4.local",
+      "root": "/Users/sethwebster/.n2-agents",
+      "collectedAt": "2026-09-27T06:27:25.018625+00:00",
+      "readOnly": true,
+      "providerPoll": false,
+      "available": false
+    },
+    {
+      "host": "macbook-m5-pro-max-sdw",
+      "root": "/Users/sethwebster/.n2-agents",
+      "collectedAt": "2026-09-27T06:27:19.068289+00:00",
+      "readOnly": true,
+      "providerPoll": false,
+      "available": false
+    },
+    {
+      "host": "macbook-m5-pro-max-sdw",
+      "root": "/Users/sethwebster/.n2-agents-qa",
+      "collectedAt": "2026-09-27T06:27:18.685496+00:00",
+      "readOnly": true,
+      "providerPoll": false,
+      "available": false
+    }
+  ],
+  "installedM5": {
+    "collectedAt": "2026-09-27T06:30:28.918764+00:00",
+    "app": "/Applications/N2 Agents.app",
+    "version": "1.4.1-continuous.1",
+    "build": "54",
+    "bundle": "dev.sethwebster.n2agents",
+    "qaSelector": false,
+    "processes": [
+      "38454 /Applications/N2 Agents.app/Contents/MacOS/N2 Agents"
+    ],
+    "resources": {
+      "agents": {
+        "present": true,
+        "sha256": "4b6dc117b9a836cf69c6e7cb21bb6aa2cac6d0d203023bc990d8eacd60d7c1d5"
+      },
+      "usage.py": {
+        "present": false
+      },
+      "usage-store.py": {
+        "present": false
+      },
+      "codex-rpc.py": {
+        "present": false
+      }
+    }
+  },
+  "offlineCollectorProof": {
+    "unchangedDatabase": true,
+    "writeGuardRefused": true,
+    "threeEventsOneTask": true,
+    "unknownTokensPreserved": true,
+    "originalTimestampPreserved": true,
+    "corruptTimestampNegativeRejected": true,
+    "liveMeasurementTimestampsUnchangedSincePriorAudit": true
+  }
+}

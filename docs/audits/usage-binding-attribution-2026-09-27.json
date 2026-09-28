@@ -1,0 +1,111 @@
+{
+  "sourceCommit": "71f0ac8e8a18a47bdf634e077be37db960959960",
+  "scope": "Existing journal reads and isolated tests; no new provider polls or credential operations",
+  "observations": [
+    {
+      "host": "seth-agent",
+      "readAt": "2026-09-27T01:51:50.044099+00:00",
+      "source": "read-only existing journal; no provider poll",
+      "available": true,
+      "measurements": [
+        {
+          "origin": "local:f190ef8b-90b2-4d8b-9ecc-72ff4501619a",
+          "provider": "codex",
+          "profile": "ExpoIO",
+          "at": 1790413028.7393548,
+          "ageSeconds": 60881,
+          "status": "restricted",
+          "identity": {
+            "status": "verified",
+            "accountHash": "0051c0af88fc3b46277fe3fd783c613a1eb9f018188e384d12b88ca2d028150a"
+          },
+          "windows": [
+            {
+              "scope": "codex:primary",
+              "usedPercent": 100,
+              "resetsAt": 1790436012
+            }
+          ],
+          "display": {
+            "shortUsed": "-",
+            "longUsed": 100
+          }
+        },
+        {
+          "origin": "local:f190ef8b-90b2-4d8b-9ecc-72ff4501619a",
+          "provider": "codex",
+          "profile": "Default",
+          "at": 1790413027.756917,
+          "ageSeconds": 60882,
+          "status": "ok",
+          "identity": {
+            "status": "verified",
+            "accountHash": "2ddea33d1f4be9e891cdb1032ff57c19840d359bd5aaf1e21f9d8a48b5ea87af"
+          },
+          "windows": [
+            {
+              "scope": "codex:primary",
+              "usedPercent": 2,
+              "resetsAt": 1791015916
+            }
+          ],
+          "display": {
+            "shortUsed": "-",
+            "longUsed": 2
+          }
+        }
+      ],
+      "rootName": ".n2-agents"
+    },
+    {
+      "host": "macbook-m5-pro-max-sdw",
+      "readAt": "2026-09-27T01:51:50.510422+00:00",
+      "source": "read-only existing journal; no provider poll",
+      "available": false,
+      "measurements": [],
+      "rootName": ".n2-agents"
+    },
+    {
+      "host": "macbook-m5-pro-max-sdw",
+      "readAt": "2026-09-27T01:53:00.462993+00:00",
+      "rootName": ".n2-agents-qa",
+      "source": "read-only existing journal; no provider poll",
+      "available": false,
+      "measurements": []
+    },
+    {
+      "host": "Mac",
+      "readAt": "2026-09-27T01:53:00.831281+00:00",
+      "rootName": ".n2-agents",
+      "source": "read-only existing journal; no provider poll",
+      "available": false,
+      "measurements": []
+    }
+  ],
+  "syntheticCredentialStoreResults": [
+    {
+      "provider": "cursor",
+      "syntheticSecurityExit": 44,
+      "case": "item absent",
+      "observedStatus": "no-token"
+    },
+    {
+      "provider": "cursor",
+      "syntheticSecurityExit": 36,
+      "case": "credential store unavailable",
+      "observedStatus": "no-token"
+    },
+    {
+      "provider": "muse",
+      "syntheticSecurityExit": 44,
+      "case": "item absent",
+      "observedStatus": "no-token"
+    },
+    {
+      "provider": "muse",
+      "syntheticSecurityExit": 36,
+      "case": "credential store unavailable",
+      "observedStatus": "no-token"
+    }
+  ]
+}

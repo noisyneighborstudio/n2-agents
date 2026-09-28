@@ -1,0 +1,26 @@
+{
+  "head": "752776347eac0077dda9d0de8d4c82beca26dc42",
+  "ciRun": 36271390482,
+  "oldThresholdSeconds": 0.75,
+  "ciElapsedSeconds": 0.7589099407196045,
+  "barrier": "all five commands enter before any returns; two-second failure guard",
+  "defaultExecutor": [
+    "concurrent",
+    "concurrent",
+    "concurrent",
+    "concurrent",
+    "concurrent"
+  ],
+  "strictCooperativeExecutor": [
+    "blocked",
+    "blocked",
+    "blocked",
+    "blocked",
+    "concurrent"
+  ],
+  "ciCause": "not established",
+  "pairedPrRun": {
+    "id": 36271392571,
+    "result": "success"
+  }
+}

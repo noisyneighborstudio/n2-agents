@@ -3,101 +3,140 @@ import Foundation
 @main struct UsageTests {
     static func main() {
         func check(_ value: Bool, _ message: String) {
-            if !value {
-                FileHandle.standardError.write((message + "\n").data(using: .utf8)!)
-                exit(1)
-            }
+            if !value { fatalError(message) }
         }
         let old = Usage(fiveHour: 18, sevenDay: 13, resets: nil, note: .ok,
                         sevenResets: nil, fetchedAt: Date(timeIntervalSince1970: 0))
-        check(old.used == nil && old.binding == nil, "expired reading still claims capacity")
         for note in [Usage.Note.fetchError, .rateLimited] {
-            let error = Usage(fiveHour: nil, sevenDay: nil, resets: nil, note: note, sevenResets: nil)
-            let merged = Usage.merge(["Fixture": old], ["Fixture": error])["Fixture"]!
-            check(merged.used == nil && merged.note == note, "row failure revived capacity")
-            check(merged.fetchedAt == old.fetchedAt, "failure reset the observation age")
+            let failed = Usage(fiveHour: nil, sevenDay: nil, resets: nil, note: note, sevenResets: nil)
+            let merged = Usage.merge(["Default": old], ["Default": failed])["Default"]!
+            check(merged.used == nil && merged.binding == nil, "failed polls must not advertise headroom")
+            check(merged.note == note && merged.fetchedAt == old.fetchedAt, "retain failure and original observation time")
+            check(Usage.merge(["Default": merged], ["Default": failed])["Default"]!.used == nil,
+                  "repeated failure cannot revive stale capacity")
         }
-        let now = Date()
-        var fresh = old
-        fresh.fetchedAt = now
-        check(fresh.isFresh(at: now), "current reading should be fresh")
-        check(!fresh.isFresh(at: now.addingTimeInterval(Usage.maximumAge)), "expiry boundary")
-        check(!fresh.isFresh(at: now.addingTimeInterval(-1)), "future-dated reading")
-        let expired = Usage.expire(["Fixture": fresh], at: now.addingTimeInterval(Usage.maximumAge))["Fixture"]!
-        check(expired.note == .expired && expired.used == nil, "clock expiry must invalidate displayed data")
-        check(expired.fiveHour == 18 && expired.fetchedAt == now, "expiry must retain history")
-        check(expired.historyLabel.contains("18%"), "history should identify previous measured value")
-        let failed = Usage.merge(["Fixture": fresh], [:], commandFailed: true)
-        check(failed["Fixture"]?.note == .fetchError && failed["Fixture"]?.used == nil, "command failure erased history")
-        check(failed["Fixture"]?.fetchedAt == now, "command failure reset age")
-        check(Usage.merge(failed, [:], commandFailed: true)["Fixture"]?.used == nil, "repeat command failure")
-        check(Usage.merge(failed, ["Fixture": fresh])["Fixture"]?.used == 18, "success must recover")
-        check(Usage.merge(failed, [:]).isEmpty, "successful profile removal must remove history")
-        let firstFailure = Usage.merge([:], [:], commandFailed: true, profiles: ["Fixture"])["Fixture"]!
-        check(firstFailure.used == nil && firstFailure.historyLabel == "No successful reading", "first read failure is explicit")
-        for status in ["fetch-error", "rate-limited", "no-token"] {
-            let row = Usage.parse("Fixture\t-\t-\t-\t\(status)")["Fixture"]!
-            check(row.fetchedAt == .distantPast && row.historyLabel == "No successful reading",
-                  "first failed row fabricated observation history")
+        check(old.used == nil && old.binding == nil, "an aged successful row expires without another poll")
+        let fresh = Usage.parse("Default\t20\t80\t-\tok\t-")["Default"]!
+        check(fresh.used == 80, "tightest window binds")
+        check(Usage.merge(["Default": old], ["Default": fresh])["Default"]!.used == 80, "fresh measurement recovers")
+        check(Usage.parse("Default\t-\t-\t-\tok")["Default"]!.used == nil, "empty response is unknown")
+        check(Usage.merge(["Removed": old], [:]).isEmpty, "removed profiles do not linger")
+        for invalid in ["nan", "inf", "-1", "101", "not-a-number"] {
+            check(Usage.parse("Default\t\(invalid)\t-\t-\tok")["Default"]!.used == nil,
+                  "invalid percentage must not crash or advertise capacity")
         }
-        for invalid in ["nan", "inf", "-1", "101", "invalid"] {
-            check(Usage.parse("Fixture\t\(invalid)\t-\t-\tok")["Fixture"]?.used == nil, "invalid percentage")
+        let now = Date().timeIntervalSince1970
+        let hash = String(repeating: "a", count: 64)
+        var record: [String: Any] = [
+            "schemaVersion": 1, "provider": "claude", "profile": "Default",
+            "observedAt": now, "status": "ok",
+            "identity": ["status": "verified", "accountHash": hash],
+            "windows": [
+                ["scope": "five_hour", "usedPercent": 20.0, "resetsAt": now + 3600],
+                ["scope": "seven_day", "usedPercent": 30.0, "resetsAt": now + 7200],
+                ["scope": "seven_day_opus", "usedPercent": 98.0, "resetsAt": now + 10800],
+                ["scope": "custom", "usedPercent": 12.0, "durationSeconds": 1800]
+            ], "restrictions": [],
+            "credits": ["overage": ["is_enabled": true, "spend_limit_reached": true]]
+        ]
+        func json(_ value: [String: Any]) -> String {
+            String(data: try! JSONSerialization.data(withJSONObject: value), encoding: .utf8)!
         }
-
-        for invalid in ["nan", "-1", "101"] {
-            check(Usage.parse("Fixture\t\(invalid)\t20\t-\tok")["Fixture"]?.used == nil,
-                  "malformed first window must invalidate whole row")
-            check(Usage.parse("Fixture\t20\t\(invalid)\t-\tok")["Fixture"]?.used == nil,
-                  "malformed second window must invalidate whole row")
+        func read(_ value: [String: Any], provider: String = "claude") -> Usage {
+            Usage.parseJSON(json(value), provider: provider)["Default"]!
         }
-        check(Usage.parse("Fixture\t-\t20\t-\tok")["Fixture"]?.used == 20,
-              "an absent window is not malformed")
-        // The collector's Codex rows: a spent 5h window beside a weekly one at
-        // 30%, and a refusal no window accounts for.
-        let spent = Usage.parse("Fixture\t100\t30\t2026-09-26T03:24\tok\t2026-09-26T08:24")["Fixture"]!
-        check(spent.maxed && spent.sevenDay == 30, "5h exhaustion must not overwrite the weekly figure")
-        check(spent.maxedUntil == Date(timeIntervalSince1970: 1790393040), "a spent 5h window returns at its own reset")
-        let denied = Usage.parse("Fixture\t-\t80\t-\tlimit-reached\t2026-09-26T08:24")["Fixture"]
-        check(denied?.note == .limitReached && denied?.used == nil, "a refusal must not read as capacity")
-        func vendor(_ id: String) -> Vendor {
-            Vendor(id: id, installed: true, desktop: "none", usage: "oauth",
-                   label: id, sessions: "none", monogram: id, desktopName: "",
-                   desktopBundle: "", longWindow: "7d")
+        var ownerFailure = record
+        ownerFailure["provider"] = "codex"
+        ownerFailure["status"] = "owner-unavailable"
+        ownerFailure["windows"] = []
+        ownerFailure["identity"] = ["status": "unknown"]
+        let ownerUnavailable = read(ownerFailure, provider: "codex")
+        check(ownerUnavailable.note == .ownerUnavailable && ownerUnavailable.used == nil,
+              "owner failure has an explicit unavailable state")
+        let afterOwnerFailure = Usage.merge(["Default": fresh], ["Default": ownerUnavailable])["Default"]!
+        check(afterOwnerFailure.note == .ownerUnavailable && afterOwnerFailure.used == nil && afterOwnerFailure.binding == nil,
+              "owner failure cannot retain a healthy capacity gauge")
+        ownerFailure["status"] = "migration-pending"
+        let pendingMigration = read(ownerFailure, provider: "codex")
+        check(pendingMigration.note == .migrationPending && pendingMigration.used == nil && !pendingMigration.maxed,
+              "migration has its own unknown-capacity state, not quota exhaustion")
+        check(pendingMigration.statusLabel == "migration pending" && pendingMigration.statusExplanation.contains("paused"),
+              "migration explanation survives parsing")
+        check(ownerUnavailable.statusExplanation.contains("Capacity is unknown") && !ownerUnavailable.maxed,
+              "owner failure is distinguished from provider exhaustion")
+        let structured = read(record)
+        check(structured.windows?.count == 4 && structured.used == 98 && structured.maxed,
+              "model-specific buckets must constrain capacity")
+        check(structured.binding?.tag == "Opus · 7d" && structured.maxedUntil == Date(timeIntervalSince1970: now + 10800),
+              "binding and reset use the actual limiting bucket")
+        check(structured.windows?.last?.label == "custom · 30m", "arbitrary window duration survives")
+        check(structured.accountHash == hash && structured.accountHelp.contains(hash), "verified account is inspectable")
+        check(structured.creditNotes.count == 2, "extra usage retains enabled and spending-limit evidence")
+        check(Usage.parseJSON(json(record), provider: "codex").isEmpty, "other provider rows cannot bind")
+        let duplicate = Usage.parseJSON([json(record), json(record), json(record)].joined(separator: "\n"), provider: "claude")["Default"]!
+        check(duplicate.note == .fetchError && duplicate.used == nil, "all duplicate bindings remain unavailable")
+        for invalid: Any in [true, -1, 101, "20"] {
+            var bad = record
+            bad["windows"] = [["scope": "five_hour", "usedPercent": invalid]]
+            check(read(bad).used == nil, "invalid typed percentages cannot advertise capacity")
         }
-        let profile = Profile(name: "Fixture", running: false, slots: ["claude": "ok", "codex": "ok"])
-        let data = PanelData(snapshot: Snapshot(vendors: [vendor("claude"), vendor("codex")],
-                                               profiles: [], active: "Fixture"),
-                             profiles: [profile], sessions: [], terminals: [], desktops: [])
-        let model = PanelModel()
-        model.data = data
-        model.usage = ["claude": ["Fixture": fresh], "codex": ["Fixture": expired]]
-        check(model.reading(profile, data).state == .usageUnknown, "mixed summary claims ready")
-        check(model.reading(profile, data).used == nil && model.remaining == nil, "partial summary advertises headroom")
-        model.usage["claude"] = ["Fixture": expired]
-        if case .usageUnknown? = model.nextBest {} else { check(false, "expired slots must report usage unavailable") }
-        model.usage["claude"] = ["Fixture": fresh]
-        model.usage["codex"] = ["Fixture": fresh]
-        check(model.reading(profile, data).state == .ready && model.remaining == 82, "complete measurements recover")
-        let alias = Usage.parse("Fixture\t-\t-\t-\tshared-login")["Fixture"]!
-        model.usage["codex"] = ["Fixture": alias, "Default": fresh]
-        check(model.reading(profile, data).state == .ready && model.remaining == 82,
-              "shared fresh measurement must not suppress summary")
-        check(model.effectiveUsage("Fixture", "codex")?.used == 18, "details must resolve shared measurement")
-        model.usage["codex"]?["Default"] = expired
-        check(model.reading(profile, data).state == .usageUnknown && model.remaining == nil,
-              "shared expired measurement must not claim capacity")
-        model.usage["codex"] = ["Fixture": denied!]
-        check(model.reading(profile, data).state == .usageUnknown && model.remaining == nil,
-              "a refused slot must not claim capacity")
-        let fallbackVendor = Vendor(id: "opencode", installed: true, desktop: "none", usage: "none",
-                                    label: "Fallback", sessions: "none", monogram: "F",
-                                    desktopName: "", desktopBundle: "", longWindow: "7d")
-        let fallbackProfile = Profile(name: "Fallback", running: false, slots: ["opencode": "ok"])
-        model.data = PanelData(snapshot: Snapshot(vendors: [fallbackVendor, vendor("claude")], profiles: [], active: "Fixture"),
-                               profiles: [fallbackProfile, profile], sessions: [], terminals: [], desktops: [])
-        if case .slot(_, "claude", .some)? = model.nextBest {} else { check(false, "tray must prefer measured capacity") }
-        model.usage["claude"] = ["Fixture": expired]
-        if case .slot(_, "opencode", nil)? = model.nextBest {} else { check(false, "tray should expose unmeasured fallback") }
-        print("Usage freshness, command failure, expiry, history and summary proofs passed")
+        for timestamp: Any in [NSNull(), true, "invalid", now + 600, now - 1000] {
+            var stale = record; stale["observedAt"] = timestamp
+            check(read(stale).used == nil && !read(stale).maxed, "bad or stale timestamp cannot advertise fresh capacity")
+        }
+        var missingTime = record; missingTime.removeValue(forKey: "observedAt")
+        check(!read(missingTime).hasObservationTime, "missing timestamp must not be displayed as an ancient real observation")
+        var malformedIdentity = record
+        malformedIdentity["identity"] = ["status": "verified", "accountHash": "Default"]
+        check(read(malformedIdentity).identityStatus == "unavailable" && read(malformedIdentity).accountHash == nil,
+              "profile name is not verified account evidence")
+        var loginOnly = record; loginOnly["identity"] = ["status": "login-only", "accountHash": hash]
+        check(read(loginOnly).accountHash == nil, "cached login cannot claim a verified usage account")
+        record["windows"] = [["scope": "five_hour", "usedPercent": 94.9]]
+        check(!read(record).maxed && read(record).availableRemaining == 5, "rounding must not cross the reserve threshold")
+        record["windows"] = [["scope": "five_hour", "usedPercent": 95.0, "resetsAt": now + 3600],
+                             ["scope": "seven_day", "usedPercent": 100.0]]
+        check(read(record).maxed && read(record).maxedUntil == nil, "one unknown limiting reset keeps recovery unknown")
+        record["windows"] = [["scope": "five_hour", "usedPercent": 20.0]]
+        record["restrictions"] = [["scope": "account", "reason": "provider_rejection"]]
+        let restricted = read(record)
+        check(restricted.note == .restricted && restricted.maxed && restricted.availableRemaining == 0,
+              "provider rejection overrides healthy percentages")
+        check(restricted.used == nil && restricted.binding == nil && restricted.maxedUntil == nil,
+              "restriction cannot fabricate utilization or reset")
+        check(restricted.windows?.first?.percent == 20, "restriction keeps original measured bucket for diagnosis")
+        record["restrictions"] = [["scope": "account", "reason": "provider_rejection", "resetsAt": now + 3600]]
+        check(read(record).maxedUntil == Date(timeIntervalSince1970: now + 3600), "known restriction reset survives")
+        var unexplainedRestriction = record
+        unexplainedRestriction["status"] = "restricted"
+        unexplainedRestriction["restrictions"] = []
+        unexplainedRestriction["windows"] = [["scope": "five_hour", "usedPercent": 100, "resetsAt": now + 3600]]
+        check(read(unexplainedRestriction).maxedUntil == nil, "unexplained restriction cannot borrow a bucket reset")
+        record["restrictions"] = []; record["windows"] = []
+        record["display"] = ["shortUsed": "20", "longUsed": "40"]
+        check(read(record).used == nil, "Claude cannot use lossy legacy display columns")
+        record["provider"] = "cursor"
+        check(read(record, provider: "cursor").used == 40, "other collectors retain measured display fallback")
+        record["credits"] = ["overage": ["is_enabled": 1]]
+        check(read(record, provider: "cursor").creditNotes.isEmpty, "numeric credit flags are not booleans")
+        if CommandLine.arguments.count > 1 {
+            let text = try! String(contentsOfFile: CommandLine.arguments[1], encoding: .utf8)
+            let rows = Usage.parseJSON(text, provider: "claude")
+            check(rows["Available"]?.used == 56, "product-share attribution cannot become quota usage")
+            check(rows["Available"]?.windows?.count == 3, "all provider allowance windows reach native UI")
+            check(rows["ModelLimited"]?.used == 100 && rows["ModelLimited"]?.maxed == true,
+                  "model limit must block native next-agent eligibility")
+        }
+        if CommandLine.arguments.count > 2 {
+            let lines = try! String(contentsOfFile: CommandLine.arguments[2], encoding: .utf8).split(separator: "\n")
+            check(lines.count == 4, "both collectors must reach the UI")
+            for (index, line) in lines.enumerated() {
+                let provider = index < 2 ? "cursor" : "muse"
+                let row = Usage.parseJSON(String(line), provider: provider)["Default"]!
+                check(row.note == .credentialStoreUnavailable, "ambiguous store failure must not claim missing login")
+                check(row.used == nil && row.availableRemaining == nil, "failed store cannot advertise capacity")
+            }
+        }
+        print("Usage structured observations, freshness, restrictions, and failure tests passed")
     }
 }

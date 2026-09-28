@@ -26,6 +26,10 @@ struct SettingsWindowView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
+                    if Bundle.main.object(forInfoDictionaryKey: "N2FleetQA") as? Bool == true {
+                        FleetSyncSettings()
+                    }
+
                     section("ACCOUNTS", subtitle: "Sign in again to check the account used by every listed profile.") {
                         VStack(alignment: .leading, spacing: 10) {
                             Text(model.resettingAccounts ? "Signing out. Setup will continue here when it finishes." : "Keep your profiles and sessions. Sign in to accounts that are missing, or sign out and let the setup window guide you through each profile again.")

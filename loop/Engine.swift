@@ -113,11 +113,7 @@ final class Controller {
         if !FileManager.default.fileExists(atPath: integration) {
             _ = try gitOrThrow(s.repo, ["worktree", "add", integration, s.branch])
         }
-        for i in s.turns.indices where s.turns[i].endedAt == nil {
-            if let g = s.turns[i].pgid, kill(-g, 0) == 0 { stop(group: g) }
-            s.turns[i].endedAt = Date()
-            s.turns[i].outcome = "interrupted"
-        }
+        recoverTurnProcesses(&s.turns, runId: s.id, store: store)
         for i in s.plan.chunks.indices where s.plan.chunks[i].status == .working {
             s.plan.chunks[i].status = .pending
         }
@@ -185,6 +181,9 @@ final class Controller {
     /// one; otherwise a human has to sign something in.
     private func waitForCapacity() {
         let all = (try? slots.slots(fresh: true)) ?? []
+        // The refresh may observe recovery after selection used a cached
+        // restriction. Let the next tick select from this fresh reading.
+        if pick(all, effort: .standard, cooldowns: s.cooldowns, busy: [:]) != nil { return }
         let next = (all.compactMap { s.cooldowns[$0.key]?.until } + all.compactMap(\.resets)).filter { $0 > Date() }.min()
         if let next {
             s.status = .waiting
@@ -267,6 +266,7 @@ final class Controller {
             s.cooldowns[slot] = Cooldown(until: Date().addingTimeInterval(600), reason: "returned no usable report")
         }
         s.turns[i].outcome = outcome
+        recordUsageOutcome(cli: cli, slot: slot, outcome: outcome, task: "\(s.id)/\(id)", effort: s.turns[i].effort, usage: out.usage, failureText: out.tail, startedAt: s.turns[i].startedAt)
         if outcome != "ok" { s.turns[i].note = oneLine(out.tail, 300) }
 
         // Only failures the loop can't account for trip the breaker. Quota and

@@ -15,6 +15,12 @@ assert workflow.index('run: scripts/verify.sh') < workflow.index('- name: Releas
 assert 'continue-on-error' not in workflow
 assert 'if:' not in workflow[:workflow.index('- name: Release')]
 assert 'run: scripts/verify.sh' in (repo / '.github/workflows/ci.yml').read_text()
+# The fleet suites run on every push, and publication waits for them.
+for name in ('ci.yml', 'release.yml'):
+    text = (repo / '.github/workflows' / name).read_text()
+    assert 'run: sh scripts/test-fleet.sh' in text, name
+    assert 'N2_FLEET_REQUIRE_LIVE_SSH: "1"' in text, name
+assert 'needs: fleet' in workflow[:workflow.index('- name: Release')]
 
 def run(failure, source=verify):
     with tempfile.TemporaryDirectory(prefix='n2-release-gates-') as tmp:

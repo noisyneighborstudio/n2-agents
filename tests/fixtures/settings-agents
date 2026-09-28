@@ -1,0 +1,22 @@
+#!/bin/sh
+# Synthetic metadata only. No real agents command, SSH, credentials or state.
+printf '%s\n' "$*" >> "$N2_SETTINGS_TEST_DIR/commands"
+case "$*" in
+  'fleet sync categories')
+    /bin/sleep 0.1
+    printf 'settings\ton\nskills\ton\nmcp\toff\nauth\toff\n' ;;
+  'fleet sync auth list')
+    /bin/sleep 0.1
+    printf 'claude\tsupported\topted-out\n' ;;
+  'fleet peers')
+    /usr/bin/touch "$N2_SETTINGS_TEST_DIR/peers-started"
+    /bin/sleep 4
+    /usr/bin/touch "$N2_SETTINGS_TEST_DIR/peers-finished"
+    printf 'fixture\tUnreachable test peer\thost.invalid\tapproved\toffline\n' ;;
+  'fleet sync service status')
+    /bin/sleep 0.1
+    printf 'Fixture background sync stopped\n' ;;
+  'fleet sync conflicts')
+    /bin/sleep 0.1 ;;
+  *) printf 'Unexpected fixture command\n' >&2; exit 1 ;;
+esac

@@ -46,11 +46,29 @@ import Darwin
         if case .quota(let until) = Failure.classify("429 Too Many Requests", now: now) {
             expect(until == now.addingTimeInterval(3600), "an unstated reset waits an hour")
         } else { expect(false, "429 is quota") }
+        expect(Failure.reportedResetTime(in: "try again in 1 hour and 30 minutes", now: now) == nil, "compound reset is not a one-hour expiry")
+        expect(Failure.reportedResetTime(in: "try again in 2 seconds.", now: now) == now.addingTimeInterval(2), "complete relative reset is known")
+        expect(Failure.reportedResetTime(in: "try again at Sep 26 11:20 AM", now: now) == nil, "missing year/timezone is unknown")
+        expect(Failure.reportedResetTime(in: "try again at 2099-09-26T11:20:00Z", now: now) != nil, "qualified future ISO reset is known")
+        expect(Failure.reportedResetTime(in: "try again at 2000-09-26T11:20:00Z", now: now) == nil, "past reset is not recovery evidence")
         if case .auth = Failure.classify("Error: not logged in") {} else { expect(false, "not logged in is auth") }
         if case .attention = Failure.classify("[ACTION REQUIRED] An update to our Consumer Terms has taken effect. You must run `claude` to review the updated terms.") {}
         else { expect(false, "new terms need a person") }
         if case .outage = Failure.classify("HTTP 503 Service Unavailable") {} else { expect(false, "503 is an outage") }
         if case .other = Failure.classify("TypeError: undefined is not a function") {} else { expect(false, "a crash is other") }
+
+        for message in ["You've hit your session limit", "You've hit your monthly spend limit",
+                        "You're out of usage credits. Switch to another model to continue."] {
+            if case .quota = Failure.classify(message) {} else { expect(false, "provider rejection: \(message)") }
+        }
+        for candidate in [slot("claude", "Unknown", used: nil),
+                          slot("codex", "Failed", used: 10, quota: "fetch-error"),
+                          slot("muse", "Unreadable", used: 10, quota: "credential-store-unavailable"),
+                          slot("muse", "Missing", used: 10, quota: "no-token"),
+                          slot("claude", "Throttled", used: 10, quota: "rate-limited")] {
+            expect(pick([candidate], effort: .deep, cooldowns: [:], busy: [:]) == nil,
+                   "missing or failed measurements cannot advertise capacity")
+        }
 
         // Paths: overlapping chunks never run together.
         expect(pathsOverlap(["src/api/**"], ["src/api/users.ts"]), "a glob covers a file under it")
@@ -73,6 +91,10 @@ import Darwin
         expect(pick([slot("claude", "A", used: 10), slot("claude", "B", used: 10)], effort: .standard, cooldowns: [:], busy: ["claude|A": 1])?.key == "claude|B",
                "work spreads across equal slots")
 
+        let reserved = slot("claude", "Reserve", used: 96, quota: "local-reserve")
+        expect(pick([reserved], effort: .deep, cooldowns: [:], busy: [:]) == nil,
+               "N2 reserve stays excluded without a provider-rejection label")
+        expect(unusable(reserved, cooldowns: [:]) == "at N2 scheduling reserve", "name local scheduling policy")
         let measured = slot("muse", "Measured", used: 80)
         let unmeasured = slot("codex", "Unmeasured", used: nil, quota: "no-usage-api")
         for effort in Effort.allCases {
@@ -108,13 +130,17 @@ import Darwin
         if [ "$1" = porcelain ]; then
           printf 'V\tcodex\t1\tnone\toauth\nS\tSpent\tcodex\tok\tunused\tyes\nS\tDenied\tcodex\tok\tunused\tyes\n'
         else
-          printf 'Spent\t100\t30\t2026-09-26T03:24\tok\t2026-09-26T08:24\nDenied\t-\t80\t-\tlimit-reached\t2026-09-26T08:24\n'
+          now=$(date +%s)
+          printf '{"schemaVersion":1,"provider":"codex","profile":"Spent","status":"ok","observedAt":%s,"windows":[{"scope":"codex:primary_window","usedPercent":100,"resetsAt":1790393040},{"scope":"codex:secondary_window","usedPercent":30,"resetsAt":1790411040}],"restrictions":[]}\n' "$now"
+          printf '{"schemaVersion":1,"provider":"codex","profile":"Denied","status":"restricted","observedAt":%s,"windows":[{"scope":"codex:primary_window","usedPercent":80,"resetsAt":1790411040}],"restrictions":[{"scope":"codex","reason":"limit-reached"}]}\n' "$now"
         fi
         """.write(to: windows, atomically: true, encoding: .utf8)
         try! FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: windows.path)
         let read = try! SlotSource(cli: windows.path).slots(fresh: true)
         expect(read.first { $0.profile == "Spent" }?.resets == Date(timeIntervalSince1970: 1790393040),
                "a spent 5h window returns at its own reset, not the weekly one")
+        expect(read.first { $0.profile == "Denied" }?.resets == nil,
+               "a denial that names no reset does not borrow a window's reset")
         expect(read.count == 2 && read.allSatisfy { unusable($0, cooldowns: [:]) != nil },
                "spent and refused slots are ineligible")
 

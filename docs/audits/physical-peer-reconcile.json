@@ -1,0 +1,118 @@
+{
+  "root": "/private/tmp/n2-physical-dewiy214",
+  "peer": "sethwebster@100.88.174.82",
+  "negativeControl": false,
+  "transport": "physical SSH",
+  "localHost": "seth-agent",
+  "remoteHost": "macbook-m5-pro-max-sdw",
+  "task": "966279ca50a3e7c55a7546b3",
+  "dispatcherState": "completed",
+  "remoteState": "completed",
+  "executions": 1,
+  "taskCount": 1,
+  "passed": true,
+  "cleanup": "owned task terminal",
+  "sourceSha256": "6c8745985df321e5315715ad9eb0ff514c279d13be78bf9e0c8255c2e530c1b3",
+  "cli": [
+    {
+      "home": "alpha",
+      "args": [
+        "fleet",
+        "init",
+        "--machine",
+        "physical-dispatcher"
+      ],
+      "stdout": "physical-dispatcher\tSHA256:l52hpxSexiAKPC0CUeMEmNAwRlBpMxDbPGo8iUBsibo"
+    },
+    {
+      "home": "beta",
+      "args": [
+        "fleet",
+        "init",
+        "--machine",
+        "physical-worker"
+      ],
+      "stdout": "physical-worker\tSHA256:0zdLbyWUtUwVpN17059S1RyrL/2a9dIbLDpj0qv4+nI"
+    },
+    {
+      "home": "alpha",
+      "args": [
+        "fleet",
+        "invite",
+        "--peer",
+        "SHA256:0zdLbyWUtUwVpN17059S1RyrL/2a9dIbLDpj0qv4+nI"
+      ],
+      "stdout": "4c58a6d5cc5719757b6d04fd9c3f1137d64ac8c50a483d6e"
+    },
+    {
+      "home": "beta",
+      "args": [
+        "fleet",
+        "pair",
+        "--home",
+        "/private/tmp/n2-physical-dewiy214/alpha",
+        "--code",
+        "4c58a6d5cc5719757b6d04fd9c3f1137d64ac8c50a483d6e"
+      ],
+      "stdout": "SHA256:l52hpxSexiAKPC0CUeMEmNAwRlBpMxDbPGo8iUBsibo\tphysical-dispatcher\tapproved"
+    },
+    {
+      "home": "alpha",
+      "args": [
+        "fleet",
+        "rehost",
+        "SHA256:0zdLbyWUtUwVpN17059S1RyrL/2a9dIbLDpj0qv4+nI",
+        "--host-key",
+        "physical-test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOvp+EbcsyCdoQe03h/F+eVu/fXKZQVo2SS71FnQ/dWF"
+      ],
+      "stdout": "rehosted\tSHA256:0zdLbyWUtUwVpN17059S1RyrL/2a9dIbLDpj0qv4+nI\tSHA256:lnJhyBo2EPYbnO5ZyJ3+tfOfblt1AVYZ2IyBVjI/i/g"
+    },
+    {
+      "home": "alpha",
+      "args": [
+        "fleet",
+        "ping",
+        "SHA256:0zdLbyWUtUwVpN17059S1RyrL/2a9dIbLDpj0qv4+nI"
+      ],
+      "stdout": "pong physical-worker SHA256:0zdLbyWUtUwVpN17059S1RyrL/2a9dIbLDpj0qv4+nI"
+    },
+    {
+      "home": "alpha",
+      "args": [
+        "fleet",
+        "task",
+        "run",
+        "--machine",
+        "physical-worker",
+        "--agent",
+        "cursor",
+        "--allow-unknown-auth",
+        "--label",
+        "physical-reconcile",
+        "/usr/bin/python3 /private/tmp/n2-physical-dewiy214/acceptance.py --worker /private/tmp/n2-physical-dewiy214"
+      ],
+      "stdout": "966279ca50a3e7c55a7546b3\tphysical-worker\tcursor\t301s\tassumed=2"
+    },
+    {
+      "home": "alpha",
+      "args": [
+        "fleet",
+        "sync",
+        "tick",
+        "--interval",
+        "1"
+      ],
+      "stdout": "task\t966279ca50a3e7c55a7546b3\tunreachable\tphysical-worker\noffline\tSHA256:0zdLbyWUtUwVpN17059S1RyrL/2a9dIbLDpj0qv4+nI"
+    },
+    {
+      "home": "alpha",
+      "args": [
+        "fleet",
+        "task",
+        "reconcile",
+        "966279ca50a3e7c55a7546b3"
+      ],
+      "stdout": "966279ca50a3e7c55a7546b3\tcompleted\tphysical-worker"
+    }
+  ]
+}

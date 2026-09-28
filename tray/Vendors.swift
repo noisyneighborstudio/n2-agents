@@ -57,6 +57,17 @@ struct Snapshot {
     var installedVendors: [Vendor] { vendors.filter { $0.installed } }
     func vendor(_ id: String) -> Vendor? { vendors.first { $0.id == id } }
 
+    static func setupAuthentication(status: Int32, output: String) -> [String: Bool]? {
+        guard status == 0 else { return nil }
+        var result: [String: Bool] = [:]
+        for line in output.split(separator: "\n") {
+            let fields = line.split(separator: "\t").map(String.init)
+            guard fields.count == 2, ["yes", "no"].contains(fields[1]) else { continue }
+            result[fields[0]] = fields[1] == "yes"
+        }
+        return result
+    }
+
     /// Profiles, in order, with labs known to be signed out or left pending by
     /// setup. Labs whose login can't be inspected are not guessed at.
     func missingSignIns(pending: [String: [String]]) -> [(profile: String, labs: [String])] {

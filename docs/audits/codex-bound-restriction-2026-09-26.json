@@ -1,0 +1,24 @@
+{
+  "probe": "native-bound-turn-restriction",
+  "turnStartRequests": 1,
+  "status": "failed",
+  "recordedAt": "2026-09-26T10:09:56.489809+00:00",
+  "providerCLI": "codex-cli 0.157.1",
+  "restrictionPresent": true,
+  "identity": {
+    "status": "verified",
+    "accountHash": "0051c0af88fc3b46277fe3fd783c613a1eb9f018188e384d12b88ca2d028150a"
+  },
+  "responseMatched": false,
+  "model": "gpt-6-astra",
+  "tokens": null,
+  "providerError": "usageLimitExceeded",
+  "sessionPresent": true,
+  "turnPresent": true,
+  "observedItemTypes": [
+    "userMessage"
+  ],
+  "isolatedAuthFileCreated": false,
+  "canonicalCredentialUnchanged": true,
+  "scope": "One live turn/start request only after a fresh explicit restriction. Production bound-turn path returned usageLimitExceeded on the verified restricted account. No token count inferred when provider omitted usage; no renewal or canonical-home authentication."
+}

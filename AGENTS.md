@@ -95,8 +95,14 @@ Run commands from the repository root on macOS 26 with its Xcode SDK.
   and checks the CLI and gate shell scripts for syntax errors. It does not claim
   style or type analysis.
 - Tests: `scripts/test.sh`.
+- Fleet suites: `sh scripts/test-fleet.sh` (transport, replication, execution,
+  native fleet UI). CI runs it as a parallel job with live SSH required, and
+  publication waits for it. Run it locally when a slice touches fleet code.
 - Smoke run: `scripts/smoke.sh` starts the real CLI against throwaway state and
-  synthetic vendor executables without live provider credentials. Extend it when a slice adds observable behavior.
+  a signed synthetic owner and synthetic vendor executables. It checks profile routing,
+  session discovery, resume, transport descendant cleanup, provider caller-lifetime cleanup,
+  terminal frontend cleanup, and migration peer barriers without live provider credentials.
+  Extend it when a slice adds observable behavior.
 
 CI must be green on the exact pushed commit before reporting a slice complete.
 

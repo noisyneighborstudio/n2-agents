@@ -67,10 +67,10 @@ struct Store {
 
     // MARK: controller lock
 
-    /// Held by the controller for its whole life. The kernel drops it when the
+    /// Held by the planner or controller for its whole life. The kernel drops it when the
     /// process dies, so a stale pid can never make a dead run look alive.
     func lock(_ id: String) -> Int32? {
-        let fd = open(dir(id) + "/controller.lock", O_RDWR | O_CREAT, 0o600)
+        let fd = open(dir(id) + "/controller.lock", O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
         guard fd >= 0 else { return nil }
         if flock(fd, LOCK_EX | LOCK_NB) == 0 { return fd }
         close(fd)

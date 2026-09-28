@@ -1,0 +1,18 @@
+{
+  "sourceCommit": "cd7d292d0658bd5b6ea0c540e76f76b1f73dae45",
+  "fixture": "two disposable approved peers, same stable profileId, synthetic credential files",
+  "migrationTests": {
+    "command": "python3 scripts/test-fleet-auth-migration.py",
+    "passed": 8
+  },
+  "coordinatorStatus": "migration-pending",
+  "peerStatus": "inventory-only",
+  "peerBarrierPresent": false,
+  "peerCredentialPreserved": true,
+  "registerWhilePendingExit": 1,
+  "completionCommandExit": 1,
+  "peerCopiesReported": [
+    "unobserved"
+  ],
+  "inventoryComplete": false
+}

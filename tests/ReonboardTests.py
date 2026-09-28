@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 
 
-def run_case(answer, failure="", args=()):
+def run_case(answer, failure="", args=(), owned=False):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         bin_dir = root / "bin"
@@ -16,6 +16,8 @@ def run_case(answer, failure="", args=()):
             (slot / "auth.json").write_text("old-account")
             (slot / "history.jsonl").write_text("keep")
             (slot.parent / "cursor").mkdir()
+        if owned:
+            (slots[1] / ".n2-owner.json").write_text("{}")
         fake = bin_dir / "codex"
         fake.write_text('''#!/bin/sh
 echo "codex:$CODEX_HOME:$*" >> "$HOME/calls"
@@ -43,6 +45,9 @@ echo "cursor:$CURSOR_CONFIG_DIR:$*" >> "$HOME/calls"
         calls = (root / "calls").read_text().splitlines() if (root / "calls").exists() else []
         for slot in slots:
             assert (slot / "history.jsonl").read_text() == "keep"
+        if owned:
+            assert (slots[1] / "auth.json").read_text() == "old-account"
+            assert (slots[1] / ".n2-owner.json").read_text() == "{}"
         return result, calls
 
 
@@ -71,6 +76,18 @@ assert len(calls) == 3 and all(call.endswith(":logout") for call in calls), call
 assert "Continue in the N2 Agents setup window" in result.stdout
 result, calls = run_case("", "logout", ("--logout-only", "--yes"))
 assert result.returncode != 0 and not any(call.endswith(":login") for call in calls)
+
+# An owner-managed Codex slot between ordinary slots keeps its account; the
+# reset finishes everything else and says which slot it kept.
+result, calls = run_case("", args=("--logout-only", "--yes"), owned=True)
+assert result.returncode == 0, result.stdout + result.stderr
+assert not any("/Work/codex:" in call for call in calls), calls
+assert sum(call.endswith(":logout") for call in calls) == 2, calls
+assert "'Work' / Codex keeps its account" in result.stdout, result.stdout
+result, calls = run_case("SIGN OUT\n" + "\nYES\n" * 2, owned=True)
+assert result.returncode == 0, result.stdout + result.stderr
+assert not any("/Work/codex:" in call for call in calls), calls
+print("Owner-managed reset tests passed")
 
 # Claude can report logout success while symlink, canonical-path and legacy
 # keychain entries survive. Clear exactly the credential aliases N2 reads.

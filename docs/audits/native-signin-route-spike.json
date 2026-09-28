@@ -1,0 +1,19 @@
+{
+  "sourceCommit": "4e4f372df76af49ec1320d676159558c977835a1",
+  "nativeAction": "agents login PROFILE --vendor codex",
+  "cases": {
+    "local-owner": {
+      "exitCode": 1,
+      "ownerManagedRefusal": true,
+      "bindingAndGrantUnchanged": true,
+      "providerLoginOrLogoutAttempted": false
+    },
+    "remote-owner": {
+      "exitCode": 1,
+      "ownerManagedRefusal": true,
+      "bindingAndGrantUnchanged": true,
+      "providerLoginOrLogoutAttempted": false
+    }
+  },
+  "realCredentialsUsed": false
+}

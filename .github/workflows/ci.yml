@@ -8,6 +8,19 @@ concurrency:
   group: verify-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  fleet:
+    # Transport, replication, execution and native fleet suites. Its own job:
+    # verify alone is close to its limit. Live SSH is required, not skipped.
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Fleet suites
+        env:
+          N2_FLEET_REQUIRE_LIVE_SSH: "1"
+        run: sh scripts/test-fleet.sh
   verify:
     runs-on: macos-26
     timeout-minutes: 30

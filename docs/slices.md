@@ -1,48 +1,60 @@
 # Slice queue
 
-This is the active integration queue. Integrate each verified improvement before
-starting unrelated work. The older fleet queue remains deferred; reconcile that
-branch with current main before resuming its implementation.
+This is the fleet queue for PR #3, now merged with main through a9221bf. Integrate
+main into this branch as each main change lands. Fleet readiness requirements are
+in `docs/fleet-readiness.md`; the deferred fleet briefs are in `ad27ac9:docs/slices.md`.
+No merge to main, publication, installation or machine enrollment without explicit
+authorization.
+
+## Gates
+
+Every push runs `.github/workflows/ci.yml`, which runs `scripts/verify.sh`: format,
+lint, `scripts/test.sh` and `scripts/smoke.sh`, in that order, and a parallel job
+runs `scripts/test-fleet.sh`. Run both locally first.
+A slice is complete only after these pass locally and CI passes on its pushed
+commit. One commit with a `Slice: <slug>` trailer; remove the entry in that commit.
 
 ## Queue
 
-1. **Verify provider-scoped readouts** (`integration-scoped-readouts`).
-   Behavior: applicable provider restrictions and their observation age remain visible.
-   Proof: canonical protocol fixtures and isolated package acceptance for selected models.
-   Scope: split before implementation if the native-reader dependency inventory exceeds
-   250 changed lines; no credential migration.
+1. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
+   Behavior: from the QA app, pair two disposable peers, sync (with a held
+   profile shared from Fleet settings), send work, show its result and revoke.
+   Proof: packaged acceptance driven through accessibility events with
+   disposable homes; each step asserts CLI state, and one negative control
+   per step fails.
+   Scope: disposable peers only; no live installation or real machines.
 
-2. **Prepare one accepted stable promotion** (`integration-stable-candidate`).
-   Behavior: one accepted improvement has a reviewable candidate with no unaccepted
-   intervening changes. Proof: source SHA, exact-commit gates, continuous artifact
-   digest and installed-behavior receipt; separate stable receipts after approval.
-   Scope: prepare only; no merge, publish, install or credential changes without
-   explicit authorization. No dependency on unrelated fleet completion.
+Blocked on authorization:
+- Per-provider sign-in lifecycle evidence needs live provider accounts
+  (readiness: "provider-specific authentication lifecycle").
+- Merging PR #3 publishes a Continuous build and needs explicit approval.
 
 ## Noticed
 
-- The tray shows a Codex `limit-reached` slot as usage unknown with no return
-  time; the profile summary doesn't count it as out. The loop and CLI skip it.
-- The Codex parser still sorts windows into two length classes, so two short
-  windows overwrite each other, and it drops additional buckets and credits.
-  Fold into `integration-scoped-readouts` or split before starting it.
+- Any same-user process can open `n2agents://reonboard-done` (or `login-done`)
+  and make the app treat a running account reset as finished.
 
-- Reconciling PR #3 with main after the account-setup and logout hotfixes has
-  conflicts in CI/gates, package configuration, the queue, onboarding and provider
-  credential handling. Resolve and verify that combination before further fleet
-  work. These conflicts do not block the independent usage fixes.
+- CI's verify job takes about 24 of its 30 minutes. Split it or raise the limit
+  before it starts timing out.
 
-- The inherited full-suite quota fixture asserted eight rejections but failed once
-  at scripts/test.sh:682 during freshness validation. The unchanged loop source
-  passed in the prior slice. Retain the assertion; investigate a recurrence with
-  fixture receipts rather than changing usage-display code to accommodate it.
-  Recurred twice (now line 685) on sign-in-missing-accounts, which does not touch
-  the loop; unchanged main and a third run passed. Suspect: tests/fake-loop-agent.sh
-  decrements worker-quota-<profile> without a lock, so concurrent chunks on one
-  slot can both fail while the counter drops once. Capture turns on failure.
+- The inherited full-suite quota fixture fails intermittently (main saw it at
+  scripts/test.sh:682 and :685). Suspect: tests/fake-loop-agent.sh decrements
+  worker-quota-<profile> without a lock, so concurrent chunks on one slot can both
+  fail while the counter drops once. Keep the assertion; capture turns on failure.
+
+- Codex setup sign-in runs fleet's owner-aware plan in a terminal; other labs use
+  main's in-app session. In-app Codex sign-in needs the plan resolved before the
+  session starts.
 
 - Fleet crash-accounting, archive safety, notifications and provider logout stay
-  deferred on PR #3. They do not block independent measurement fixes. No dispatch
-  release before archive proof; no unproven credential retirement.
-- T3 adapter remains downstream of its actual profile contract, not unrelated
-  migration completion. Resume must preserve the original account binding.
+  deferred. No dispatch release before archive proof; no unproven credential retirement.
+- T3 adapter remains downstream of its actual profile contract. Resume must
+  preserve the original account binding.
+
+- Claude fleet denials now recover by evidenced reset; an ordinary parent success cannot establish subagent or spending recovery. Scope-specific successful recovery evidence remains required before claiming complete allowance recovery. See `docs/fleet-readiness.md`.
+
+- Existing test suite contains sleep-based checks. New tests must wait on observable events; convert old waits when their behavior enters a slice.
+
+- The Ctrl-C exit timeout in CI 36269470567 remains unresolved. The unchanged full suite and 180 bounded local terminal checks passed. Preserve the assertion; a recurrence needs signal/exit receipts and process-state evidence before a repair. Evidence: `docs/audits/terminal-ci-failure-spike.md`.
+
+- Default Claude path normalization remains unresolved after the bounded source-mapping spike. Reopen only with new authoritative module mapping; do not repeat the same binary search. See `docs/audits/claude-default-path-spike.md`.

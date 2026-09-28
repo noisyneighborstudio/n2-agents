@@ -1,0 +1,8 @@
+{
+  "spike": "transport-descendant-receipt",
+  "injection": "child is stopped before writing PID receipt",
+  "observed": "same missing PID receipt as CI",
+  "childStoppedAfterCleanup": true,
+  "productionCodeChanged": false,
+  "negativeControl": "Leader-only cleanup fails the new lifetime-pipe EOF assertion"
+}

@@ -67,9 +67,12 @@ let terminalSpecs: [TerminalSpec] = [
     }),
 ]
 
-final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtocol, PanelActions, SetupHost {
-    private var statusItem: NSStatusItem!
-    private let model = PanelModel()
+final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtocol, PanelActions, FleetActions, SetupHost {
+    var statusItem: NSStatusItem!
+    let model = PanelModel()
+    var announcer = FleetAnnouncer()
+    var fleetReadID: UUID?
+    var notificationAttempt: UUID?
     private var statusIcon: StatusIcon?
     private var quotaWatch: AnyCancellable?
     private var menuBarAppearance: NSKeyValueObservation?
@@ -137,7 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         }
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePanel)
-        hotKey.register(Shortcut.load())
+        if !UpdateChannel.isQABuild { hotKey.register(Shortcut.load()) }
         // @Published fires before the store, so read the model a turn later.
         quotaWatch = model.$data.combineLatest(model.$usage, model.$pendingSetups)
             .receive(on: DispatchQueue.main)
@@ -162,6 +165,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         // The first full session read indexes every transcript, which takes
         // minutes on a big history; do it now, not when the window is opened.
         loadAllSessions()
+        refreshFleet()
+        Timer.scheduledTimer(withTimeInterval: 45, repeats: true) { [weak self] _ in self?.refreshFleet() }
         // Expiry must still reach the UI when a collector is stuck.
         Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             guard let self else { return }
@@ -172,7 +177,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         // Keep claude-as / claude-<profile> on PATH in step with the profile
         // list — real executables, so apps and scripts get them too, and
         // upgrades from a shell-function-only version heal themselves.
-        DispatchQueue.global(qos: .utility).async { self.runCLI(["shims"]) }
+        if !UpdateChannel.isQABuild {
+            DispatchQueue.global(qos: .utility).async { self.runCLI(["shims"]) }
+        }
 
 #if canImport(Sparkle)
         // Sparkle owns automatic scheduling and signature verification. Both
@@ -199,6 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         // Setting the image re-resolves the button's appearance, which fires
         // the observer that calls this: redraw only on a real change, or the
         // two feed each other forever.
+        statusItem.button?.toolTip = model.capacitySummary
         if let last = drawnIcon, last == drawn { return }
         drawnIcon = drawn
         let image = icon.image(remaining: drawn.remaining, dark: drawn.dark, attention: drawn.attention)
@@ -222,11 +230,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         DispatchQueue.main.async { self.model.presented = true }
         refreshPanel()
         refreshUsage(force: false, onDemand: true)
+        refreshFleet()
     }
 
     // Anything that opens a window, dialog or terminal closes the panel first:
     // a transient panel would otherwise vanish under it mid-click.
-    private func dismissPanel() {
+    func dismissPanel() {
         panel.dismiss()
     }
 
@@ -236,7 +245,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     // fresh one.
     private var refreshGeneration = 0
 
-    private func refreshPanel() {
+    func refreshPanel() {
         refreshGeneration += 1
         let generation = refreshGeneration
         DispatchQueue.global(qos: .userInitiated).async {
@@ -327,8 +336,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         let profiles = model.data?.profiles.map(\.name) ?? []
         DispatchQueue.global(qos: .utility).async {
             let fresh = Dictionary(uniqueKeysWithValues: vendors.map { v in
-                let r = self.runCLI(["best", "--porcelain", "--vendor", v.id])
-                return (v.id, (rows: Usage.parse(r.output, longWindow: v.longWindow), failed: r.status != 0))
+                let r = self.runCLI(["best", "--json", "--vendor", v.id])
+                return (v.id, (rows: r.status == 0 ? Usage.parseJSON(r.output, provider: v.id, longWindow: v.longWindow) : [:],
+                               failed: r.status != 0))
             })
             DispatchQueue.main.async {
                 guard generation == self.usageGeneration else { return }
@@ -549,10 +559,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 
     // MARK: - agents CLI (single implementation of profile side effects)
 
-    private var cliPath: String { scriptsDir + "/agents" }
+    var cliPath: String { scriptsDir + "/agents" }
 
     @discardableResult
-    private func runCLI(_ args: [String]) -> (status: Int32, output: String) {
+    func runCLI(_ args: [String]) -> (status: Int32, output: String) {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/sh")
         task.arguments = [cliPath] + args
@@ -593,25 +603,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         launchSession(sessionCommand(profile: profile, vendor: v), slug: "\(profile)-\(id)", in: spec)
     }
 
-    // Signs the slot out and back in through `agents login`, in a terminal —
-    // the labs sign in through a browser and print codes there. Confirmed
-    // first when it would discard a working login.
-    func signIn(profile: String, vendor id: String, confirm: Bool) {
-        guard let v = model.data?.snapshot.vendor(id) else { return }
-        dismissPanel()
-        if confirm {
-            let ask = NSAlert()
-            ask.messageText = "Sign \(v.label) in “\(profile)” out and back in?"
-            let current = model.data?.snapshot.account(profile, id).map { " (\($0))" } ?? ""
-            ask.informativeText = "The current \(v.label) login for this profile\(current) is removed, then a terminal opens so you can sign in with the right account. The browser uses whichever account it's already signed in to — switch it there first if needed."
-            ask.addButton(withTitle: "Sign Out and Sign In")
-            ask.addButton(withTitle: "Cancel")
-            NSApp.activate(ignoringOtherApps: true)
-            guard ask.runModal() == .alertFirstButtonReturn else { return }
+    @MainActor private lazy var signInCoordinator = SignInCoordinator()
+
+    func signIn(profile: String, vendor: String, confirm: Bool) {
+        startSignIn(profile: profile, vendor: vendor, confirmLegacy: confirm)
+    }
+
+    private func startSignIn(profile: String, vendor: String, confirmLegacy: Bool,
+                             setup: Bool = false, copyOnly: Bool = false) {
+        let cli = cliPath, environment = Self.scriptEnvironment
+        let label = model.data?.snapshot.vendor(vendor)?.label ?? vendor
+        if !copyOnly { dismissPanel() }
+        Task { @MainActor in await signInCoordinator.perform(profile: profile, vendor: vendor,
+            confirmLegacy: confirmLegacy, copyOnly: copyOnly,
+            run: { SignInPlan.run(cli: cli, environment: environment, args: $0) },
+            confirm: { plan in
+                let alert = plan.alert(profile: profile, label: label)
+                NSApp.activate(ignoringOtherApps: true)
+                return alert.runModal() == .alertFirstButtonReturn
+            }, finish: { plan in
+                let command = plan.command(cli: cli)
+                if copyOnly {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(command, forType: .string)
+                    return
+                }
+                self.launchSession(plan.terminalCommand(cli: cli, profile: profile, vendor: vendor, setup: setup),
+                                   slug: "\(profile)-\(vendor)-login", in: self.preferredTerminal)
+            }, cancelled: {
+                if setup && !copyOnly && self.setup?.model.profile == profile { self.setup?.loginFinished(vendor: vendor) }
+            }, fail: { message in
+                if setup && !copyOnly && self.setup?.model.profile == profile { self.setup?.loginFinished(vendor: vendor) }
+                let alert = NSAlert(); alert.messageText = "Sign-in unavailable"
+                alert.informativeText = message; alert.addButton(withTitle: "OK")
+                NSApp.activate(ignoringOtherApps: true); alert.runModal()
+            })
         }
-        // Whatever the outcome, tell the panel to re-read when it's over.
-        let cmd = loginCommand(profile: profile, vendor: id) + "; open -g 'n2agents://refresh'"
-        launchSession(cmd, slug: "\(profile)-\(id)-login", in: preferredTerminal)
     }
 
     func copyCommand(profile: String, vendor: String) {
@@ -719,30 +746,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 
     func setupAuthed(profile: String) -> [String: Bool]? {
         let r = runCLI(["authed", profile])
-        guard r.status == 0 else { return nil }
-        var out: [String: Bool] = [:]
-        for line in r.output.split(separator: "\n") {
-            let f = line.split(separator: "\t").map(String.init)
-            guard f.count == 2, f[1] != "unknown" else { continue }
-            out[f[0]] = f[1] == "yes"
-        }
-        return out
-    }
-
-    private func loginCommand(profile: String, vendor: String) -> String {
-        "\"\(cliPath)\" login \(profile) --vendor \(vendor)"
+        return Snapshot.setupAuthentication(status: r.status, output: r.output)
     }
 
     func setupStartLogin(profile: String, vendor: String) -> NativeAuthSession? {
-        NativeAuthSession(executable: "/bin/sh",
-                          arguments: [cliPath, "login", profile, "--vendor", vendor],
-                          environment: Self.scriptEnvironment)
+        // Codex may be owner-managed, and only its sign-in plan knows the
+        // owner route; that runs in a terminal and reports back through
+        // n2agents://login-done.
+        if vendor == "codex" {
+            startSignIn(profile: profile, vendor: vendor, confirmLegacy: false, setup: true)
+            return nil
+        }
+        return NativeAuthSession(executable: "/bin/sh",
+                                 arguments: [cliPath, "login", profile, "--vendor", vendor],
+                                 environment: Self.scriptEnvironment)
     }
 
     func setupCopyLoginCommand(profile: String, vendor: String) {
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(loginCommand(profile: profile, vendor: vendor), forType: .string)
+        startSignIn(profile: profile, vendor: vendor, confirmLegacy: false, copyOnly: true)
     }
 
     func setupPending(profile: String, labs: [String]?) {
@@ -921,6 +942,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         pb.setString(resumeCommand(s, in: s.profile), forType: .string)
     }
 
+    @MainActor private lazy var sessionTransferCoordinator = SessionTransferCoordinator()
+
+    func sendSession(_ session: SessionInfo) {
+        let cli = cliPath, environment = Self.scriptEnvironment
+        dismissPanel()
+        Task { @MainActor in
+            await sessionTransferCoordinator.perform(thread: session.sessionID, vendor: session.vendor,
+                run: { SignInPlan.run(cli: cli, environment: environment, args: $0) },
+                choose: { peers in
+                    let (alert, picker, path) = SessionTransferPlan.prompt(
+                        title: session.title ?? session.snippet, peers: peers, cwd: session.cwd)
+                    NSApp.activate(ignoringOtherApps: true)
+                    guard alert.runModal() == .alertFirstButtonReturn,
+                          peers.indices.contains(picker.indexOfSelectedItem) else { return nil }
+                    return (peers[picker.indexOfSelectedItem], path.stringValue)
+                }, finish: { message in self.alert("Session sent", message) },
+                fail: { message in self.alert("Session transfer", message) })
+        }
+    }
+
     // The transcript moves; its place in the list doesn't (mv keeps the
     // mtime), so the row just changes hands when the lists re-read.
     func moveSession(_ s: SessionInfo, to profile: String) {
@@ -1035,6 +1076,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     }
 
     func installCLI() -> String {
+        if Bundle.main.object(forInfoDictionaryKey: "N2FleetQA") as? Bool == true {
+            return "Fleet QA uses its bundled CLI; the primary CLI stays installed."
+        }
         let source = URL(fileURLWithPath: cliPath).standardizedFileURL
         let agentAs = scriptsDir + "/agent-as"
         guard fm.isExecutableFile(atPath: source.path), fm.isExecutableFile(atPath: agentAs) else {
@@ -1108,7 +1152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     // MARK: - Terminal + alerts
 
     // Runs in Terminal.app so script output/progress is visible to the user.
-    private func runInTerminal(_ command: String) {
+    func runInTerminal(_ command: String) {
         let escaped = command
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
@@ -1140,7 +1184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         }
     }
 
-    private func alert(_ title: String, _ message: String) {
+    func alert(_ title: String, _ message: String) {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message

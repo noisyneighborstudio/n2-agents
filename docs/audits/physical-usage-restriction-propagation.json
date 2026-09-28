@@ -1,0 +1,91 @@
+{
+  "root": "/private/tmp/n2-physical-usage-rjp12pf0",
+  "peer": "sethwebster@100.88.174.82",
+  "localHost": "seth-agent",
+  "remoteHost": "macbook-m5-pro-max-sdw",
+  "receiverOrigin": "SHA256:D2qMITj58H6QBPni1sDMutmBYSnJtVuKDTg0YvXYC0M",
+  "rejectionOrigin": "SHA256:TzYVDzkzlpTtG6zUObe1Qur58Cn4TOpDnAbF9pzWVVg",
+  "syntheticAccounts": true,
+  "rejection": {
+    "origin": "SHA256:TzYVDzkzlpTtG6zUObe1Qur58Cn4TOpDnAbF9pzWVVg",
+    "at": 1790493429.4459908,
+    "kind": "quota-rejected",
+    "provider": "codex",
+    "profile": "RemoteName",
+    "data": {
+      "status": "restricted",
+      "identity": {
+        "status": "verified",
+        "accountHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "restrictions": [],
+      "requestedModel": "test-model",
+      "attribution": {
+        "task": "reject",
+        "totalTokens": null
+      }
+    },
+    "id": "8e8bc3ad8be51dd8b2a67c62322c50e9af15fda92307cd0d5d7645a5aa512839"
+  },
+  "passed": true,
+  "stages": [
+    {
+      "name": "received",
+      "matchingStatus": "restricted",
+      "differentStatus": "ok",
+      "restrictionIds": [
+        "8e8bc3ad8be51dd8b2a67c62322c50e9af15fda92307cd0d5d7645a5aa512839"
+      ]
+    },
+    {
+      "name": "reopened-and-replayed",
+      "matchingStatus": "restricted",
+      "differentStatus": "ok",
+      "restrictionIds": [
+        "8e8bc3ad8be51dd8b2a67c62322c50e9af15fda92307cd0d5d7645a5aa512839"
+      ]
+    },
+    {
+      "name": "old-success",
+      "matchingStatus": "restricted",
+      "differentStatus": "ok",
+      "restrictionIds": [
+        "8e8bc3ad8be51dd8b2a67c62322c50e9af15fda92307cd0d5d7645a5aa512839"
+      ]
+    },
+    {
+      "name": "wrong-model",
+      "matchingStatus": "restricted",
+      "differentStatus": "ok",
+      "restrictionIds": [
+        "8e8bc3ad8be51dd8b2a67c62322c50e9af15fda92307cd0d5d7645a5aa512839"
+      ]
+    },
+    {
+      "name": "recover",
+      "matchingStatus": "ok",
+      "differentStatus": "ok",
+      "restrictionIds": []
+    },
+    {
+      "name": "recovery-replayed",
+      "matchingStatus": "ok",
+      "differentStatus": "ok",
+      "restrictionIds": []
+    }
+  ],
+  "negativeControl": {
+    "root": "/private/tmp/n2-physical-usage-sglbwgrv",
+    "exitCode": 1,
+    "assertion": "received: matching account expected restricted"
+  },
+  "files": {
+    "/private/tmp/n2-physical-usage-rjp12pf0/receipt.json": "f79ce5abd65b86a5cdf204d43fc399ab350923643ec50eac0946cb08631cc4b6",
+    "/private/tmp/n2-physical-usage-rjp12pf0/cli.json": "fb8c3d37a496ce62c96b268f38dd425efe67415abb32a0848aaf89253df63919",
+    "scripts/accept-physical-usage.py": "ac13b87e6e4eec25bb69dbd32d35642ce9fa883f84a7e21198d29936746d2954",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/physical-usage-restrictions/negative-cli.json": "70a034aa32d80c807bbcefecdc8e17ba1977098288029f5082b4f9d8b186acf1",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/physical-usage-restrictions/negative-receipt.json": "4106dd3f87f487d4920ef4673ce675caeace107f253346db489f7183b8425cbb",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/physical-usage-restrictions/positive-cli.json": "fb8c3d37a496ce62c96b268f38dd425efe67415abb32a0848aaf89253df63919",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/physical-usage-restrictions/positive-receipt.json": "f79ce5abd65b86a5cdf204d43fc399ab350923643ec50eac0946cb08631cc4b6"
+  }
+}

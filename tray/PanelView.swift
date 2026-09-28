@@ -74,6 +74,13 @@ struct PanelView: View {
                                 SessionsSection(data: data, actions: actions)
                             }
                         }
+                        // The fleet sits below this machine's own profiles on
+                        // purpose: the local machine is what the panel is for,
+                        // and the other Macs are the second question.
+                        if let fleetActions = actions as? FleetActions {
+                            Divider()
+                            FleetSection(model: model, actions: fleetActions)
+                        }
                     }
                 }
             } else {
@@ -336,8 +343,13 @@ private struct NextBestButton: View {
                 }
             }
             .buttonStyle(RowButtonStyle(radius: 8, border: true))
-        case .usageUnknown?:
-            row(icon: "questionmark.circle", iconColor: Ink.amber, title: "Usage unavailable") { EmptyView() }
+        case .usageUnavailable?:
+            Button { actions.retryUsage() } label: {
+                row(icon: "arrow.clockwise", iconColor: Ink.secondary, title: "Usage unavailable") {
+                    Text("Refresh").foregroundStyle(Ink.link)
+                }
+            }
+            .buttonStyle(RowButtonStyle(radius: 8, border: true))
         case .nothingSignedIn?:
             row(icon: "bolt.slash", iconColor: Ink.secondary, title: "Nothing is signed in") { EmptyView() }
                 .background(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.12)))
@@ -503,8 +515,8 @@ private struct ProfileCard: View {
     private var status: (icon: String?, text: String, tint: Color) {
         switch reading.state {
         case .ready:             return (nil, "Ready", Ink.secondary)
-        case .usageUnknown:      return ("questionmark.circle", "Usage unavailable", Ink.amber)
         case .checking:          return (nil, "Checking…", Ink.secondary)
+        case .usageUnknown:      return ("questionmark.circle", "Usage unknown", Ink.amber)
         case .allOut:            return ("clock", "All out", maxedRed)
         case .labsOut(let out, let of, _):
             return ("clock", "\(out) of \(of) out", Ink.amber)
@@ -516,7 +528,7 @@ private struct ProfileCard: View {
 
     private var helpText: String {
         var parts: [String] = [status.text]
-        if let used = reading.used { parts.append("\(used)% used across \(slotted.count) labs") }
+        if let used = reading.used { parts.append("\(used)% used in the fullest measured lab") }
         switch reading.state {
         case .allOut(let until), .labsOut(_, _, let until):
             if let until { parts.append("first back \(clockTime(until))") }
@@ -607,9 +619,9 @@ private struct SlotRow: View {
             flat("clock", u.unavailableLabel, Ink.amber)
         } else if let note = usage?.note {
             if note == .sharedLogin {
-                flat("link", label(for: note), Ink.secondary)
+                flat("link", usage?.statusLabel ?? "no reading", Ink.secondary)
             } else {
-                flat(note == .staleToken ? "exclamationmark.triangle" : "arrow.clockwise", label(for: note), Ink.amber)
+                flat(note == .staleToken ? "exclamationmark.triangle" : "arrow.clockwise", usage?.statusLabel ?? "no reading", Ink.amber)
             }
         } else if model.usageSweeping {
             Sweep().clipShape(Capsule())
@@ -634,6 +646,7 @@ private struct SlotRow: View {
         .foregroundStyle(u.maxed ? maxedRed : Ink.secondary)
         .lineLimit(1)
         .frame(width: 88, alignment: .trailing)
+        .help("Usage checked at \(u.fetchedAt.formatted(date: .abbreviated, time: .standard))")
     }
 
     private func flat(_ icon: String?, _ text: String, _ tint: Color) -> some View {
@@ -647,17 +660,7 @@ private struct SlotRow: View {
         .lineLimit(1)
     }
 
-    private func label(for note: Usage.Note) -> String {
-        switch note {
-        case .noToken:     return "not signed in"
-        case .staleToken:  return "token expired"
-        case .rateLimited: return "rate-limited"
-        case .fetchError:  return "check failed"
-        case .sharedLogin: return "shared login"
-        case .limitReached: return "limit reached"
-        default:           return "no reading"
-        }
-    }
+
 }
 
 // MARK: - Depth 3: everything for one slot
@@ -672,6 +675,7 @@ private struct SlotActions: View {
     @ObservedObject var model: PanelModel
     let actions: PanelActions
     @State private var copied: String?   // which row just copied
+    @State private var showOwnership = false
 
     private var usage: Usage? { model.effectiveUsage(profile.name, vendor.id) }
     private var signedOut: Bool {
@@ -685,19 +689,11 @@ private struct SlotActions: View {
             if model.usage[vendor.id]?[profile.name]?.note == .sharedLogin {
                 Text("Shared login · Default").font(.caption).foregroundStyle(Ink.secondary)
             }
-            if let u = usage, u.used != nil {
-                if let five = u.fiveHour {
-                    MeterRow(label: "5h", percent: five,
-                             meta: u.resets.map(clockTime) ?? "", delay: 0)
-                }
-                if let seven = u.sevenDay {
-                    MeterRow(label: u.longWindow, percent: seven,
-                             meta: u.sevenResets.map(clockTime) ?? "", delay: 0)
-                }
+            if let u = usage {
+                UsageDetailsView(usage: u)
             }
 
-            if let u = usage, u.used == nil {
-                Text(u.unavailableLabel).foregroundStyle(Ink.amber)
+            if let u = usage, u.showsHistory {
                 Text(u.historyLabel).font(.caption).foregroundStyle(Ink.secondary)
             }
 
@@ -719,6 +715,10 @@ private struct SlotActions: View {
             }
 
             group("Configure", "slider.horizontal.3")
+            if vendor.id == "codex" {
+                ActionRow(title: "Account ownership", icon: "person.crop.circle") { showOwnership.toggle() }
+                if showOwnership { AccountOwnershipView(profile: profile.name) }
+            }
             if !profile.isActive(for: vendor.id) {
                 ActionRow(title: "Use for new sessions", icon: "checkmark.circle") {
                     actions.setActive(profile: profile.name, vendor: vendor.id)
@@ -735,7 +735,11 @@ private struct SlotActions: View {
             if !vendor.desktopName.isEmpty, let dir = data.snapshot.desktopDir(profile.name, vendor.id) {
                 pathRow("Copy \(vendor.desktopName) data folder", dir)
             }
-            if let account = data.snapshot.account(profile.name, vendor.id) {
+            if vendor.id == "codex" {
+                ActionRow(title: "Sign in…", icon: "key") {
+                    actions.signIn(profile: profile.name, vendor: vendor.id, confirm: true)
+                }
+            } else if let account = data.snapshot.account(profile.name, vendor.id) {
                 ActionRow(title: account, icon: "person.crop.circle", trailing: "Sign in again…") {
                     actions.signIn(profile: profile.name, vendor: vendor.id, confirm: true)
                 }
@@ -961,7 +965,7 @@ private struct CapacitySegment: View {
     let namespace: Namespace.ID
 
     private var used: Int? { usage?.used }
-    private var maxed: Bool { (used ?? 0) >= Usage.maxedAt }
+    private var maxed: Bool { usage?.maxed ?? false }
 
     var body: some View {
         VStack(spacing: 3) {
@@ -980,7 +984,9 @@ private struct CapacitySegment: View {
         var parts = [vendor.label]
         if !vendor.hasUsageAPI { parts.append("no quota API") }
         else if signedOut { parts.append("not signed in") }
-        else if let u = used { parts.append(u >= Usage.maxedAt ? "maxed" : "\(u)% used") }
+        else if maxed { parts.append(usage?.note == .restricted ? "provider restriction" : "at N2 scheduling reserve") }
+        else if let u = used { parts.append("\(u)% used") }
+        else { parts.append(usage?.statusLabel ?? "usage unavailable") }
         return parts.joined(separator: " · ")
     }
 
@@ -991,6 +997,9 @@ private struct CapacitySegment: View {
         } else if signedOut {
             Capsule().fill(Ink.amber.opacity(0.18))
                 .overlay(Capsule().strokeBorder(Ink.amber.opacity(0.45)))
+        } else if maxed, usage?.note == .restricted {
+            Capsule().fill(maxedRed.opacity(0.18))
+                .overlay(Capsule().strokeBorder(maxedRed))
         } else if let u = used {
             Gauge(percent: u)
         } else if sweeping {
@@ -1226,12 +1235,15 @@ private struct SessionRow: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(RowButtonStyle(radius: 4))
-            .help("Move to another profile, copy the resume command")
+            .help("Send to another machine, move to another profile, or copy the resume command")
             .padding(.top, 6)
             .padding(.trailing, 5)
         }
         .contextMenu {
             Button { actions.resumeSession(session) } label: { Label("Resume", systemImage: "play") }
+            if session.vendor == "codex" {
+                Button { actions.sendSession(session) } label: { Label("Send to Machine…", systemImage: "laptopcomputer") }
+            }
             Menu("Move to") {
                 ForEach(destinations, id: \.self) { p in
                     Button(p) { actions.moveSession(session, to: p) }
@@ -1250,7 +1262,9 @@ private struct SessionRow: View {
             : destinations.map { p in
                 ClosureItem(p, symbol: "person.crop.circle") { actions.moveSession(session, to: p) }
             }
-        return [ClosureItem("Resume", symbol: "play") { actions.resumeSession(session) },
+        let send: [NSMenuItem] = session.vendor == "codex"
+            ? [ClosureItem("Send to Machine…", symbol: "laptopcomputer") { actions.sendSession(session) }] : []
+        return [ClosureItem("Resume", symbol: "play") { actions.resumeSession(session) }] + send + [
                 submenu("Move to", symbol: "arrowshape.turn.up.right", moves),
                 ClosureItem("Copy Resume Command", symbol: "doc.on.doc") { actions.copyResumeCommand(session) }]
     }

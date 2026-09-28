@@ -1,0 +1,105 @@
+{
+  "root": "/private/tmp/n2-prompt-spike-wjsu68rv",
+  "sourceBase": "613d01ca8ff2f997a9fb3008f76507a50d1da646",
+  "syntheticProvider": true,
+  "sender": "SHA256:q8vWY7WwldM4uXZdZc4DoY842Aaf0TLE389xAC1mn5I",
+  "receiver": "SHA256:EoREdQvqyPO3W6lMdtFPm9IDI4JH4iKowL6RL2NiyTE",
+  "cases": [
+    {
+      "task": "1111aaaa",
+      "switchedDuringPreparation": false,
+      "configAtDispatch": "/private/tmp/n2-prompt-spike-wjsu68rv/receiver/.n2-agents/Before/codex",
+      "providerReceipt": {
+        "task": "1111aaaa",
+        "config": "/private/tmp/n2-prompt-spike-wjsu68rv/receiver/.n2-agents/Before/codex",
+        "cwd": "/private/tmp/n2-prompt-spike-wjsu68rv/receiver/.n2-agents/fleet/tasks/work/1111aaaa",
+        "prompt": "Task:\nSynthetic task, do not contact any provider\n\nDeliverable files: copy requested deliverables into $N2_FLEET_OUTPUTS for explicit fetch/distribution. Source edits remain in the workspace.\n\nContinuation context (constraints, decisions, progress):\nPreserve synthetic context\n",
+        "outputs": "/private/tmp/n2-prompt-spike-wjsu68rv/receiver/.n2-agents/fleet/tasks/db/1111aaaa/out/artifacts",
+        "events": [
+          {
+            "type": "thread.started",
+            "thread_id": "session-1111aaaa"
+          },
+          {
+            "type": "turn.completed",
+            "model": "fixture-model",
+            "usage": {
+              "input_tokens": 50,
+              "cached_input_tokens": 30,
+              "output_tokens": 10
+            }
+          }
+        ]
+      },
+      "taskMetadata": {
+        "machine": "receiver",
+        "role": "worker",
+        "origin": "SHA256:q8vWY7WwldM4uXZdZc4DoY842Aaf0TLE389xAC1mn5I",
+        "vendor": "codex",
+        "label": "prompt-spike",
+        "created": "1790495613",
+        "started": "1790495613",
+        "rc": "0",
+        "ended": "1790495613",
+        "state": "completed"
+      },
+      "journalExists": false,
+      "usageTaskEvents": 0
+    },
+    {
+      "task": "2222bbbb",
+      "switchedDuringPreparation": true,
+      "configAtDispatch": "/private/tmp/n2-prompt-spike-wjsu68rv/receiver/.n2-agents/Before/codex",
+      "providerReceipt": {
+        "task": "2222bbbb",
+        "config": "/private/tmp/n2-prompt-spike-wjsu68rv/receiver/.n2-agents/After/codex",
+        "cwd": "/private/tmp/n2-prompt-spike-wjsu68rv/receiver/.n2-agents/fleet/tasks/work/2222bbbb",
+        "prompt": "Task:\nSynthetic task, do not contact any provider\n\nDeliverable files: copy requested deliverables into $N2_FLEET_OUTPUTS for explicit fetch/distribution. Source edits remain in the workspace.\n\nContinuation context (constraints, decisions, progress):\nPreserve synthetic context\n",
+        "outputs": "/private/tmp/n2-prompt-spike-wjsu68rv/receiver/.n2-agents/fleet/tasks/db/2222bbbb/out/artifacts",
+        "events": [
+          {
+            "type": "thread.started",
+            "thread_id": "session-2222bbbb"
+          },
+          {
+            "type": "turn.completed",
+            "model": "fixture-model",
+            "usage": {
+              "input_tokens": 50,
+              "cached_input_tokens": 30,
+              "output_tokens": 10
+            }
+          }
+        ]
+      },
+      "taskMetadata": {
+        "machine": "receiver",
+        "role": "worker",
+        "origin": "SHA256:q8vWY7WwldM4uXZdZc4DoY842Aaf0TLE389xAC1mn5I",
+        "vendor": "codex",
+        "label": "prompt-spike",
+        "created": "1790495613",
+        "started": "1790495613",
+        "rc": "0",
+        "ended": "1790495614",
+        "state": "completed"
+      },
+      "journalExists": false,
+      "usageTaskEvents": 0
+    }
+  ],
+  "passed": true,
+  "artifactHashes": {
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/fleet-prompt-attribution-spike/1111aaaa-meta": "eca73186a242b1d7afa20ff6a50acda26db28525003f8924376b1b4b14c8b1fd",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/fleet-prompt-attribution-spike/1111aaaa-out-artifacts-result.txt": "708c777e6f8f671c2bd5b8156e7ee776a2d151b84fdace5f7947b7407cda92b5",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/fleet-prompt-attribution-spike/1111aaaa-out-stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/fleet-prompt-attribution-spike/1111aaaa-out-stdout": "7b2bdc98052a6acc98236f588ddf9db01a51b5918b28687acc50ab6090c3679b",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/fleet-prompt-attribution-spike/2222bbbb-meta": "0fada62bb7aa8cab852ac65e65bd7099ce713619ce04d169ee4d0cb4e0e3193a",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/fleet-prompt-attribution-spike/2222bbbb-out-artifacts-result.txt": "708c777e6f8f671c2bd5b8156e7ee776a2d151b84fdace5f7947b7407cda92b5",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/fleet-prompt-attribution-spike/2222bbbb-out-stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/fleet-prompt-attribution-spike/2222bbbb-out-stdout": "2d43b3d5b28e1f0c4feac8b13738827a3f887db310a5eae31935573cef270586",
+    "/Users/sethwebster/Development/n2-fleet-qa-artifacts/fleet-prompt-attribution-spike/receipt.json": "79a5df6ca7fec0d4f79a4e5e750cdd9dffadab94c4959e6f75d887d67513b164"
+  },
+  "barrier": "Only copied fleet-exec.sh changed: immediately after preparing state, wait on per-task FIFO with a 60-second failure guard before continuing.",
+  "interpretation": "Actual signed task deliveries changed configuration route during preparation and retained no usage task events. Synthetic stdout is not a claim about real Codex default output or authenticated account identity."
+}
