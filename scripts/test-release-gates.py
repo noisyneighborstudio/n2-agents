@@ -8,19 +8,18 @@ import tempfile
 repo = Path(__file__).resolve().parents[1]
 verify = (repo / 'scripts/verify.sh').read_text()
 workflow = (repo / '.github/workflows/release.yml').read_text()
-# Publication must verify its own checkout before any signing or release step.
-assert workflow.count('run: scripts/verify.sh') == 1
-assert workflow.index('run: scripts/verify.sh') < workflow.index('- name: Import Developer ID')
-assert workflow.index('run: scripts/verify.sh') < workflow.index('- name: Release')
-assert 'continue-on-error' not in workflow
-assert 'if:' not in workflow[:workflow.index('- name: Release')]
-assert 'run: scripts/verify.sh' in (repo / '.github/workflows/ci.yml').read_text()
-# The fleet suites run on every push, and publication waits for them.
-for name in ('ci.yml', 'release.yml'):
-    text = (repo / '.github/workflows' / name).read_text()
-    assert 'run: sh scripts/test-fleet.sh' in text, name
-    assert 'N2_FLEET_REQUIRE_LIVE_SSH: "1"' in text, name
-assert 'needs: fleet' in workflow[:workflow.index('- name: Release')]
+ci = (repo / '.github/workflows/ci.yml').read_text()
+# CI runs every gate on every push: verify.sh and the fleet suites, live SSH required.
+assert ci.startswith('name: Verify slices\n') and 'run: scripts/verify.sh' in ci
+assert 'run: sh scripts/test-fleet.sh' in ci and 'N2_FLEET_REQUIRE_LIVE_SSH: "1"' in ci
+# Publication starts only from a successful CI run of a push, and publishes the
+# exact commit that run verified, before any signing or release step.
+assert 'workflow_run:\n    workflows: [Verify slices]\n    types: [completed]' in workflow
+assert "if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'" in workflow
+checkout = workflow.index('ref: ${{ github.event.workflow_run.head_sha }}')
+assert checkout < workflow.index('- name: Import Developer ID') < workflow.index('- name: Release')
+assert workflow.count('if:') == 2 and 'if: always()' in workflow  # the gate, and credential cleanup
+assert 'continue-on-error' not in workflow and 'push:' not in workflow
 
 def run(failure, source=verify):
     with tempfile.TemporaryDirectory(prefix='n2-release-gates-') as tmp:
