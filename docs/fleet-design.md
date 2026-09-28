@@ -1993,6 +1993,16 @@ a refused transfer leaves the source tree untouched. `--context` / `--context-fi
 carries the task, constraints, decisions, progress and next steps so the
 receiving agent does not repeat discovery.
 
+Every received task bundle, workspace, result and deliverable archive passes
+`workspace-pack.py --verify` before `tar` sees it. It reads tar members, not a
+`tar -tv` listing, whose text is ambiguous when a name holds " -> " or a
+newline. One bad member refuses the whole archive: anything but a regular file,
+directory, symlink or hard link (so no fifo or device); an absolute path or any
+`..` component in a name or link target; or a control character in either.
+Links get no lexical containment test, because a chain such as `a -> .` then
+`b -> a/a/..` defeats it. tar's own refusal of `..` and of writes through
+symlinks stays a second layer. Proof: `scripts/test-archive-guard.sh`.
+
 ### Notifications
 
 Completion and disconnection are `fleet_event` records *and* a fan-out:

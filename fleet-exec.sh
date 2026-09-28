@@ -331,19 +331,12 @@ exec_ws_pack() {  # <srcdir> <outfile>
 }
 
 # A received archive is inspected BEFORE extraction: an absolute member, a
-# member that climbs out with .., or a link whose target does either, is a
-# refusal for the whole archive — we do not extract "the safe part" of a
-# hostile one.
+# member that climbs out with .., a link whose target does either, or a
+# special file (fifo, device) is a refusal for the whole archive — we do not
+# extract "the safe part" of a hostile one. tar's own refusals stay a second
+# layer.
 exec_ws_verify() {  # <archive>
-  tar -tf "$1" 2>/dev/null | while IFS= read -r ewv_m; do
-    case $ewv_m in
-      /*|../*|*/../*|*/..) echo bad; break ;;
-    esac
-  done | grep -q bad && return 1
-  tar -tvf "$1" 2>/dev/null | awk '
-    /^l/ { i=index($0," -> "); if (i) { t=substr($0,i+4);
-           if (t ~ /^\// || t ~ /(^|\/)\.\.(\/|$)/) { print "bad"; exit } } }' | grep -q bad && return 1
-  return 0
+  /usr/bin/python3 "${scripts_dir:-$repo}/workspace-pack.py" --verify "$1" 2>/dev/null
 }
 
 exec_ws_unpack() {  # <archive> <destdir>

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Pack a workspace, materializing linked Git metadata without editing the source."""
+"""Pack a workspace, materializing linked Git metadata without editing the source,
+and verify a received workspace or result archive before it is extracted."""
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 
 
@@ -63,9 +65,30 @@ def pack(source, output):
         subprocess.run(['tar', '-cf', str(output), '-C', str(stage), '.'], check=True)
 
 
+def verify(archive):
+    # A `tar -tv` listing is ambiguous text: a name may hold " -> " or a newline.
+    # Read the members themselves. Links may not use ".." at all: lexical
+    # containment is fooled by chains such as `a -> .` then `b -> a/a/..`.
+    with tarfile.open(archive) as members:
+        for member in members:
+            if not (member.isreg() or member.isdir() or member.issym() or member.islnk()):
+                raise ValueError('special file')
+            paths = (member.name, member.linkname) if member.issym() or member.islnk() else (member.name,)
+            for path in paths:
+                if path.startswith('/') or '..' in PurePosixPath(path).parts:
+                    raise ValueError('path leaves the archive')
+                # Line-based tools downstream read names one per line.
+                if any(ord(c) < 32 or ord(c) == 127 for c in path):
+                    raise ValueError('control character in a name')
+
+
 if __name__ == '__main__':
     try:
-        pack(sys.argv[1], sys.argv[2])
-    except (ValueError, OSError, subprocess.SubprocessError, IndexError):
-        print('agents: could not pack a self-contained workspace', file=sys.stderr)
+        if sys.argv[1] == '--verify':
+            verify(sys.argv[2])
+        else:
+            pack(sys.argv[1], sys.argv[2])
+    except (ValueError, OSError, tarfile.TarError, subprocess.SubprocessError, IndexError):
+        if sys.argv[1:2] != ['--verify']:
+            print('agents: could not pack a self-contained workspace', file=sys.stderr)
         sys.exit(1)

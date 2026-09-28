@@ -16,13 +16,12 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
 
 ## Queue
 
-1. **Probe workspace archives adversarially** (`fleet-archive-probes`).
-   Behavior: hostile task workspaces and results from a signed peer (symlinks,
-   hardlinks, `..` paths, device files, oversized or deeply nested trees) are
-   refused before any byte lands outside the task directory.
-   Proof: runtime probes against `workspace-pack.py` and result import with
-   disposable peers; each probe fails against a copy with its guard removed.
-   Scope: archive handling only; no live providers or real machines.
+1. **Bound received archive size** (`fleet-archive-limits`).
+   Behavior: a signed peer cannot exhaust disk or inodes with an oversized,
+   highly compressed or very deep task/result archive; the refusal names the limit.
+   Proof: synthetic archives just under and over each limit through
+   `exec_ws_unpack`; the over-limit case extracts nothing.
+   Scope: limits and their message; choose limits from real workspace sizes first.
 
 ## Noticed
 

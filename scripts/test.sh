@@ -63,7 +63,7 @@ fake_path="$fake_bin:/usr/bin:/bin"
 
 # --- syntax ----------------------------------------------------------------
 python3 tests/ReonboardTests.py
-sh -n agents vendors.sh fleet.sh fleet-sync.sh fleet-exec.sh scripts/test-fleet-spike.sh scripts/test-exec.sh scripts/test-sync-review.sh scripts/test-native-ui.sh shell/agent-as
+sh -n agents vendors.sh fleet.sh fleet-sync.sh fleet-exec.sh scripts/test-fleet-spike.sh scripts/test-exec.sh scripts/test-sync-review.sh scripts/test-archive-guard.sh scripts/test-native-ui.sh shell/agent-as
 zsh -n install.sh uninstall.sh tray/build.sh \
   scripts/release-build.sh scripts/make-appcast.sh scripts/release-prepare.sh \
   scripts/publish-appcast.sh shell/agents.zsh
@@ -92,6 +92,7 @@ swiftc tray/ShellPath.swift tests/ShellPathTests.swift -o "$path_test"
 "$path_test"
 sh scripts/test-fleet-settings.sh
 sh scripts/test-sync-review.sh
+sh scripts/test-archive-guard.sh
 icon_test=$(mktemp -d "$TMPDIR/statusicon.XXXXXX")/status-icon-tests
 swiftc tray/StatusIcon.swift tests/StatusIconTests.swift -o "$icon_test"
 "$icon_test"
