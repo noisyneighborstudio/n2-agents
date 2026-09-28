@@ -26,7 +26,7 @@ new usage journal. Neither establishes fresh fleet headroom.
 - [x] Reverify managed-tool authorization, replication and safe update deferral. Signed-peer regression now covers disruption-classification consent, version-only updates, legacy approvals and both install paths; independent source security recheck is clear.
 - [x] Verify dispatch eligibility, preferences and expected-completion ranking: 97 execution checks and focused preference/prompt/delivery checks pass.
 - [x] Verify ordinary dirty and linked-workspace/context handoff and declared deliverable destinations. Nested submodule metadata remains a documented limitation.
-- [ ] Verify native and in-app notifications, disconnection handling and reconciliation. Native parser/action tests pass; GUI end-to-end checks remain.
+- [ ] Verify native and in-app notifications, disconnection handling and reconciliation. The packaged app's activity feed shows the disconnection and the completion after Check in (M5 run on `29a2ceb`, asserted by `scripts/accept-native-physical-reconcile.py`), and a missing notification permission is shown rather than hidden. Desktop banner delivery remains unverified.
 - [ ] Verify complete CLI/native UI flows and source/release packaging.
 - [x] Pass regression suites and native builds on the candidate. CI runs `scripts/verify.sh` and `scripts/test-fleet.sh` (live SSH required, no skips) on every push; see "Integrated candidate acceptance".
 - [x] Complete independent adversarial and security reviews; fix and recheck findings. Merge-resolution and post-04c5331 reviews are clear; runtime archive probes found three gaps, fixed with `scripts/test-archive-guard.sh`.

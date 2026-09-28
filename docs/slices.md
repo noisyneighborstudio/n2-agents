@@ -16,28 +16,23 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
 
 ## Queue
 
-1. **Prove notifications end to end in the app** (`fleet-notification-e2e`).
-   Behavior: a disposable peer's task completion and disconnection reach the
-   packaged QA app's in-app feed and a native notification, and reconcile after
-   reconnecting.
-   Proof: packaged acceptance with disposable homes, observed through
-   accessibility events, not sleeps; a suppressed event fails it.
-   Scope: notifications and reconciliation; no real machines.
-
-2. **Walk the complete fleet flows in the packaged app** (`fleet-ui-flows`).
+1. **Walk the complete fleet flows in the packaged app** (`fleet-ui-flows`).
    Behavior: enroll, sync (including review and share), dispatch, fetch and
    revoke work from the QA app and CLI against disposable peers.
    Proof: packaged acceptance receipts for each flow on one candidate SHA.
    Scope: disposable peers only; no live installation.
 
-3. **Mark PR #3 ready** (`fleet-pr-ready`).
+2. **Mark PR #3 ready** (`fleet-pr-ready`).
    Behavior: PR #3's description states what fleet does, its evidence and its
    remaining limitations; the PR leaves draft.
    Proof: PR body cross-checked against `docs/fleet-readiness.md`; CI green on
    the head SHA. Scope: description and draft state only; merging needs approval.
 
-Blocked on authorization: per-provider sign-in lifecycle evidence needs live
-provider accounts (readiness: "provider-specific authentication lifecycle").
+Blocked on authorization:
+- Per-provider sign-in lifecycle evidence needs live provider accounts
+  (readiness: "provider-specific authentication lifecycle").
+- Desktop banner delivery needs notification permission for a fixed QA bundle
+  id; the acceptance copies use a unique id and never change OS permissions.
 
 ## Noticed
 

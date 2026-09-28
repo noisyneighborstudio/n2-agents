@@ -53,6 +53,14 @@ def verify_finished(tree):
     assert 'static text finished of' in tree and 'static text unreachable of' not in tree
 
 
+def verify_feed(tree, *titles):
+    # The durable half of a fleet event: the in-app activity feed, which must
+    # not depend on a desktop banner having landed.
+    assert 'static text FLEET ACTIVITY of' in tree, 'activity feed not shown'
+    for title in titles:
+        assert f'static text {title} of' in tree, f'activity feed lacks {title!r}'
+
+
 def native_check_in(evidence, local_meta):
     assert evidence['transport'] == 'physical SSH', 'native acceptance requires a physical peer'
     fixture = Path(evidence['root'])
@@ -148,6 +156,7 @@ for item in windows where item[kCGWindowOwnerPID as String] as? Int == pid {
         physical.run(['swift', str(REPO / 'scripts/native-physical-wait.swift'), str(pid), 'unreachable'])
         before = capture('unreachable')
         assert 'static text unreachable of' in before and 'static text physical-reconcile of' in before
+        verify_feed(before, 'physical-worker disconnected')
         # Negative control: the real unreachable capture must fail the finished check.
         try:
             verify_finished(before)
@@ -155,6 +164,12 @@ for item in windows where item[kCGWindowOwnerPID as String] as? Int == pid {
             pass
         else:
             raise AssertionError('finished check accepted unreachable state')
+        try:
+            verify_feed(before, 'Task finished on physical-worker')
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError('feed check accepted a completion that had not happened')
         # SwiftUI currently exposes these buttons without names. The fixture has
         # one task and no profiles; require that exact observed layout before use.
         assert ax('count buttons of scroll area 1 of group 1 of window 1') == '10'
@@ -169,9 +184,16 @@ for item in windows where item[kCGWindowOwnerPID as String] as? Int == pid {
         ax('click button 1 of group 1 of window 1')
         ax('click menu bar item 1 of menu bar 1')
         physical.run(['swift', str(REPO / 'scripts/native-physical-wait.swift'), str(pid), 'finished'])
-        verify_finished(capture('recovered'))
+        recovered = capture('recovered')
+        verify_finished(recovered)
+        verify_feed(recovered, 'physical-worker disconnected', 'Task finished on physical-worker')
+        # A copy with a unique bundle id has no notification permission, so the
+        # banner attempt must surface its failure instead of passing silently.
+        banner = ('permission-unavailable-shown' if 'Desktop notifications are unavailable' in recovered
+                  else 'submitted')
         evidence['native'] = {'unreachableShown': True, 'settingsResponsiveWhileHeld': True,
                               'finishedShown': True, 'negativeControlRejected': True,
+                              'feedShowsDisconnectAndCompletion': True, 'banner': banner,
                               'binarySha256': hashlib.sha256(Path(executable).read_bytes()).hexdigest()}
     finally:
         release(base / 'release')
