@@ -12,7 +12,16 @@ enum FleetSettingsLoader {
         ["peers"],
         ["sync", "service", "status"],
         ["sync", "conflicts"],
+        ["sync", "review"],
     ]
+
+    /// `sync review` lists one held profile per line, or a sentence when none
+    /// are held. Profile names are letters and digits only, so the sentence
+    /// never reads as a profile.
+    static func heldProfiles(_ output: String) -> [String] {
+        output.split(separator: "\n").map(String.init)
+            .filter { $0.range(of: "^[A-Za-z0-9]+$", options: .regularExpression) != nil }
+    }
 
     /// Each CLI invocation blocks while its process runs. Give every command
     /// its own dispatch work item so an unreachable peer does not serialize the

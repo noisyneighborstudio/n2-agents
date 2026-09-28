@@ -38,6 +38,11 @@ import Foundation
         precondition(values == commands.map { $0.joined(separator: " ") },
                      "loader changed command result order: \(values)")
         started.continuation.finish(); finished.continuation.finish()
-        print("Fleet settings concurrent reads, main-actor responsiveness and result order passed")
+        // The exact `agents fleet sync review` output (scripts/test-sync-review.sh).
+        precondition(FleetSettingsLoader.heldProfiles("nothing to review").isEmpty,
+                     "the empty-review sentence is not a profile")
+        precondition(FleetSettingsLoader.heldProfiles("Client\nShared") == ["Client", "Shared"],
+                     "held profiles are listed in order")
+        print("Fleet settings concurrent reads, main-actor responsiveness, result order and held profiles passed")
     }
 }

@@ -6,6 +6,7 @@ struct FleetSyncSettings: View {
     @State private var categories: [String: Bool] = [:]
     @State private var providers: [(String, String, Bool)] = []
     @State private var conflicts: [(String, String)] = []
+    @State private var held: [String] = []
     @State private var status = "Loading fleet…"
     @State private var message = ""
     @State private var busy = false
@@ -54,6 +55,17 @@ struct FleetSyncSettings: View {
                     .disabled(busy)
                 }
             }
+            if !held.isEmpty {
+                Text("Held since this Mac joined. Other Macs don’t get these profiles until you share them.")
+                    .font(.system(size: 11)).foregroundStyle(Ink.secondary)
+                ForEach(held, id: \.self) { profile in
+                    HStack {
+                        Text(profile).font(.system(size: 11))
+                        Button("Share with the fleet") { perform(["sync", "share", profile]) }
+                    }
+                    .disabled(busy)
+                }
+            }
             if !message.isEmpty { Text(message).font(.system(size: 11)).textSelection(.enabled) }
             if busy { ProgressView().controlSize(.small) }
         }
@@ -86,6 +98,7 @@ struct FleetSyncSettings: View {
         let peers = rows(values[2]).compactMap { f in f.count >= 5 ? "\(f[1]): \(f[4])" : nil }
         status = (peers + [values[3]]).joined(separator: "\n")
         conflicts = rows(values[4]).compactMap { f in f.count >= 2 ? (f[0], f[1]) : nil }
+        held = FleetSettingsLoader.heldProfiles(values[5])
     }
 
     private func rows(_ text: String) -> [[String]] {

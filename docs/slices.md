@@ -16,19 +16,28 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
 
 ## Queue
 
-1. **Show held profiles in the tray** (`fleet-review-ui`).
-   Behavior: after joining, Fleet settings lists profiles held for review, each
-   with a Share action that runs `agents fleet sync share`; the list empties
-   when nothing is held.
-   Proof: native fleet UI test with a disposable home that has held profiles;
-   sharing one removes it from the list and from `agents fleet sync review`.
-   Scope: list and share only; no conflict resolution UI changes.
+1. **Prove notifications end to end in the app** (`fleet-notification-e2e`).
+   Behavior: a disposable peer's task completion and disconnection reach the
+   packaged QA app's in-app feed and a native notification, and reconcile after
+   reconnecting.
+   Proof: packaged acceptance with disposable homes, observed through
+   accessibility events, not sleeps; a suppressed event fails it.
+   Scope: notifications and reconciliation; no real machines.
 
-2. **Mark PR #3 ready** (`fleet-pr-ready`).
+2. **Walk the complete fleet flows in the packaged app** (`fleet-ui-flows`).
+   Behavior: enroll, sync (including review and share), dispatch, fetch and
+   revoke work from the QA app and CLI against disposable peers.
+   Proof: packaged acceptance receipts for each flow on one candidate SHA.
+   Scope: disposable peers only; no live installation.
+
+3. **Mark PR #3 ready** (`fleet-pr-ready`).
    Behavior: PR #3's description states what fleet does, its evidence and its
    remaining limitations; the PR leaves draft.
    Proof: PR body cross-checked against `docs/fleet-readiness.md`; CI green on
    the head SHA. Scope: description and draft state only; merging needs approval.
+
+Blocked on authorization: per-provider sign-in lifecycle evidence needs live
+provider accounts (readiness: "provider-specific authentication lifecycle").
 
 ## Noticed
 

@@ -28,8 +28,8 @@ new usage journal. Neither establishes fresh fleet headroom.
 - [x] Verify ordinary dirty and linked-workspace/context handoff and declared deliverable destinations. Nested submodule metadata remains a documented limitation.
 - [ ] Verify native and in-app notifications, disconnection handling and reconciliation. Native parser/action tests pass; GUI end-to-end checks remain.
 - [ ] Verify complete CLI/native UI flows and source/release packaging.
-- [ ] Pass regression suites and native builds on the candidate.
-- [ ] Complete independent adversarial and security reviews; fix and recheck findings.
+- [x] Pass regression suites and native builds on the candidate. CI runs `scripts/verify.sh` and `scripts/test-fleet.sh` (live SSH required, no skips) on every push; see "Integrated candidate acceptance".
+- [x] Complete independent adversarial and security reviews; fix and recheck findings. Merge-resolution and post-04c5331 reviews are clear; runtime archive probes found three gaps, fixed with `scripts/test-archive-guard.sh`.
 - [ ] Update PR #3's body to reflect the final implementation and evidence, then mark ready.
 
 ## T3 adapter, after fleet readiness
