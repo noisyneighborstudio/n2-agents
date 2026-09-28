@@ -9,9 +9,21 @@ repo = Path(__file__).resolve().parents[1]
 verify = (repo / 'scripts/verify.sh').read_text()
 workflow = (repo / '.github/workflows/release.yml').read_text()
 ci = (repo / '.github/workflows/ci.yml').read_text()
-# CI runs every gate on every push: verify.sh and the fleet suites, live SSH required.
-assert ci.startswith('name: Verify slices\n') and 'run: scripts/verify.sh' in ci
-assert 'run: sh scripts/test-fleet.sh' in ci and 'N2_FLEET_REQUIRE_LIVE_SSH: "1"' in ci
+# CI runs every gate on every push, as parallel jobs: the checks, each test
+# group, and each fleet shard with live SSH required.
+assert ci.startswith('name: Verify slices\n')
+for gate in ('run: scripts/check.sh format', 'run: scripts/check.sh lint', 'run: scripts/smoke.sh',
+             'run: zsh scripts/test.sh ${{ matrix.group }}', 'group: [swift, cli, loop, auth, dispatch]',
+             'suite: [transport, sync-1, sync-36, sync-48, exec]', 'N2_FLEET_REQUIRE_LIVE_SSH: "1"',
+             'N2_FLEET_SUITES=transport sh scripts/test-fleet.sh', 'N2_SYNC_STOP_AFTER=35 sh scripts/test-sync.sh',
+             'N2_SYNC_FRESH_FROM=36 N2_SYNC_STOP_AFTER=47 sh scripts/test-sync.sh',
+             'N2_SYNC_FRESH_FROM=48 sh scripts/test-sync.sh', 'sh scripts/test-exec.sh && sh scripts/test-native-ui.sh'):
+    assert gate in ci, gate
+# Only pushes run on the self-hosted Macs. A pull request runs only from a fork,
+# and then on GitHub-hosted macOS.
+guard = ("    if: github.event_name == 'push' || github.event.pull_request.head.repo.fork\n"
+         "    runs-on: ${{ github.event_name == 'push' && fromJSON('[\"self-hosted\",\"macOS\",\"n2\"]') || 'macos-26' }}\n")
+assert ci.count(guard) == 3 and ci.count('runs-on:') == 3 and ci.count('if:') == 3
 # Publication starts only from a successful CI run of a push, and publishes the
 # exact commit that run verified, before any signing or release step.
 assert 'workflow_run:\n    workflows: [Verify slices]\n    types: [completed]' in workflow

@@ -6,7 +6,7 @@ unset OPENAI_API_KEY ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TO
 TRAPZERR() { print -u2 -- "Test command failed at ${funcfiletrace[1]}"; }
 cd "${0:A:h}/.."
 
-test_root="$PWD/.test-tmp"
+test_root="$PWD/.test-tmp-${1:-all}"
 rm -rf "$test_root"
 mkdir -p "$test_root/tmp" "$test_root/cache/clang" "$test_root/cache/swift"
 trap 'rm -rf "$test_root"' EXIT
@@ -60,8 +60,18 @@ exit 44
 FAKE
 chmod +x "$fake_bin/security"
 fake_path="$fake_bin:/usr/bin:/bin"
+home="$test_root/home"
+mkdir -p "$home"
+run_agents() { HOME="$home" PATH="$fake_path" ./agents "$@" }
+codex_auth='{"tokens": {"access_token": "t", "account_id": "a"}}'
+
+# CI runs these groups as parallel jobs; with no argument, all of them run.
+group=${1:-all}
+case $group in all|swift|cli|loop|auth|dispatch) ;; *) print -u2 "usage: scripts/test.sh [swift|cli|loop|auth|dispatch]"; exit 2 ;; esac
+in_group() { [[ $group == all || $group == $1 ]] }
 
 # --- syntax ----------------------------------------------------------------
+if in_group cli; then
 python3 tests/ReonboardTests.py
 sh -n agents vendors.sh fleet.sh fleet-sync.sh fleet-exec.sh scripts/test-fleet-spike.sh scripts/test-exec.sh scripts/test-sync-review.sh scripts/test-sync-status.sh scripts/test-archive-guard.sh scripts/test-update.sh scripts/test-native-ui.sh shell/agent-as
 zsh -n install.sh uninstall.sh tray/build.sh \
@@ -69,6 +79,14 @@ zsh -n install.sh uninstall.sh tray/build.sh \
   scripts/publish-appcast.sh shell/agents.zsh
 bash -n shell/agents.bash
 command -v fish >/dev/null && fish -n shell/agents.fish
+sh scripts/test-update.sh
+sh scripts/test-sync-review.sh
+sh scripts/test-sync-status.sh
+sh scripts/test-archive-guard.sh
+fi
+
+# --- native (Swift) --------------------------------------------------------
+if in_group swift; then
 swiftc -typecheck tray/main.swift tray/NativeAuth.swift tray/UpdateChannel.swift tray/Vendors.swift tray/ProfileColor.swift tray/StatusIcon.swift tray/QuotaToast.swift tray/Ink.swift tray/LabMark.swift \
   tray/PanelModel.swift tray/UsageDetailsView.swift tray/AccountOwnership.swift tray/NativeSignIn.swift tray/NativeSessionTransfer.swift tray/PanelView.swift tray/SettingsWindowView.swift tray/FleetSyncSettings.swift tray/FleetSettingsLoader.swift tray/ProfileSetup.swift tray/GlassWindow.swift tray/ShellPath.swift tray/Hotkey.swift tray/FleetModel.swift tray/FleetView.swift tray/FleetControl.swift
 sh scripts/test-panel-usage.sh
@@ -91,15 +109,13 @@ path_test=$(mktemp -d "$TMPDIR/shellpath.XXXXXX")/shell-path-tests
 swiftc tray/ShellPath.swift tests/ShellPathTests.swift -o "$path_test"
 "$path_test"
 sh scripts/test-fleet-settings.sh
-sh scripts/test-update.sh
-sh scripts/test-sync-review.sh
-sh scripts/test-sync-status.sh
-sh scripts/test-archive-guard.sh
 icon_test=$(mktemp -d "$TMPDIR/statusicon.XXXXXX")/status-icon-tests
 swiftc tray/StatusIcon.swift tests/StatusIconTests.swift -o "$icon_test"
 "$icon_test"
+fi
 
 # --- vendor adapter table --------------------------------------------------
+if in_group cli; then
 # The config-dir env var is the single most load-bearing fact in the app: it
 # is how a process gets pinned to a profile. Assert it for each lab so a bad
 # edit to vendors.sh is caught here rather than by silently running an agent as
@@ -121,9 +137,6 @@ test "$(sh -c '. ./vendors.sh; vendor_env_value muse /root/P/muse/muse')" = "/ro
 test "$(sh -c '. ./vendors.sh; vendor_env_value claude /root/P/claude')" = "/root/P/claude"
 
 # --- profile lifecycle, multi-vendor ---------------------------------------
-home="$test_root/home"
-mkdir -p "$home"
-run_agents() { HOME="$home" PATH="$fake_path" ./agents "$@" }
 
 run_agents new Work --vendors claude,codex,grok,muse >/dev/null
 for v in claude codex grok; do test -d "$home/.n2-agents/Work/$v"; done
@@ -215,7 +228,6 @@ codex_usage() {  # limit reached, primary window, secondary window
 short() { printf '{"used_percent": %s, "limit_window_seconds": 18000, "reset_at": 1790393072}' "$1" }
 weekly() { printf '{"used_percent": %s, "limit_window_seconds": 604800, "reset_at": 1790411072}' "$1" }
 export N2_CODEX_USAGE_URL="file://$test_root/codex-usage.json"
-codex_auth='{"tokens": {"access_token": "t", "account_id": "a"}}'
 echo "$codex_auth" > "$home/.n2-agents/Work/codex/auth.json"
 codex_usage false "$(weekly 44)" null
 usage=$(run_agents best --porcelain --vendor codex)
@@ -642,7 +654,10 @@ grep -Fq 'runCLI(["porcelain"])' tray/main.swift
 grep -Fq 'clip.layer?.masksToBounds = true' tray/GlassWindow.swift
 grep -Fq 'hasShadow = true' tray/GlassWindow.swift
 
+fi
+
 # --- loop ------------------------------------------------------------------
+if in_group loop; then
 # Pure logic first: reports, failure classes, paths, slot picking, plan
 # validation, and what "done" means.
 loop_unit=$(mktemp -d "$TMPDIR/loopunit.XXXXXX")/loop-tests
@@ -817,9 +832,12 @@ wait_for DONE
 [ "$(field 'len([t for t in s["turns"] if t["role"] == "planner" and t["outcome"] == "quota"])')" -ge 5 ]
 
 run_agents help | grep -Fq 'agents loop "goal"'
-
-sh scripts/test-usage.sh
+# Parent death leaves recoverable account-bound planner work.
 python3 scripts/test-bound-planner.py
+fi
+
+# --- fleet auth and profile identity ---------------------------------------
+if in_group auth; then
 python3 scripts/test-profile-metadata.py
 python3 scripts/test-profile-routing.py
 python3 scripts/test-fleet-auth-response.py
@@ -835,8 +853,12 @@ python3 scripts/test-fleet-auth-login.py
 python3 scripts/test-fleet-auth-migration.py
 python3 scripts/test-fleet-auth-bridge.py
 python3 scripts/test-fleet-auth-websocket.py
-python3 scripts/test-fleet-session.py
+fi
 
+# --- usage, dispatch and fleet execution -------------------------------------
+if in_group dispatch; then
+sh scripts/test-usage.sh
+python3 scripts/test-fleet-session.py
 python3 scripts/test-physical-reconcile.py --peer local
 python3 scripts/accept-physical-prompt.py --peer local
 python3 scripts/test-task-admission-race.py
@@ -846,5 +868,6 @@ python3 scripts/test-fleet-shell.py
 sh scripts/test-tool-disruption-approval.sh
 python3 scripts/test-usage-ranking.py
 python3 scripts/test-release-gates.py
+fi
 
-echo "All tests passed"
+echo "All tests passed ($group)"

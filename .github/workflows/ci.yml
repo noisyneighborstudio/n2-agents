@@ -7,26 +7,62 @@ permissions:
 concurrency:
   group: verify-${{ github.ref }}
   cancel-in-progress: true
+# Every gate runs on every push, split into jobs that run at the same time on
+# the n2 self-hosted Macs. A pull request from this repository runs nothing: the
+# push run already checks its head commit. A fork's pull request runs on
+# GitHub-hosted macOS, so outside code never executes on those machines.
 jobs:
-  fleet:
-    # Transport, replication, execution and native fleet suites. Its own job:
-    # verify alone is close to its limit. Live SSH is required, not skipped.
-    runs-on: macos-26
-    timeout-minutes: 40
+  checks:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.fork
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","macOS","n2"]') || 'macos-26' }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - name: Fleet suites
-        env:
-          N2_FLEET_REQUIRE_LIVE_SSH: "1"
-        run: sh scripts/test-fleet.sh
-  verify:
-    runs-on: macos-26
+      - name: Formatting
+        run: scripts/check.sh format
+      - name: Lint with compiler warnings as errors
+        run: scripts/check.sh lint
+      - name: Smoke
+        run: scripts/smoke.sh
+  tests:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.fork
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","macOS","n2"]') || 'macos-26' }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [swift, cli, loop, auth, dispatch]
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - name: Verify checkout
-        run: scripts/verify.sh
+      - name: Tests (${{ matrix.group }})
+        run: zsh scripts/test.sh ${{ matrix.group }}
+  fleet:
+    # Transport, replication, execution and native fleet suites. Live SSH is
+    # required, not skipped. Sync sections 36 and 48 each pass from a fresh
+    # fixture, so the replication suite runs as three shards.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.fork
+    runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","macOS","n2"]') || 'macos-26' }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [transport, sync-1, sync-36, sync-48, exec]
+    env:
+      N2_FLEET_REQUIRE_LIVE_SSH: "1"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Fleet (${{ matrix.suite }})
+        run: |
+          case "${{ matrix.suite }}" in
+            transport) N2_FLEET_SUITES=transport sh scripts/test-fleet.sh ;;
+            sync-1) N2_SYNC_STOP_AFTER=35 sh scripts/test-sync.sh ;;
+            sync-36) N2_SYNC_FRESH_FROM=36 N2_SYNC_STOP_AFTER=47 sh scripts/test-sync.sh ;;
+            sync-48) N2_SYNC_FRESH_FROM=48 sh scripts/test-sync.sh ;;
+            exec) sh scripts/test-exec.sh && sh scripts/test-native-ui.sh ;;
+          esac
