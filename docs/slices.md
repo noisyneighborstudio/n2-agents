@@ -27,9 +27,12 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
 Blocked on authorization:
 - Per-provider sign-in lifecycle evidence needs live provider accounts
   (readiness: "provider-specific authentication lifecycle").
-- Merging PR #3 publishes a Continuous build and needs explicit approval.
 
 ## Noticed
+
+- Fleet panel reads have no timeout. A newer read correctly replaces an older
+  one, but a CLI read that hangs keeps its process, so a hang stacks one per
+  poll. Bound each read (kill after a limit) and report it as a read error.
 
 - Any same-user process can open `n2agents://reonboard-done` (or `login-done`)
   and make the app treat a running account reset as finished.
