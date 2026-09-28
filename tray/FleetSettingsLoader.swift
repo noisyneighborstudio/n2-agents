@@ -28,11 +28,12 @@ enum FleetSettingsLoader {
             .filter { $0.range(of: "^[A-Za-z0-9]+$", options: .regularExpression) != nil }
     }
 
-    /// Each CLI invocation blocks while its process runs. Give every command
-    /// its own dispatch work item so an unreachable peer does not serialize the
-    /// otherwise local settings reads behind it.
-    static func load(run: @escaping @Sendable ([String]) -> String) async -> [String] {
-        await withTaskGroup(of: (Int, String).self, returning: [String].self) { group in
+    /// Each CLI invocation blocks while its process runs, so every command gets
+    /// its own dispatch work item, and each result is delivered the moment it
+    /// arrives: one slow read (a peer probe) never holds back the others.
+    static func load(run: @escaping @Sendable ([String]) -> String,
+                     each: @escaping @MainActor @Sendable (Int, String) -> Void) async {
+        await withTaskGroup(of: Void.self) { group in
             for (index, command) in commands.enumerated() {
                 group.addTask {
                     let value = await withCheckedContinuation { continuation in
@@ -40,17 +41,15 @@ enum FleetSettingsLoader {
                             continuation.resume(returning: run(command))
                         }
                     }
-                    return (index, value)
+                    await each(index, value)
                 }
             }
-
-            var values = Array(repeating: "", count: commands.count)
-            for await (index, value) in group {
-                values[index] = value
-            }
-            return values
         }
     }
+
+    /// A read that hangs reports this instead of holding its section forever.
+    nonisolated(unsafe) static var timeout: TimeInterval = 20
+    static let timedOut = "Timed out"
 
     /// Synchronous by design. Call only from a detached task, never the UI.
     static func run(_ args: [String]) -> String { command(args).output }
@@ -65,9 +64,21 @@ enum FleetSettingsLoader {
         env["PATH"] = commandPATH
         process.environment = env
         process.standardOutput = pipe; process.standardError = pipe
+        let exited = DispatchSemaphore(value: 0), drained = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
         do { try process.run() } catch { return (1, error.localizedDescription) }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return (process.terminationStatus, String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+        let output = OutputBox()
+        DispatchQueue.global(qos: .utility).async {
+            output.data = pipe.fileHandleForReading.readDataToEndOfFile()
+            drained.signal()
+        }
+        guard exited.wait(timeout: .now() + timeout) == .success else {
+            process.terminate()
+            return (-1, timedOut)
+        }
+        drained.wait()
+        return (process.terminationStatus, String(data: output.data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
     }
 }
+
+private final class OutputBox: @unchecked Sendable { var data = Data() }

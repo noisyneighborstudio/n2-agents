@@ -114,6 +114,14 @@ CI must be green on the exact pushed commit before reporting a slice complete.
   break it once on purpose and confirm it goes red. Restore the source and prove
   it passes before committing. Never push the deliberate break.
 
+## UI rules
+
+- A view that reads through the CLI never waits on all of it. Each section
+  renders from its own read as it arrives, shows a loading state while pending
+  and an unavailable state after a timeout, and keeps its last values during a
+  refresh. An action disables only its own control. Prove it with a test that
+  holds one read while the others render (`tests/FleetSettingsLoaderTests.swift`).
+
 ## Repository invariants
 
 - Preserve existing work. Keep unrelated changes outside the active slice.

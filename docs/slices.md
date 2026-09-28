@@ -30,9 +30,9 @@ Blocked on authorization:
 
 ## Noticed
 
-- Fleet panel reads have no timeout. A newer read correctly replaces an older
-  one, but a CLI read that hangs keeps its process, so a hang stacks one per
-  poll. Bound each read (kill after a limit) and report it as a read error.
+- The panel's Fleet section draws only after all ten of its reads finish, and
+  those reads have no timeout: a hang stacks one process per poll. Apply the UI
+  rule in AGENTS.md: per-section states as reads arrive, and a bounded read.
 
 - Any same-user process can open `n2agents://reonboard-done` (or `login-done`)
   and make the app treat a running account reset as finished.
