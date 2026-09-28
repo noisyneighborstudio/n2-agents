@@ -16,12 +16,18 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
 
 ## Queue
 
-1. **Independent adversarial and security review** (`fleet-security-review`).
-   Behavior: reviewed findings are fixed or recorded with evidence.
-   Proof: review report against the candidate SHA; fixes each carry their own proof.
-   Scope: the merged fleet diff against main.
+1. **Probe workspace archives adversarially** (`fleet-archive-probes`).
+   Behavior: hostile task workspaces and results from a signed peer (symlinks,
+   hardlinks, `..` paths, device files, oversized or deeply nested trees) are
+   refused before any byte lands outside the task directory.
+   Proof: runtime probes against `workspace-pack.py` and result import with
+   disposable peers; each probe fails against a copy with its guard removed.
+   Scope: archive handling only; no live providers or real machines.
 
 ## Noticed
+
+- Any same-user process can open `n2agents://reonboard-done` (or `login-done`)
+  and make the app treat a running account reset as finished.
 
 - CI's verify job takes about 24 of its 30 minutes. Split it or raise the limit
   before it starts timing out.

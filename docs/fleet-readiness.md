@@ -1312,3 +1312,19 @@ below were built from it with `N2_QA=1 N2_SIGN_IDENTITY=- zsh tray/build.sh`.
 An independent review of the five merge resolutions and follow-up fixes found no
 defects against owner-managed sign-in, capacity, gate or dropped-check invariants.
 This is not the complete adversarial security review of the fleet diff.
+
+## Security review of changes since 04c5331
+
+An independent read-only review covered production changes from `04c5331` to
+`d9643f5`: signed prompt dispatch and account binding (`fleet-claude.py`,
+`fleet-prompt.py`, `fleet-exec.sh`), the review-before-sharing hold, main's
+credential detection and logout clearing, account reset, and in-app sign-in.
+Threats checked: hostile enrolled peers, path/symlink escape, command injection,
+credential exposure (logs, argv, temp files, keychain scoping), owner-managed
+Codex slots, hold bypass through crafted names, and shared-file races.
+
+No P0-P2 findings. Two P3 notes: binding files are chmodded after creation, but
+they live under the 0700 fleet root and are empty until chmodded, so no other
+user can read them; and `n2agents://reonboard-done` can be triggered by any
+same-user process, the same pattern as `login-done`. Runtime adversarial archive
+probes, credential access and live-provider operations were out of scope.
