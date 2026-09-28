@@ -18,7 +18,7 @@ end
 
 complete -c agents -f -n __fish_use_subcommand \
     -a 'list vendors active use run best new delete adopt sessions transfer fleet desktop shims loop porcelain profiles version help'
-complete -c agents -f -n '__fish_seen_subcommand_from fleet; and not __fish_seen_subcommand_from sync tools task' -a 'init id invite join pair pending approve deny revoke discover reconcile rehost route roster peers ping status sync tools task send serve help'
+complete -c agents -f -n '__fish_seen_subcommand_from fleet; and not __fish_seen_subcommand_from sync tools task session' -a 'init id invite join pair pending approve deny revoke discover reconcile rehost route roster peers ping status sync tools task session send serve help'
 complete -c agents -f -n '__fish_seen_subcommand_from fleet; and __fish_seen_subcommand_from sync' -a 'now tick auto service status scope conflicts show resolve review share except auth categories import-local'
 complete -c agents -f -n '__fish_seen_subcommand_from fleet; and __fish_seen_subcommand_from tools' -a 'list add rm approve status apply install deferred'
 complete -c agents -f -n 'not __fish_use_subcommand; and not __fish_seen_subcommand_from fleet profiles' \

@@ -9,26 +9,22 @@ authorization.
 ## Gates
 
 Every push runs `.github/workflows/ci.yml`, which runs `scripts/verify.sh`: format,
-lint, `scripts/test.sh` and `scripts/smoke.sh`, in that order. Run it locally first.
+lint, `scripts/test.sh` and `scripts/smoke.sh`, in that order, and a parallel job
+runs `scripts/test-fleet.sh`. Run both locally first.
 A slice is complete only after these pass locally and CI passes on its pushed
 commit. One commit with a `Slice: <slug>` trailer; remove the entry in that commit.
 
 ## Queue
 
-1. **Run the fleet suites in CI** (`fleet-suites-in-ci`).
-   Behavior: every push runs `scripts/test-fleet.sh` (transport, replication,
-   execution) as part of `scripts/verify.sh`, not only by hand. Unrun, section 72
-   of `scripts/test-sync.sh` kept asserting the approval rule 57fa243 replaced.
-   Proof: CI log shows the suite's tally on the pushed commit; a deliberate
-   replication break turns the run red.
-   Scope: gate wiring and runtime; split the suite if CI time exceeds the job limit.
-
-2. **Independent adversarial and security review** (`fleet-security-review`).
+1. **Independent adversarial and security review** (`fleet-security-review`).
    Behavior: reviewed findings are fixed or recorded with evidence.
    Proof: review report against the candidate SHA; fixes each carry their own proof.
    Scope: the merged fleet diff against main.
 
 ## Noticed
+
+- CI's verify job takes about 24 of its 30 minutes. Split it or raise the limit
+  before it starts timing out.
 
 - The tray has no view of profiles held for review after joining; the CLI's
   `agents fleet sync review` / `share` are the only surface.
