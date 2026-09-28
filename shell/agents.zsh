@@ -32,7 +32,7 @@ _n2agents_cli() {
       _values 'fleet verb' init id invite join pair pending approve deny revoke discover reconcile rehost route roster peers ping status sync tools task send serve help
     elif (( CURRENT == 4 )); then
       case ${words[3]} in
-        sync) _values 'sync verb' now tick auto service status scope conflicts show resolve except auth categories import-local ;;
+        sync) _values 'sync verb' now tick auto service status scope conflicts show resolve review share except auth categories import-local ;;
         task) _values 'task verb' run preferences list show reconcile retry fetch distribute notices help ;;
         tools) _values 'tools verb' list add rm approve status apply install deferred ;;
       esac

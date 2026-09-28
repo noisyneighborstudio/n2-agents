@@ -15,14 +15,13 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
 
 ## Queue
 
-1. **Keep the M5 list authoritative on first sync** (`fleet-enrollment-direction`).
-   Behavior: a machine joining a fleet whose existing member (the M5) holds the
-   master profile list never overwrites that list with its own profiles or
-   credentials; differences surface as conflicts or explicit choices.
-   Proof: disposable two-peer enrollment where the joiner has a different
-   profile list; the existing member's list and credentials are byte-identical
-   afterwards. Control: a deliberate overwrite path is refused.
-   Scope: first-sync direction only; no real enrollment.
+1. **Run the fleet suites in CI** (`fleet-suites-in-ci`).
+   Behavior: every push runs `scripts/test-fleet.sh` (transport, replication,
+   execution) as part of `scripts/verify.sh`, not only by hand. Unrun, section 72
+   of `scripts/test-sync.sh` kept asserting the approval rule 57fa243 replaced.
+   Proof: CI log shows the suite's tally on the pushed commit; a deliberate
+   replication break turns the run red.
+   Scope: gate wiring and runtime; split the suite if CI time exceeds the job limit.
 
 2. **Independent adversarial and security review** (`fleet-security-review`).
    Behavior: reviewed findings are fixed or recorded with evidence.
@@ -30,6 +29,9 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
    Scope: the merged fleet diff against main.
 
 ## Noticed
+
+- The tray has no view of profiles held for review after joining; the CLI's
+  `agents fleet sync review` / `share` are the only surface.
 
 - The inherited full-suite quota fixture fails intermittently (main saw it at
   scripts/test.sh:682 and :685). Suspect: tests/fake-loop-agent.sh decrements

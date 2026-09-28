@@ -735,6 +735,22 @@ Absolute paths never cross the wire. A received `relpath` that is absolute,
 contains a `..` component, or resolves outside the destination slot is refused
 before anything is written, and the refusal is journaled.
 
+### A joining machine's profiles wait for review
+
+Merging never overwrites: a file that differs on two machines becomes a
+conflict. But a profile that exists only on the joining machine would replicate
+to everyone on the first pass, and the operator's existing fleet (for example
+the machine that holds their canonical profile list) would gain it unasked.
+
+So a machine's first `join` or `pair`, made while it has no approved peers,
+records every profile it already has in `sync/review`. `sync_excepted` treats a
+listed profile as excepted in both directions: it is advertised as excepted,
+never pushed, and the fleet's same-named copy is never pulled over it.
+`agents fleet sync review` lists what is held; `agents fleet sync share
+<profile>` releases one into ordinary merging, where differences become
+conflicts. The existing fleet holds nothing, later joins mark nothing, and
+`Default` is never addressed. Proof: `scripts/test-sync-review.sh`.
+
 ### A profile is a resource in its own right
 
 The manifest originally spoke only about files, which made a profile invisible

@@ -1774,6 +1774,7 @@ cmd_fleet() {
         --transport) t=$2; shift 2 ;; *) fleet_die "unknown option: $1" ;; esac; done
       [ -n "$addr" ] || [ -n "$home" ] || fleet_die "usage: agents fleet $verb --to <address> [--user u] [--port n] [--code c] [--host-key <line>]"
       [ "$verb" = pair ] && [ -z "$code" ] && fleet_die "pairing requires --code (mint one with: agents fleet invite --peer <peerid>)"
+      sync_mark_review
       jtmp=$(mktemp -d "${TMPDIR:-/tmp}/n2j.XXXXXX")
       fleet_enroll_request "$t" "$addr" "$user" "$home" "$code" "$hostkey" "$jport" "$jid" > "$jtmp/rep" || { rm -rf "$jtmp"; return 1; }
       fleet_record_reply "$jtmp/rep" "$t" "$addr" "$user" "$home" "$code" "$jport"

@@ -15,6 +15,7 @@ sync_state_file() { echo "$(sync_root)/state"; }
 sync_exceptions_file() { echo "$(sync_root)/exceptions"; }
 sync_conflict_dir() { echo "$(sync_root)/conflicts"; }
 sync_auth_optin_file() { echo "$(sync_root)/auth-optin"; }
+sync_review_file() { echo "$(sync_root)/review"; }
 sync_tools_manifest() { echo "$fleet_root/tools/manifest"; }
 
 # The managed-tool manifest replicates like any other resource, under a
@@ -295,6 +296,8 @@ sync_classify() {  # sync_classify <vendor> <relpath>
 # it never syncs and never changes the shared setup for anyone else.
 sync_excepted() {  # sync_excepted <addr>
   sync_category_enabled "$(sync_addr_class "$1")" || return 0
+  # A profile awaiting review stays this machine's own in both directions.
+  [ -f "$(sync_review_file)" ] && grep -qxF -- "$(sync_addr_profile "$1")" "$(sync_review_file)" && return 0
   se_f=$(sync_exceptions_file); [ -f "$se_f" ] || return 1
   se_c=$(sync_addr_class "$1") se_p=$(sync_addr_profile "$1")
   se_v=$(sync_addr_vendor "$1") se_r=$(sync_addr_relpath "$1")
@@ -308,6 +311,31 @@ sync_excepted() {  # sync_excepted <addr>
     case $se_r in $xr) return 0 ;; esac
   done < "$se_f"
   return 1
+}
+
+# A machine joining a fleet brings profiles the fleet never agreed to. Until
+# the operator shares each one, it is excepted in both directions: the fleet's
+# copies cannot overwrite it and it does not spread. Only a machine's first
+# join marks profiles; after that it is already part of the fleet.
+sync_has_peers() {
+  for shp in $(fleet_peer_ids); do
+    [ "$shp" = "$(fleet_self_id)" ] && continue
+    fleet_approved "$shp" && return 0
+  done
+  return 1
+}
+
+sync_mark_review() {
+  sync_has_peers && return 0
+  sync_ready || sync_init
+  smr_f=$(sync_review_file)
+  # Default is never replicated, so it has nothing to hold.
+  for smr_n in $(profile_names); do
+    for smr_v in $N2_VENDORS; do
+      [ -d "$(config_dir "$smr_n" "$smr_v")" ] && { echo "$smr_n"; break; }
+    done
+  done >> "$smr_f"
+  sort -u -o "$smr_f" "$smr_f"
 }
 
 # Category switches are local exceptions: disabling withholds a resource and
@@ -2299,6 +2327,8 @@ agents fleet sync <verb>
                                        so only --local can resolve it)
   show <id>                           one conflict: address, peer, both digests
   resolve <id> --local|--remote       record the operator's choice
+  review                              profiles held since this machine joined
+  share <profile>                     let a held profile sync with the fleet
   except add <class> <profile> <vendor> [glob]   keep this machine different
   except list | except rm <n>
   auth list                           provider portability matrix + opt-in state
@@ -2417,6 +2447,15 @@ cmd_fleet_sync() {
         *) fleet_die "unknown option: $1" ;; esac; done
       [ -n "$choice" ] || fleet_die "resolve requires --local or --remote"
       sync_resolve "$rid" "$choice" || return 1 ;;
+    review)
+      sync_need; f=$(sync_review_file)
+      if [ -s "$f" ]; then cat "$f"; else echo "nothing to review"; fi ;;
+    share)
+      sync_need; [ -n "${1:-}" ] || fleet_die "usage: agents fleet sync share <profile>"
+      f=$(sync_review_file)
+      grep -qxF -- "$1" "$f" 2>/dev/null || fleet_die "'$1' is not waiting for review (see: agents fleet sync review)"
+      grep -vxF -- "$1" "$f" > "$f.tmp"; mv "$f.tmp" "$f"
+      printf 'shared\t%s\n' "$1" ;;
     except)
       sync_need; ev=${1:-list}; [ $# -ge 1 ] && shift
       f=$(sync_exceptions_file)

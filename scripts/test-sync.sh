@@ -3134,8 +3134,11 @@ peer tapp1 fleet tools add apprtool --version 4.0 --disruptive --check "$tchk" \
 mkdir -p "$base/tapp2/.n2-agents/fleet/tasks/active"
 : > "$base/tapp2/.n2-agents/fleet/tasks/active/task-appr"
 peer tapp1 fleet sync now --peer "$TP2" >/dev/null 2>&1
-check "appr: only the command matters, so --disruptive alone is not a new approval" \
-      "apprtool" "$(peer tapp2 fleet tools list 2>&1)"
+# Approval covers the disruption policy too (scripts/test-tool-disruption-approval.sh),
+# so turning --disruptive on waits for local consent before anything defers or runs.
+check "appr: a new disruption classification needs local consent" "apprtool	pending-approval" \
+      "$(peer tapp2 fleet tools status 2>&1)"
+peer tapp2 fleet tools approve apprtool >/dev/null 2>&1
 out=$(peer tapp2 fleet tools apply 2>&1)
 check "appr: an approved disruptive update defers while work runs" "deferred	apprtool" "$out"
 if [ -e "$tm/extra" ]; then
