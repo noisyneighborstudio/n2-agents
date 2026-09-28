@@ -7,6 +7,8 @@ struct FleetSyncSettings: View {
     @State private var providers: [(String, String, Bool)] = []
     @State private var conflicts: [(String, String)] = []
     @State private var held: [String] = []
+    @State private var hasIdentity = true
+    private let isQA = Bundle.main.object(forInfoDictionaryKey: "N2FleetQA") as? Bool == true
     @State private var status = "Loading fleet…"
     @State private var message = ""
     @State private var busy = false
@@ -16,12 +18,26 @@ struct FleetSyncSettings: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("FLEET PROFILE SYNC").font(.system(size: 10, weight: .semibold)).foregroundStyle(Ink.secondary)
-            Text("QA profile copies · changes stay separate from the primary app.")
-                .font(.system(size: 12)).foregroundStyle(Ink.secondary)
-            Button("Import local profiles and credentials") { perform(["sync", "import-local", "--credentials"]) }
-                .disabled(busy)
-            Text("Imports missing files only. Existing QA edits and primary profiles are preserved.")
-                .font(.system(size: 11)).foregroundStyle(Ink.secondary)
+            if !hasIdentity {
+                Text("This Mac isn’t in a fleet yet. Create a fleet identity from the Fleet section of the panel.")
+                    .font(.system(size: 12)).foregroundStyle(Ink.secondary)
+            } else {
+                controls
+            }
+        }
+        .task { refresh() }
+    }
+
+    @ViewBuilder private var controls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if isQA {
+                Text("QA profile copies · changes stay separate from the primary app.")
+                    .font(.system(size: 12)).foregroundStyle(Ink.secondary)
+                Button("Import local profiles and credentials") { perform(["sync", "import-local", "--credentials"]) }
+                    .disabled(busy)
+                Text("Imports missing files only. Existing QA edits and primary profiles are preserved.")
+                    .font(.system(size: 11)).foregroundStyle(Ink.secondary)
+            }
             ForEach(labels, id: \.0) { key, label in
                 Toggle(label, isOn: Binding(get: { categories[key] ?? false }, set: { enabled in
                     perform(["sync", "categories", key, enabled ? "on" : "off"])
@@ -69,7 +85,6 @@ struct FleetSyncSettings: View {
             if !message.isEmpty { Text(message).font(.system(size: 11)).textSelection(.enabled) }
             if busy { ProgressView().controlSize(.small) }
         }
-        .task { refresh() }
     }
 
     private func perform(_ args: [String]) {
@@ -91,6 +106,7 @@ struct FleetSyncSettings: View {
 
     @MainActor private func load() async {
         let values = await FleetSettingsLoader.load { FleetSettingsLoader.run($0) }
+        hasIdentity = FleetSettingsLoader.hasIdentity(values[2])
         categories = Dictionary(uniqueKeysWithValues: rows(values[0]).compactMap { fields in
             fields.count == 2 ? (fields[0], fields[1] == "on") : nil
         })
