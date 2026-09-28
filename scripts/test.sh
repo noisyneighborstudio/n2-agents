@@ -615,8 +615,9 @@ grep -in claudes .github/workflows/release.yml .releaserc.json scripts/release-*
   && { echo "claudes-era names left in the release path" >&2; exit 1 }
 
 grep -Fq 'branches: [main, stable]' .github/workflows/release.yml
-grep -Fq 'refs/heads/main) channel=continuous' .github/workflows/release.yml
-grep -Fq 'refs/heads/stable) channel=stable' .github/workflows/release.yml
+grep -Fq 'case "$HEAD_BRANCH" in' .github/workflows/release.yml
+grep -Fq 'main) channel=continuous' .github/workflows/release.yml
+grep -Fq 'stable) channel=stable' .github/workflows/release.yml
 grep -Fq 'N2_BUILD_NUMBER: ${{ github.run_number }}' .github/workflows/release.yml
 grep -Fq 'npx semantic-release' .github/workflows/release.yml
 grep -Fq '"branches": ["stable", { "name": "main", "prerelease": "continuous" }]' .releaserc.json
