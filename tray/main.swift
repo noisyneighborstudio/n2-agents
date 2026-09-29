@@ -561,8 +561,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 
     var cliPath: String { scriptsDir + "/agents" }
 
+    /// With a timeout, a command that has not exited by then is stopped and
+    /// reported as failed, so a hung read cannot hold its caller or stack up.
     @discardableResult
-    func runCLI(_ args: [String]) -> (status: Int32, output: String) {
+    func runCLI(_ args: [String], timeout: TimeInterval? = nil) -> (status: Int32, output: String) {
+        if let timeout {
+            return FleetSettingsLoader.bounded([cliPath] + args, environment: Self.scriptEnvironment, timeout: timeout)
+        }
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/sh")
         task.arguments = [cliPath] + args

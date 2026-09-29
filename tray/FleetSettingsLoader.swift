@@ -57,12 +57,20 @@ enum FleetSettingsLoader {
     static func command(_ args: [String]) -> (status: Int32, output: String) {
         precondition(!Thread.isMainThread, "Fleet CLI must not block the main thread")
         guard let resources = Bundle.main.resourcePath else { return (1, "App resources unavailable") }
-        let process = Process(), pipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = [resources + "/agents", "fleet"] + args
         var env = ProcessInfo.processInfo.environment
         env["PATH"] = commandPATH
-        process.environment = env
+        return bounded([resources + "/agents", "fleet"] + args, environment: env, timeout: timeout)
+    }
+
+    /// `/bin/sh` with these arguments. A command still running after `timeout`
+    /// is stopped and reported as timed out, so a hung read cannot hold its
+    /// caller or leave processes stacking up behind it.
+    static func bounded(_ arguments: [String], environment: [String: String],
+                        timeout: TimeInterval) -> (status: Int32, output: String) {
+        let process = Process(), pipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = arguments
+        process.environment = environment
         process.standardOutput = pipe; process.standardError = pipe
         let exited = DispatchSemaphore(value: 0), drained = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in exited.signal() }

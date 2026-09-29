@@ -26,6 +26,7 @@ with tempfile.TemporaryDirectory(prefix='n2-native-reconcile-') as temporary:
     source.write_text(fixture.replace('    // PRODUCTION_METHODS', methods))
     executable = base / 'proof'
     subprocess.run(['swiftc', '-warnings-as-errors', '-parse-as-library', str(source),
+                    str(ROOT / 'tray/FleetSettingsLoader.swift'), str(ROOT / 'tray/ShellPath.swift'),
                     '-o', str(executable)], check=True)
     for status in ('0', '1'):
         case = base / status

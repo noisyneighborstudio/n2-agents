@@ -33,7 +33,12 @@ check("status: machine is alpha", d.machine == "alpha")
 check("status: two peers parsed", d.peers.count == 2)
 check("status: self row identified", d.peers[0].isSelf && d.peers[0].machine == "alpha")
 check("status: pending row is not a peer", d.pending.count == 1 && d.pending[0].machine == "gamma")
-check("status: self is a dispatch destination", d.destinations.contains { $0.isSelf })
+check("status: no destinations before the machine list is read", d.destinations.isEmpty)
+var read = d
+read.loaded.insert(.machines)
+check("status: self is a dispatch destination once machines are read", read.destinations.contains { $0.isSelf })
+read.unavailable.insert(.machines)
+check("status: a failed machine read withdraws destinations", read.destinations.isEmpty)
 check("status: uninitialized fleet stays uninitialized",
       !FleetData.parseStatus("fleet\tuninitialized").initialized)
 
