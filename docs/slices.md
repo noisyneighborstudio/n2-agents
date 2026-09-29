@@ -20,24 +20,25 @@ The menu bar redesign runs first, in the order of `docs/tray-redesign/08-slices.
 Every tray slice's proof includes `scripts/panel-snapshot.sh` renders in light
 and dark, and `tray/build.sh`.
 
-1. **Provider page** (`provider-page`).
-   Behavior: a row pushes the hero, chips, primary split button, tiles and the
-   Configure/Diagnostics rows; the glyph flies to the hero, the ring draws in.
-   Proof: snapshots of each status's page; Diagnostics shows a restricted slot's raw note.
-   Scope: Configure may push a placeholder until `configure-page`.
-
-2. **Configure page** (`configure-page`).
+1. **Configure page** (`configure-page`).
    Behavior: Account / Launch / Files groups with Reveal and Copy icon
    buttons; Copy shows a checkmark and announces "Copied"; Sign out confirms.
    Proof: a test that copy puts the exact path or command on the pasteboard; snapshots.
    Scope: no new CLI verbs.
 
-3. **Suggestion and Switch** (`suggestion-and-switch`).
+2. **Suggestion and Switch** (`suggestion-and-switch`).
    Behavior: an out or low slot's page shows "{Provider} has room" per
    `docs/tray-redesign/03-states.md`; Switch pushes the candidate's page with a glyph flight.
    Proof: unit tests on the picker (same profile first; never unmetered, failed,
    stale or signed out; nil when nothing qualifies); Switch never rebinds an account.
    Scope: panel only; toasts come later.
+
+3. **Toast tier ladder** (`toast-tier-ladder`).
+   Behavior: usage toasts announce at 50 / 25 / 10 / out, once per tier
+   entered, only the worst on a multi-tier jump, in the new card (one toast).
+   Proof: unit tests for enter, repeat, recover, re-enter and jump; the pace
+   sentence is omitted when the window duration or reset is missing.
+   Scope: a single toast; stacking comes after.
 
 4. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
    Behavior: from the QA app, pair two disposable peers, sync (with a held

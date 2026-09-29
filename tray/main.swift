@@ -233,7 +233,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
             // that, at Fleet.
             if let closed = model.closedAt, Date().timeIntervalSince(closed) > 60 {
                 model.path = []
-                model.selection = nil
             }
         }
         // Sized from the already-loaded content, so the first frame is the
@@ -265,10 +264,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
             DispatchQueue.main.async {
                 guard generation == self.refreshGeneration, let data else { return }
                 self.model.data = data
-                if let s = self.model.selection,
-                   data.profiles.first(where: { $0.name == s.profile })?.slots[s.vendor] == nil {
-                    self.model.selection = nil
-                }
                 // A page whose profile or lab is gone closes, with what it led to.
                 if let gone = self.model.path.firstIndex(where: { route in
                     guard let p = data.profiles.first(where: { $0.name == route.profile }) else { return true }

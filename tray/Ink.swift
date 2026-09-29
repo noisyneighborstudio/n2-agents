@@ -50,6 +50,14 @@ enum Ink {
     static let cardShadow = Tone(NSColor.black.withAlphaComponent(0.06), .clear).color
     /// A row or card being pressed. Not text.
     static let pressed = Tone(NSColor.black.withAlphaComponent(0.08), NSColor.white.withAlphaComponent(0.10)).color
+    /// A secondary button or tile: glass-white in light, a white wash in dark.
+    static let raised = Tone(NSColor.white.withAlphaComponent(0.7), NSColor.white.withAlphaComponent(0.06)).color
+    static let raisedEdge = Tone(NSColor.black.withAlphaComponent(0.12), NSColor.white.withAlphaComponent(0.14)).color
+    /// Small tags under the hero. Not text; their text is secondary.
+    static let chipFill = Tone.neutral.wash(dark: 0.07, light: 0.05)
+    /// The glyph on a status badge, which sits on the status ink: dark on the
+    /// bright dark-mode inks, white on the deep light-mode ones.
+    static let badgeGlyph = Tone(.white, rgb(0x1C1C1E)).color
     /// A logo tile with nothing to report. Not text.
     static let tile = Tone(NSColor.black.withAlphaComponent(0.05), NSColor.white.withAlphaComponent(0.09)).color
     /// A logo on a neutral tile: a glyph, held to 3:1 (well over it at 85% / 92%).

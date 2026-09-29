@@ -23,15 +23,19 @@ import SwiftUI
         switch state.first {
         case "profile"?:
             model.path = [.profile(profile)]
-        case "slot"?:
-            model.path = [.profile(profile)]
-            model.selection = Selection(profile: profile, vendor: vendor)
+        case "provider"?:
+            model.path = [.profile(profile), .provider(profile: profile, vendor: vendor)]
+        case "configure"?:
+            model.path = [.profile(profile), .provider(profile: profile, vendor: vendor), .configure(profile: profile, vendor: vendor)]
         // Motion: settle, move, and capture a frame every 40 ms until it lands.
         case "push"?:
             move = { model.push(.profile(profile)) }
         case "pop"?:
             model.path = [.profile(profile)]
             move = { model.pop() }
+        case "open"?:
+            model.path = [.profile(profile)]
+            move = { model.push(.provider(profile: profile, vendor: vendor)) }
         default:
             break
         }
@@ -68,7 +72,7 @@ import SwiftUI
         }
         settle(0.6)
         guard let move else {
-            settle(0.3)
+            settle(1.0)
             draw(args[3])
             return
         }
@@ -107,7 +111,7 @@ enum Fixture {
                        vendor("cursor", "Cursor", long: "mo"), vendor("opencode", "opencode", usage: "none"),
                        vendor("muse", "Muse"), vendor("grok", "Grok")]
         let slots: [String: [String]] = ["Default": ["claude", "codex", "cursor", "opencode", "muse"],
-                                         "Expo": ["claude", "codex"], "Work": ["claude", "codex", "cursor"]]
+                                         "Expo": ["claude", "codex", "grok"], "Work": ["claude", "codex", "cursor"]]
         let order = ["Default", "Expo", "Work"]
         let rows = order.map { name in
             ProfileRow(name: name, desktopRunning: false,
@@ -117,7 +121,7 @@ enum Fixture {
         for name in order {
             for v in slots[name]! {
                 snapshot.slotDirs[name, default: [:]][v] = NSHomeDirectory() + "/.n2-agents/profiles/\(name)/\(v)"
-                snapshot.signedIn[name, default: [:]][v] = true
+                snapshot.signedIn[name, default: [:]][v] = !(name == "Expo" && v == "grok")
             }
         }
         let profiles = rows.map { Profile(name: $0.name, running: false, slots: $0.slots) }

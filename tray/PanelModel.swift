@@ -399,11 +399,6 @@ enum PanelRoute: Hashable {
     }
 }
 
-struct Selection: Equatable {
-    let profile: String
-    let vendor: String
-}
-
 enum NextBest {
     case slot(profile: String, vendor: String, used: Int?)
     /// Every signed-in slot is out of quota; the soonest one back, if known.
@@ -450,8 +445,6 @@ final class PanelModel: ObservableObject {
     @Published var presented = true
     /// The pages pushed over Fleet, deepest last. Empty is Fleet itself.
     @Published var path: [PanelRoute] = []
-    /// The one slot showing its actions on its profile's page.
-    @Published var selection: Selection?
     /// When the last usage reading landed, for the footer.
     @Published var refreshedAt: Date?
     /// When the panel last closed: a reopen within a minute keeps the path.

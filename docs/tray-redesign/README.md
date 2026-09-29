@@ -15,6 +15,11 @@ Decisions the handoff left open, as built:
   Settings icon.
 - **Strip bars** of out, failed and signed-out slots are a tinted track with no
   fill: a full bar would read as full capacity in grayscale.
+- **Out with no known return**: the hero reads "Out of allowance" and drops
+  its sub-line and countdown.
+- **Move session** lists this slot's recent sessions; each offers the other
+  profiles holding the lab and, for Codex, Send to Machine. **Switch account**
+  is sign-in with confirmation.
 - **Profile note** adds "{n} unchecked" when checks failed and nothing is out,
   rather than "All ready".
 

@@ -64,60 +64,45 @@ private struct SlotRow: View {
     let data: PanelData
     @ObservedObject var model: PanelModel
     let actions: PanelActions
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var open: Bool { model.selection == Selection(profile: profile.name, vendor: vendor.id) }
 
     var body: some View {
         let (status, resets) = model.status(profile.name, vendor)
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 4) {
-                Button { toggle() } label: {
-                    HStack(spacing: 10) {
-                        LogoTile(vendor: vendor, status: status)
-                            .frame(width: 28, height: 28)
-                            .glyph(.row, profile: profile.name, vendor: vendor.id)
-                        Text(verbatim: vendor.label)
-                            .font(.system(size: 14, weight: .medium)).lineLimit(1)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        StatusRing(status: status)
-                        HStack(spacing: 6) {
-                            Text(verbatim: status.label)
-                                .foregroundStyle(status.left != nil || status == .unmetered ? Ink.secondary : status.ink)
-                            if let resets { Text(verbatim: SlotStatus.day(resets)).foregroundStyle(Ink.tertiary) }
-                        }
-                        .font(.system(size: 12.5)).monospacedDigit().lineLimit(1)
-                        .frame(minWidth: 88, alignment: .leading)
-                        .fixedSize()
-                        if status != .checkFailed {
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(Ink.tertiary)
-                                .rotationEffect(.degrees(open ? 90 : 0))
-                        }
+        HStack(spacing: 4) {
+            Button { model.push(.provider(profile: profile.name, vendor: vendor.id)) } label: {
+                HStack(spacing: 10) {
+                    LogoTile(vendor: vendor, status: status)
+                        .frame(width: 28, height: 28)
+                        .glyph(.row, profile: profile.name, vendor: vendor.id)
+                    Text(verbatim: vendor.label)
+                        .font(.system(size: 14, weight: .medium)).lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    StatusRing(status: status)
+                    HStack(spacing: 6) {
+                        Text(verbatim: status.label)
+                            .foregroundStyle(status.left != nil || status == .unmetered ? Ink.secondary : status.ink)
+                        if let resets { Text(verbatim: SlotStatus.day(resets)).foregroundStyle(Ink.tertiary) }
                     }
-                    .padding(.horizontal, 8)
-                    .frame(height: 40)
-                    .contentShape(Rectangle())
+                    .font(.system(size: 12.5)).monospacedDigit().lineLimit(1)
+                    .frame(minWidth: 88, alignment: .leading)
+                    .fixedSize()
+                    if status != .checkFailed {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Ink.tertiary)
+                    }
                 }
-                .buttonStyle(PressableStyle(radius: 8, fill: open ? Ink.hover : .clear))
-                .accessibilityLabel("\(vendor.label), \(status.label)")
-                if status == .checkFailed {
-                    CheckAgainButton(checking: model.usageLoading) { actions.retryUsage() }
-                        .padding(.trailing, 6)
-                }
+                .padding(.horizontal, 8)
+                .frame(height: 40)
+                .contentShape(Rectangle())
             }
-            .frame(height: 44)
-            if open {
-                SlotActions(profile: profile, vendor: vendor, data: data, model: model, actions: actions)
+            .buttonStyle(PressableStyle(radius: 8))
+            .accessibilityLabel("\(vendor.label), \(status.label)")
+            if status == .checkFailed {
+                CheckAgainButton(checking: model.usageLoading) { actions.retryUsage() }
+                    .padding(.trailing, 6)
             }
         }
-    }
-
-    private func toggle() {
-        withAnimation(Motion.nav(reduce: reduceMotion)) {
-            model.selection = open ? nil : Selection(profile: profile.name, vendor: vendor.id)
-        }
+        .frame(height: 44)
     }
 }
 

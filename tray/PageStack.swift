@@ -27,7 +27,7 @@ extension PanelModel {
 
 /// Where a lab's tile sits on each page it appears on.
 enum GlyphRole: String {
-    case strip, row
+    case strip, row, hero
 }
 
 private struct TileFrames: PreferenceKey {
@@ -154,10 +154,15 @@ struct PageStack<Page: View>: View {
     private func fly(from old: [PanelRoute], to new: [PanelRoute]) {
         guard !reduceMotion, let data = model.data else { flights = []; return }
         let (profile, source, destination): (String, GlyphRole, GlyphRole)
+        var only: String?   // one lab's flight, rather than the whole profile's
         if new.count == old.count + 1, case .profile(let p)? = new.last {
             (profile, source, destination) = (p, .strip, .row)
         } else if old.count == new.count + 1, case .profile(let p)? = old.last {
             (profile, source, destination) = (p, .row, .strip)
+        } else if new.count == old.count + 1, case .provider(let p, let v)? = new.last {
+            (profile, source, destination, only) = (p, .row, .hero, v)
+        } else if old.count == new.count + 1, case .provider(let p, let v)? = old.last {
+            (profile, source, destination, only) = (p, .hero, .row, v)
         } else {
             flights = []
             return
@@ -165,7 +170,7 @@ struct PageStack<Page: View>: View {
         guard let p = data.profiles.first(where: { $0.name == profile }) else { return }
         generation += 1
         landed = []
-        flights = data.slotted(p).enumerated().compactMap { i, v in
+        flights = data.slotted(p).filter { only == nil || $0.id == only }.enumerated().compactMap { i, v in
             let key = glyphKey(profile, v.id)
             guard let from = frames["\(source.rawValue)|\(key)"] else { return nil }
             return Flight(id: key, vendor: v, status: model.status(profile, v).status, from: from,

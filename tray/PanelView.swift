@@ -14,14 +14,6 @@ enum Metrics {
 
 func profileColor(_ name: String) -> Color { Color(nsColor: ProfileColor.of(name)) }
 
-/// "3:20 PM" today, "Fri 3:20 PM" further out — a weekly window resets days away.
-// A weekday names a day only within the week: a monthly reset gets its date.
-func clockTime(_ date: Date) -> String {
-    if Calendar.current.isDateInToday(date) { return date.formatted(.dateTime.hour().minute()) }
-    if date.timeIntervalSinceNow > 6 * 86400 { return date.formatted(.dateTime.month(.abbreviated).day()) }
-    return date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
-}
-
 // MARK: - Root
 
 // Loading follows one rule: draw at once from what is already known, and let
@@ -61,8 +53,14 @@ struct PanelView: View {
             if let profile = data.profiles.first(where: { $0.name == name }) {
                 ProfilePage(model: model, actions: actions, data: data, profile: profile)
             }
-        case .provider?, .configure?:
-            EmptyView()
+        case .provider(let name, let id)?:
+            if let profile = data.profiles.first(where: { $0.name == name }), let vendor = data.snapshot.vendor(id) {
+                ProviderPage(model: model, actions: actions, data: data, profile: profile, vendor: vendor)
+            }
+        case .configure(let name, let id)?:
+            if let profile = data.profiles.first(where: { $0.name == name }), let vendor = data.snapshot.vendor(id) {
+                ConfigurePage(model: model, actions: actions, data: data, profile: profile, vendor: vendor)
+            }
         }
     }
 }
@@ -97,95 +95,51 @@ private struct ContentHeight: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
-// MARK: - Depth 3: everything for one slot
+// MARK: - Configure
 
-// Both windows in full, then the actions in one order that never varies:
-// Start, then Fix when something is actually broken, then Configure. The
-// primary action is the only filled control.
-struct SlotActions: View {
-    let profile: Profile
-    let vendor: Vendor
-    let data: PanelData
+// A lab's settings in one profile: its account, how it launches, where its
+// files are, and signing in again.
+struct ConfigurePage: View {
     @ObservedObject var model: PanelModel
     let actions: PanelActions
+    let data: PanelData
+    let profile: Profile
+    let vendor: Vendor
     @State private var copied: String?   // which row just copied
     @State private var showOwnership = false
 
-    private var usage: Usage? { model.effectiveUsage(profile.name, vendor.id) }
-    private var signedOut: Bool {
-        data.snapshot.signedIn[profile.name]?[vendor.id] == false
-            || usage?.note == .staleToken || usage?.note == .noToken
-    }
-    private var blocked: Bool { usage?.maxed ?? false }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if model.usage[vendor.id]?[profile.name]?.note == .sharedLogin {
-                Text("Shared login · Default").font(.caption).foregroundStyle(Ink.secondary)
-            }
-            if let u = usage {
-                UsageDetailsView(usage: u)
-            }
-
-            if let u = usage, u.showsHistory {
-                Text(u.historyLabel).font(.caption).foregroundStyle(Ink.secondary)
-            }
-
-            group("Start", "bolt")
-            OpenButton(terminals: data.terminals, blocked: blocked) { terminal in
-                actions.openSession(profile: profile.name, vendor: vendor.id, terminal: terminal)
-            }
-            if data.hasDesktop(vendor, for: profile) {
-                ActionRow(title: "Open \(vendor.desktopName)", icon: "macwindow") {
-                    actions.openDesktop(profile: profile.name, vendor: vendor.id)
+        VStack(alignment: .leading, spacing: 0) {
+            NavBar(title: String(localized: "Configure", comment: "Configure page title"), back: { model.pop() }) {
+                Text(verbatim: vendor.label).font(.system(size: 13)).foregroundStyle(Ink.link).lineLimit(1)
+            } trailing: { EmptyView() }
+            VStack(alignment: .leading, spacing: 4) {
+                if vendor.id == "codex" {
+                    ActionRow(title: "Account ownership", icon: "person.crop.circle") { showOwnership.toggle() }
+                    if showOwnership { AccountOwnershipView(profile: profile.name) }
                 }
-            }
-
-            if signedOut {
-                group("Fix", "wrench.adjustable")
-                ActionRow(title: "Sign in…", icon: "key", tint: Ink.amber) {
-                    actions.signIn(profile: profile.name, vendor: vendor.id, confirm: false)
+                if !profile.isActive(for: vendor.id) {
+                    ActionRow(title: "Use for new sessions", icon: "checkmark.circle") {
+                        actions.setActive(profile: profile.name, vendor: vendor.id)
+                    }
                 }
-            }
-
-            group("Configure", "slider.horizontal.3")
-            if vendor.id == "codex" {
-                ActionRow(title: "Account ownership", icon: "person.crop.circle") { showOwnership.toggle() }
-                if showOwnership { AccountOwnershipView(profile: profile.name) }
-            }
-            if !profile.isActive(for: vendor.id) {
-                ActionRow(title: "Use for new sessions", icon: "checkmark.circle") {
-                    actions.setActive(profile: profile.name, vendor: vendor.id)
+                ActionRow(title: "Copy command", icon: "doc.on.doc",
+                          trailing: copied == "command" ? "Copied" : "\(vendor.id)-\(profile.name.lowercased())", mono: true) {
+                    actions.copyCommand(profile: profile.name, vendor: vendor.id)
+                    flash("command")
                 }
-            }
-            ActionRow(title: "Copy command", icon: "doc.on.doc",
-                      trailing: copied == "command" ? "Copied" : "\(vendor.id)-\(profile.name.lowercased())", mono: true) {
-                actions.copyCommand(profile: profile.name, vendor: vendor.id)
-                flash("command")
-            }
-            if let dir = data.snapshot.slotDir(profile.name, vendor.id) {
-                pathRow("Copy config folder", dir)
-            }
-            if !vendor.desktopName.isEmpty, let dir = data.snapshot.desktopDir(profile.name, vendor.id) {
-                pathRow("Copy \(vendor.desktopName) data folder", dir)
-            }
-            if vendor.id == "codex" {
-                ActionRow(title: "Sign in…", icon: "key") {
-                    actions.signIn(profile: profile.name, vendor: vendor.id, confirm: true)
+                if let dir = data.snapshot.slotDir(profile.name, vendor.id) {
+                    pathRow("Copy config folder", dir)
                 }
-            } else if let account = data.snapshot.account(profile.name, vendor.id) {
-                ActionRow(title: account, icon: "person.crop.circle", trailing: "Sign in again…") {
+                if !vendor.desktopName.isEmpty, let dir = data.snapshot.desktopDir(profile.name, vendor.id) {
+                    pathRow("Copy \(vendor.desktopName) data folder", dir)
+                }
+                ActionRow(title: "Sign in again…", icon: "key") {
                     actions.signIn(profile: profile.name, vendor: vendor.id, confirm: true)
                 }
             }
+            .padding(.horizontal, 12).padding(.bottom, 12)
         }
-        .padding(.leading, 10)
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 1).fill(Color.primary.opacity(0.14)).frame(width: 2)
-        }
-        .padding(.leading, 12)
-        .padding(.top, 3)
-        .padding(.bottom, 5)
     }
 
     private func pathRow(_ title: String, _ path: String) -> some View {
@@ -198,21 +152,11 @@ struct SlotActions: View {
 
     private func flash(_ row: String) {
         copied = row
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { if copied == row { copied = nil } }
-    }
-
-    private func group(_ title: String, _ icon: String) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon).font(.system(size: 8))
-            Text(title).textCase(.uppercase).tracking(0.5)
-        }
-        .font(.system(size: 8.5, weight: .semibold))
-        .foregroundStyle(Ink.secondary)
-        .padding(.top, 4)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { if copied == row { copied = nil } }
     }
 }
 
-private struct ActionRow: View {
+struct ActionRow: View {
     let title: String
     let icon: String
     var tint: Color = .primary
@@ -341,43 +285,6 @@ struct InlineStatus: View {
     }
 }
 
-// "Open in <terminal>" with a chevron for picking another terminal this once.
-private struct OpenButton: View {
-    let terminals: [String]
-    /// Every window is spent; opening anyway is still allowed, and says so.
-    var blocked = false
-    let open: (String?) -> Void
-
-    var body: some View {
-        HStack(spacing: 0) {
-            Button { open(nil) } label: {
-                Label(blocked ? "Open in \(terminals.first ?? "Terminal") anyway"
-                              : "Open in \(terminals.first ?? "Terminal")", systemImage: "terminal")
-                    .labelStyle(.titleAndIcon)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, 9)
-                    .frame(height: 22)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            if terminals.count > 1 {
-                Divider().frame(height: 14)
-                Button {
-                    popUp(terminals.map { name in ClosureItem(name, symbol: "terminal") { open(name) } })
-                } label: {
-                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
-                        .frame(width: 24, height: 22)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("Open in another terminal")
-            }
-        }
-        .font(.system(size: 11.5))
-        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.08)))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.12)))
-    }
-}
 
 
 // MARK: - First run

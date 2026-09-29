@@ -1,5 +1,13 @@
 import SwiftUI
 
+/// "3:20 PM" today, "Fri 3:20 PM" further out — a weekly window resets days away.
+// A weekday names a day only within the week: a monthly reset gets its date.
+func clockTime(_ date: Date) -> String {
+    if Calendar.current.isDateInToday(date) { return date.formatted(.dateTime.hour().minute()) }
+    if date.timeIntervalSinceNow > 6 * 86400 { return date.formatted(.dateTime.month(.abbreviated).day()) }
+    return date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+}
+
 // One closed status vocabulary for every surface that shows a slot: strip,
 // row, hero, toast and menu bar icon. No view decides a slot's status on its
 // own; each asks for it here and draws what it is given.
@@ -123,6 +131,86 @@ enum SlotStatus: Equatable {
         }
     }
 
+    /// The Provider page's headline.
+    func headline(monthly: Bool) -> String {
+        switch self {
+        case .ready(100):
+            return String(localized: "Full allowance left", comment: "Provider hero: nothing used")
+        case .ready(let left), .low(let left):
+            return monthly ? String(localized: "\(Self.percent(left)) left this month", comment: "Provider hero: monthly allowance left")
+                           : String(localized: "\(Self.percent(left)) left this week", comment: "Provider hero: weekly allowance left")
+        case .out(let back?):
+            return String(localized: "Out until \(back.formatted(.dateTime.weekday(.wide)))", comment: "Provider hero: out until a weekday")
+        case .out(nil):
+            return String(localized: "Out of allowance", comment: "Provider hero: out, return unknown")
+        case .unmetered: return String(localized: "Usage isn’t metered", comment: "Provider hero: lab reports no usage")
+        case .checkFailed: return String(localized: "Couldn’t read usage", comment: "Provider hero: the check failed")
+        case .signedOut: return String(localized: "Not signed in", comment: "Provider hero: no login")
+        case .checking: return String(localized: "Checking usage…", comment: "Provider hero: a check is running")
+        }
+    }
+
+    /// The one sentence under the headline; nil when it would have to say "unknown".
+    func sub(provider: String, resets: Date?, monthly: Bool) -> String? {
+        switch self {
+        case .ready, .low:
+            guard let resets else { return nil }
+            return monthly ? String(localized: "Monthly · resets \(resets.formatted(.dateTime.month(.abbreviated).day()))", comment: "Provider hero: monthly reset date")
+                           : String(localized: "Resets \(clockTime(resets))", comment: "Provider hero: when the window resets")
+        case .out(let back):
+            guard let back else { return nil }
+            return String(localized: "Back \(back.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())) at \(back.formatted(.dateTime.hour().minute()))",
+                          comment: "Provider hero: the date and time allowance returns")
+        case .unmetered:
+            return String(localized: "\(provider) doesn’t report quota. Start freely.", comment: "Provider hero: unmetered lab")
+        case .checkFailed:
+            return String(localized: "The last check failed. You can still start a session.", comment: "Provider hero: failed check")
+        case .signedOut:
+            return String(localized: "Sign in to start sessions and read usage.", comment: "Provider hero: signed out")
+        case .checking:
+            return nil
+        }
+    }
+
+    /// Up to three tags under the hero: the window, what's used, and why
+    /// nothing is known. "Used" appears here and in Diagnostics, nowhere else.
+    func chips(_ usage: Usage?, monthly: Bool) -> [(symbol: String, text: String)] {
+        var chips: [(String, String)] = []
+        let window = monthly ? String(localized: "Monthly window", comment: "Provider chip") : String(localized: "7-day window", comment: "Provider chip")
+        switch self {
+        case .ready(let left), .low(let left):
+            chips.append(("clock", window))
+            if left < 100 {
+                chips.append(("gauge.with.needle", String(localized: "\(Self.percent(100 - left)) used", comment: "Provider chip: allowance used")))
+            }
+        case .out:
+            if usage?.note == .restricted {
+                chips.append(("gauge.with.needle", String(localized: "Restricted", comment: "Provider chip: the provider refuses work")))
+            } else {
+                chips.append(("clock", window))
+            }
+        case .unmetered: chips.append(("info.circle", String(localized: "No quota API", comment: "Provider chip")))
+        case .checkFailed: chips.append(("info.circle", String(localized: "Check failed", comment: "Provider chip")))
+        case .signedOut: chips.append(("info.circle", String(localized: "No credentials", comment: "Provider chip")))
+        case .checking: break
+        }
+        // Credits only when the CLI reports a zero balance (open question Q6).
+        if usage?.creditNotes.contains(where: { $0.split(separator: " ").last.flatMap { Double($0) } == 0 }) == true {
+            chips.append(("bolt", String(localized: "0 credits", comment: "Provider chip: no credit balance")))
+        }
+        return Array(chips.prefix(3))
+    }
+
+    /// The badge on the hero tile, for states whose shape is a glyph.
+    var badge: String? {
+        switch self {
+        case .out: return "hourglass"
+        case .checkFailed: return "exclamationmark"
+        case .signedOut: return "xmark"
+        case .ready, .low, .unmetered, .checking: return nil
+        }
+    }
+
     static func percent(_ value: Int) -> String {
         (Double(value) / 100).formatted(.percent.precision(.fractionLength(0)))
     }
@@ -152,6 +240,37 @@ extension PanelModel {
         case .out(let back): return (status, back)
         case .unmetered, .checkFailed, .signedOut, .checking: return (status, nil)
         }
+    }
+}
+
+/// The raw facts behind a slot's status, only those present.
+enum Diagnostics {
+    static func facts(_ usage: Usage?, shared: Bool) -> [(key: String, value: String)] {
+        guard let u = usage else { return [] }
+        var facts: [(String, String)] = []
+        if let hash = u.accountHash {
+            facts.append((String(localized: "Account", comment: "Diagnostics key"), "\(hash.prefix(4))…\(hash.suffix(5))"))
+        }
+        if u.hasObservationTime {
+            facts.append((String(localized: "Observed", comment: "Diagnostics key"),
+                          u.fetchedAt.formatted(.dateTime.month(.abbreviated).day().hour().minute().second())))
+        }
+        var signal = [u.note.rawValue] + u.restrictionReasons
+        if shared { signal.append(String(localized: "Shared login (Default)", comment: "Diagnostics: slot uses Default's login")) }
+        facts.append((String(localized: "Signal", comment: "Diagnostics key"), signal.joined(separator: " · ")))
+        if let window = u.windows?.max(by: { $0.percent < $1.percent }) {
+            facts.append((String(localized: "Window", comment: "Diagnostics key"), window.label))
+            facts.append((String(localized: "Used", comment: "Diagnostics key"),
+                          (window.percent / 100).formatted(.percent.precision(.fractionLength(1)))))
+            if let resets = window.resets {
+                facts.append((String(localized: "Resets", comment: "Diagnostics key"),
+                              resets.formatted(.dateTime.month(.abbreviated).day().hour().minute())))
+            }
+        }
+        if !u.creditNotes.isEmpty {
+            facts.append((String(localized: "Credits", comment: "Diagnostics key"), u.creditNotes.joined(separator: "; ")))
+        }
+        return facts
     }
 }
 
@@ -239,6 +358,8 @@ struct StatusRing: View {
     var stroke: CGFloat = 2.5
     /// The small ring carries its state's glyph inside; bigger rings hold a logo.
     var glyph = true
+    /// How much of the arc is drawn, for rings that draw in (0...1).
+    var drawn: CGFloat = 1
 
     var body: some View {
         ZStack {
@@ -256,7 +377,7 @@ struct StatusRing: View {
             // At 0% no arc: a round cap alone would draw a dot.
             if let left = status.left, left > 0 {
                 Circle().inset(by: stroke / 2)
-                    .trim(from: 0, to: CGFloat(left) / 100)
+                    .trim(from: 0, to: CGFloat(left) / 100 * drawn)
                     .stroke(status.ink, style: StrokeStyle(lineWidth: stroke, lineCap: .round))
                     .rotationEffect(.degrees(-90))
             }

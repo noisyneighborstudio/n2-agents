@@ -81,6 +81,14 @@ import Foundation
         // Tally: every slot lands in at most one count, and checking in none.
         let tally = FleetTally([.ready(left: 80), .low(left: 3), .unmetered, .out(back: nil), .checkFailed, .signedOut, .checking])
         check(tally == { var t = FleetTally([]); t.ready = 3; t.out = 1; t.attention = 2; return t }(), "tally sums the cards")
+        // Diagnostics: a restricted slot shows its raw signal; nothing absent is listed.
+        let restricted = reading(100, note: .restricted)
+        var withReason = restricted; withReason.restrictionReasons = ["primary: rate_limit_reached"]
+        let facts = Diagnostics.facts(withReason, shared: false)
+        check(facts.contains { $0.key == "Signal" && $0.value == "restricted · primary: rate_limit_reached" }, "raw note shown")
+        check(!facts.contains { $0.key == "Account" || $0.key == "Credits" }, "absent facts are omitted")
+        check(!facts.contains { $0.value.lowercased().contains("unknown") }, "nothing says unknown")
+        check(Diagnostics.facts(nil, shared: false).isEmpty, "no reading, no facts")
         print("slot status tests passed")
     }
 }
