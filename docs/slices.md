@@ -70,10 +70,6 @@ Blocked on authorization:
 - Token renewal runs `claude -p /usage`, which loads the profile's settings and
   hooks. If a SessionStart hook misbehaves under polling, restrict setting sources.
 
-- Live proof of fleet-gui-session-exec is still owed: after release, dispatch
-  a one-word Claude prompt task between two enrolled Macs over ssh and show
-  "ok" (it answered "Not logged in" before). Needs two Macs on the new build.
-
 - test-fleet.sh's two lock-race loops (section 39, about 45s) did not catch
   their bugs when reintroduced on the Mac mini: 0 of 25 trials with the steal
   marker replaced by delete-on-sight, 0 of 8 with the grace reset removed.

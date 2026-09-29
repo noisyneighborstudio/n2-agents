@@ -2073,6 +2073,12 @@ failed with that reason instead of uncertain. There is no fallback to running
 in the request's session. `scripts/test-exec-session.sh` covers all three
 paths with a launchctl fixture.
 
+Live proof, 2026-09-29: the mini dispatched a one-word Claude prompt task to
+the M5 over ssh. On 1.5.0-continuous.16 the M5 answered "Not logged in" (task
+`664ff37c`, rc=1). On continuous.20 the same task ran as a `gui/<uid>` job
+(`worker.plist` re-entering `task _run`), answered "ok" and completed in 6s
+(task `f96328ac`, rc=0).
+
 ### Managed updates and active work
 
 `sync`'s deferral asks `exec_tasks_active` whether this machine is running a
