@@ -1200,6 +1200,9 @@ chmod 700 "$base/m1/.ssh"; chmod 600 "$akf"
 denied "revoke-failure: revocation does not report success when the grant survives" "$out" "$rc"
 check  "revoke-failure: the operator is told the peer can still reach this machine" "inbound ssh grant" "$out"
 check  "revoke-failure: the operator is told which line to remove" "n2-fleet:$M4" "$out"
+# An unwritable directory has no lock to wait for; the failure names it at once
+# instead of waiting out the lock ceiling and blaming another grant change.
+check  "revoke-failure: the unwritable directory is named, not waited on" "cannot write $base/m1/.ssh" "$out"
 if grep -qF "n2-fleet:$M4" "$akf" 2>/dev/null; then
   ok "revoke-failure: the grant really did survive (the failure was real)"
 else bad "revoke-failure: the grant really did survive (the failure was real)" "grant already gone"; fi
@@ -1520,7 +1523,7 @@ else bad "concurrency: a lock stranded without a pid file is adopted" \
 # waiter that read that pid: each deletes, re-creates and enters, so the
 # recovery path reintroduces the double entry the lock exists to prevent.
 # Four real processes (distinct pids) are released together onto one lock left
-# by a dead holder; each records itself as live for 0.3s and counts how many
+# by a dead holder; each records itself as live for 0.05s and counts how many
 # live markers exist. Measured before the steal marker, with this harness:
 # 3 of 30 trials had two holders inside at once; after it, 0 of 30.
 ccl=$base/locksteal; rm -rf "$ccl"; mkdir -p "$ccl"
@@ -1540,7 +1543,7 @@ while [ "$cci" -lt 25 ]; do
              while [ ! -f \"\$ccd/go\" ]; do :; done
              fleet_ak_lock || exit 3
              : > \"\$ccd/live/\$\$\"
-             sleep 0.3
+             sleep 0.05
              ls \"\$ccd/live\" | wc -l >> \"\$ccd/seen\"
              rm -f \"\$ccd/live/\$\$\"
              fleet_ak_unlock" >/dev/null 2>&1 &
