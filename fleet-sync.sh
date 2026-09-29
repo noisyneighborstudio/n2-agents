@@ -744,61 +744,25 @@ sync_profile_marker() {  # sync_profile_marker <profile> [migrate]
 
 sync_manifest() {
   sync_ready || return 0
+  # A slot that could not be read fails the whole manifest: an absent entry
+  # reads as "not here", and a pass must not act on a partial picture.
+  smf=$(mktemp "${TMPDIR:-/tmp}/n2smf.XXXXXX") || return 1
   all_profiles 2>/dev/null | while IFS= read -r p; do
     [ -n "$p" ] || continue
     sync_vendor_list | while IFS= read -r v; do
       slot=$(config_dir "$p" "$v") || continue
       [ -d "$slot" ] || continue
-      # With credential sharing allowed, no content-based secret scan is needed.
-      # Hashing a large skills tree in one process avoids thousands of forks.
-      if [ -f "${scripts_dir:-.}/fleet-manifest.py" ] && sync_secret_shareable "$v" && ! sync_owner_managed "$p" "$v"; then
-        /usr/bin/python3 "${scripts_dir:-.}/fleet-manifest.py" "$slot" "$p" "$v"
-        continue
-      fi
-      # -L so an adopted slot (a symlink) is descended into for contents.
-      # Directories sync_excluded_relpath refuses are pruned here: a real
-      # ~/.claude holds tens of thousands of transcripts, and walking them
-      # file by file made every manifest take minutes.
-      find -L "$slot" \( -name .trash -o -name node_modules -o -name __pycache__ -o -name .git \
-          -o -path "$slot/projects" -o -path "$slot/sessions" -o -path "$slot/todos" \
-          -o -path "$slot/shell-snapshots" -o -path "$slot/ide" -o -path "$slot/statsig" \
-          -o -path "$slot/history*" \) -prune -o -type f -print 2>/dev/null | while IFS= read -r f; do
-        rel=${f#"$slot"/}
-        [ "$rel" = "$f" ] && continue
-        # The same shapes sync_classify accepts, checked without a fork: only
-        # a candidate pays for the containment, secret and digest checks.
-        case $rel in
-          skills/*|mcp/*|agents/*|commands/*|rules/*|prompts/*|hooks/*) ;;
-          */*) case ${rel##*/} in
-                 .credentials.json|auth.json|oauth_creds.json|credentials.json|.mcp.json|mcp.json|mcp_servers.json) ;;
-                 *) continue ;;
-               esac ;;
-          *) ;;
-        esac
-        sync_safe_relpath "$rel" || continue
-        # find -L descends *through* a symlinked directory, so the file is
-        # not itself a link: resolve its parent too or an inside-the-slot
-        # directory link exports anything the user can read.
-        sync_path_contained "$slot" "$f" || continue
-        sync_link_contained "$slot" "$f" || continue
-        cls=$(sync_classify "$v" "$rel")
-        [ -n "$cls" ] || continue
-        sync_owner_payload_ok "$p" "$v" "$cls" "$f" || continue
-        # Withheld here means silent here: a resource this machine will not
-        # share is not advertised, not even as an exception, because naming it
-        # would disclose that the credential exists. What a *peer* must not do
-        # is read that silence as a deletion -- see sync_pass.
-        if [ "$cls" = auth ] || [ "$cls" = mcp ]; then
-          sync_secret_shareable "$v" || continue
-        elif sync_file_carries_secret "$f"; then
-          # A settings/mcp file carrying a live token is credential material
-          # wherever it sits; it leaves this machine only under the same opt-in.
-          sync_secret_shareable "$v" || continue
-        fi
-        printf '%s\t%s\n' "$(sync_addr "$cls" "$p" "$v" "$rel")" "$(sync_digest_file "$f")"
-      done
+      # One process per slot reads, digests and (unless this provider's
+      # credentials may leave) secret-scans every file: a per-file shell path
+      # forked a dozen times a file and took minutes on a real skills tree.
+      N2_SYNC_SECRET_KEYS=$SYNC_SECRET_KEYS N2_SYNC_SECRET_HEADER_KEYS=$SYNC_SECRET_HEADER_KEYS \
+        /usr/bin/python3 "$scripts_dir/fleet-manifest.py" "$slot" "$p" "$v" \
+        "$(sync_secret_shareable "$v" && echo 1 || echo 0)" "$(sync_owner_managed "$p" "$v" && echo 1 || echo 0)" ||
+        printf '%s %s\n' "$p" "$v" >> "$smf"
     done
   done
+  if [ -s "$smf" ]; then rm -f "$smf"; return 1; fi
+  rm -f "$smf"
   # Existence records. Default is deliberately omitted: it exists on every
   # machine by definition, so replicating it would be inert, and a tombstone
   # for it could only ever be wrong.
@@ -1107,7 +1071,9 @@ sync_num() { case ${1:-} in ''|*[!0-9]*) printf '0\n' ;; *) printf '%s\n' "$1" ;
 # receiver. A peer is authenticated by the transport; it is not thereby trusted
 # to send a well-formed address, an in-scope class, or a resource this machine
 # has declared an exception for.
-sync_scope_ok() {  # sync_scope_ok <addr>
+sync_scope_ok() {  # sync_scope_ok <addr> [listed]
+  # `listed`: the addr is in this pass's local manifest, whose process scanned
+  # exactly the bytes it digested; a push re-checks that digest before sending.
   sgo_c=$(sync_addr_class "$1"); sync_valid_class "$sgo_c" || return 1
   sgo_r=$(sync_addr_relpath "$1"); sync_safe_relpath "$sgo_r" || return 1
   sgo_p=$(sync_addr_profile "$1"); [ -n "$sgo_p" ] || return 1
@@ -1143,6 +1109,7 @@ sync_scope_ok() {  # sync_scope_ok <addr>
     sync_secret_shareable "$sgo_v" && return 0
     # Content-aware: a non-auth file that happens to hold a credential key is
     # gated exactly as auth.json is, on whichever side holds the copy.
+    [ "${2:-}" = listed ] && return 0
     sgo_f=$(sync_path "$sgo_c" "$sgo_p" "$sgo_v" "$sgo_r" 2>/dev/null) || sgo_f=''
     if [ -n "$sgo_f" ] && sync_file_carries_secret "$sgo_f"; then
       sync_secret_shareable "$sgo_v" || return 1
@@ -1473,16 +1440,17 @@ sync_absorb_locked() {
 # honoured in both directions without either side having to trust the other.
 fleet_handle_sync_manifest() {
   sync_ready || sync_init
-  sync_manifest | while IFS="$(printf '\t')" read -r a d; do
+  sync_manifest > "$3/manifest" || { echo "ERR manifest-unavailable"; return 1; }
+  while IFS="$(printf '\t')" read -r a d; do
     [ -n "$a" ] || continue
-    if ! sync_scope_ok "$a"; then
+    if ! sync_scope_ok "$a" listed; then
       # An exception is announced, not hidden. Everything else out of scope
       # (bad class, unsafe path, auth not opted in) stays unmentioned.
       sync_excepted "$a" && printf '%s\t%s\n' "$a" "$SYNC_EXCEPTED"
       continue
     fi
     printf '%s\t%s\n' "$a" "$d"
-  done > "$3/out"
+  done < "$3/manifest" > "$3/out"
   fleet_ok "$3/out"
 }
 
@@ -1562,7 +1530,11 @@ sync_push_one() {  # <peer> <addr> <digest> -> peer's word, or empty on failure
       spo_slot=$(sync_slot "$(sync_addr_profile "$2")" "$(sync_addr_vendor "$2")")
       sync_path_contained "$spo_slot" "$spo_p" || return 1
       sync_link_contained "$spo_slot" "$spo_p" || return 1
-      base64 < "$spo_p"
+      # Send the bytes the pass decided on and the manifest scanned, never a
+      # later edit: copy once, and refuse if the copy is not that digest.
+      cp "$spo_p" "$spo_t/body" || return 1
+      [ "$(sync_digest_file "$spo_t/body")" = "$3" ] || return 1
+      base64 < "$spo_t/body"
     fi
   } > "$spo_t/p" 2>/dev/null
   spo_o=$(fleet_call "$1" sync-put "$spo_t/p" 2>/dev/null); spo_r=$?
@@ -1624,7 +1596,9 @@ sync_pass_peer() {  # sync_pass_peer <peer> [dryrun]
   if ! sync_remote_manifest "$spp_peer" > "$spp_t/remote" 2>/dev/null; then
     printf 'unreachable\t%s\n' "$spp_peer"; rm -rf "$spp_t"; return 2
   fi
-  sync_manifest > "$spp_t/local" 2>/dev/null
+  if ! sync_manifest > "$spp_t/local" 2>/dev/null; then
+    printf 'failed\tmanifest\n'; rm -rf "$spp_t"; return 1
+  fi
   # `sync status` reports this count rather than rebuilding the manifest,
   # which takes minutes on real profiles and is polled by the panel.
   [ -n "$spp_dry" ] || grep -c . "$spp_t/local" > "$(sync_root)/resources" 2>/dev/null
@@ -1633,11 +1607,22 @@ sync_pass_peer() {  # sync_pass_peer <peer> [dryrun]
   awk -F'\t' '{seen[$1]=1; if($2=="-") deleted[$1]=1}
     END {for(a in seen) print (a ~ /^profile[|]/ ? (deleted[a] ? 2 : 0) : 1) "\t" a}' \
     "$spp_t/local" "$spp_t/remote" | sort | cut -f2- > "$spp_t/addrs"
-  while IFS= read -r a; do
+  # One join instead of a manifest scan per address: addr, local, remote and
+  # the agreed base as it stood when the pass began (last entry wins, as in
+  # sync_base). The snapshot only short-cuts an unchanged resource; every
+  # other decision re-reads the base live.
+  sbf=$(sync_state_file); [ -f "$sbf" ] || sbf=/dev/null
+  # Unit-separated: `read` folds runs of a whitespace IFS such as tab, which
+  # would shift an empty digest's neighbour into its place.
+  awk -F'\t' -v peer="$spp_peer" -v OFS="$(printf '\037')" '
+    FILENAME == ARGV[1] { L[$1] = $2; next }
+    FILENAME == ARGV[2] { R[$1] = $2; next }
+    FILENAME == ARGV[3] { if ($1 == peer) B[$2] = $3; next }
+    { print $0, L[$0], R[$0], B[$0] }' "$spp_t/local" "$spp_t/remote" "$sbf" "$spp_t/addrs" > "$spp_t/joined"
+  while IFS="$(printf '\037')" read -r a l r sb; do
     [ -n "$a" ] || continue
-    sync_scope_ok "$a" || { printf 'skipped\t%s\n' "$a"; continue; }
-    l=$(awk -F'\t' -v k="$a" '$1==k{print $2}' "$spp_t/local" | tail -1)
-    r=$(awk -F'\t' -v k="$a" '$1==k{print $2}' "$spp_t/remote" | tail -1)
+    if [ -n "$l" ]; then sync_scope_ok "$a" listed; else sync_scope_ok "$a"; fi ||
+      { printf 'skipped\t%s\n' "$a"; continue; }
     if [ -z "$l" ] || [ -z "$r" ]; then
       if [ "$(sync_base "$spp_peer" "$a")" != "$SYNC_TOMBSTONE" ]; then
         # Agreed on once, advertised by neither side now, and no tombstone was
@@ -1676,8 +1661,8 @@ sync_pass_peer() {  # sync_pass_peer <peer> [dryrun]
       # agreed base is deliberately left alone: nothing was exchanged.
       printf 'excepted\t%s\n' "$a"; continue
     fi
-    b=$(sync_base "$spp_peer" "$a")
-    w=$(sync_decide_word "$b" "$l" "$r")
+    if [ "$l" = "$r" ] && [ "$l" = "$sb" ]; then b=$sb; w=noop
+    else b=$(sync_base "$spp_peer" "$a"); w=$(sync_decide_word "$b" "$l" "$r"); fi
     if [ -n "$spp_dry" ]; then printf '%s\t%s\n' "$w" "$a"; continue; fi
     case $w in
       noop) printf 'noop\t%s\n' "$a" ;;
@@ -1766,7 +1751,7 @@ sync_pass_peer() {  # sync_pass_peer <peer> [dryrun]
         sync_conflict_record "$a" "$lp" "$cf" "$spp_peer" "$rs" >/dev/null
         printf 'conflict\t%s\n' "$a" ;;
     esac
-  done < "$spp_t/addrs"
+  done < "$spp_t/joined"
   rm -rf "$spp_t"
   # A manifest that arrived from a peer is the operator's designation, so the
   # tools it names are applied here without a second command. The authorization
@@ -2427,10 +2412,13 @@ cmd_fleet_sync() {
       return 0 ;;
     scope)
       sync_need
-      sync_manifest | while IFS="$(printf '\t')" read -r a d; do
+      ssc=$(mktemp "${TMPDIR:-/tmp}/n2scope.XXXXXX") || return 1
+      sync_manifest > "$ssc" || { rm -f "$ssc"; fleet_die "could not read this Mac's profiles for sync"; }
+      while IFS="$(printf '\t')" read -r a d; do
         [ -n "$a" ] || continue
         sync_scope_ok "$a" && printf '%s\t%s\n' "$a" "$d"
-      done ;;
+      done < "$ssc"
+      rm -f "$ssc" ;;
     status)
       sync_need
       printf 'self\t%s\t%s\n' "$(fleet_self_machine)" "$(fleet_self_id)"

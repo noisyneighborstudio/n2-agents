@@ -820,6 +820,16 @@ resource count recorded by the last pass rather than rebuilding the manifest,
 because the panel polls it; `agents fleet sync scope` lists the live set.
 Proof: `scripts/test-sync-status.sh`.
 
+Each slot's manifest is one `fleet-manifest.py` process: it reads a file once,
+digests it and, unless the provider's credentials may leave the machine,
+secret-scans those same bytes with the shell scanner's rules and key lists.
+`scripts/test-sync-scan.sh` holds the two scanners to identical decisions over
+fixture shapes and every tracked file. A manifest that cannot be built fails
+the pass rather than reading as "nothing here". The pass joins local, remote
+and base digests once instead of per address, reuses the manifest's scan for
+files it listed, and a push re-digests its copy and sends only the bytes it
+decided on. A 1,500-file dry run fell from 226 s to 103 s (2026-09-29).
+
 ## Versioning: a base digest, not a clock, and never last-writer-wins
 
 Each machine keeps, per resource, the digest it last **agreed** with the fleet
