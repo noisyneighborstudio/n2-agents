@@ -29,6 +29,9 @@ def classify(rel):
     if any(p in skip_dirs for p in parts[:-1]) or name.endswith(('.log', '.lock', '.sock')) or name == '.DS_Store':
         return None
     if parts[0] == 'skills' and len(parts) > 1:
+        # Installed per Mac by the vendor's own tool; see sync_classify.
+        if (vendor, parts[1]) in (('codex', '.system'), ('claude', 'synced')):
+            return None
         return 'skills'
     if name in ('.credentials.json', 'auth.json', 'oauth_creds.json', 'credentials.json'):
         return 'auth'

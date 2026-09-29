@@ -3332,6 +3332,14 @@ same "vendor skills: a user skill still replicates" "my skill" \
 cf=$(peer alpha fleet sync conflicts 2>&1)
 refute "vendor skills: no conflict for the Codex bundle" "skills/.system/" "$cf"
 refute "vendor skills: no conflict for Claude's account skills" "skills/synced/" "$cf"
+# With credential sharing on, the manifest takes its single-process path;
+# the same trees stay out of it.
+peer alpha fleet sync auth enable claude >/dev/null 2>&1; peer alpha fleet sync auth enable codex >/dev/null 2>&1
+sc=$(peer alpha fleet sync scope)
+peer alpha fleet sync auth disable claude >/dev/null 2>&1; peer alpha fleet sync auth disable codex >/dev/null 2>&1
+check  "vendor skills: the fast manifest still lists user skills" "skills|Own|claude|skills/mine/SKILL.md" "$sc"
+refute "vendor skills: the fast manifest skips the Codex bundle" "skills/.system/" "$sc"
+refute "vendor skills: the fast manifest skips Claude's account skills" "skills/synced/" "$sc"
 
 # The suite ends here. The tally must be the last thing that runs: it is both
 # the report and the exit status. It used to sit after section 55, so sections
