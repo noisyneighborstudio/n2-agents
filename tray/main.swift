@@ -665,15 +665,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     }
 
     func copyCommand(profile: String, vendor: String) {
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString("\(vendor)-\(profile.lowercased())", forType: .string)
+        Clipboard.copy(Clipboard.command(profile: profile, vendor: vendor))
     }
 
     func copyPath(_ path: String) {
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(path, forType: .string)
+        Clipboard.copy(path)
+    }
+
+    func revealPath(_ path: String) {
+        dismissPanel()
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
     }
 
     // Add a lab to an existing profile: one slot dir, plus its PATH shim.

@@ -315,7 +315,7 @@ private struct DetailList: View {
     var body: some View {
         VStack(spacing: 0) {
             row("slider.horizontal.3", String(localized: "Configure", comment: "Provider page row")) {
-                Text(verbatim: "\(vendor.id)-\(profile.lowercased())")
+                Text(verbatim: Clipboard.command(profile: profile, vendor: vendor.id))
                     .font(.system(size: 12, design: .monospaced)).foregroundStyle(Ink.tertiary).lineLimit(1)
                 chevron(0)
             } action: {
@@ -362,9 +362,7 @@ private struct DetailList: View {
                 Button {
                     actions.copyPath(facts.map { "\($0.key): \($0.value)" }.joined(separator: "\n"))
                     copied = true
-                    NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
-                                         userInfo: [.announcement: String(localized: "Copied", comment: "VoiceOver: copied"),
-                                                    .priority: NSAccessibilityPriorityLevel.high.rawValue])
+                    Clipboard.announceCopied()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { copied = false }
                 } label: {
                     small(copied ? "checkmark" : "doc.on.doc", String(localized: "Copy report", comment: "Diagnostics: copy these facts"),

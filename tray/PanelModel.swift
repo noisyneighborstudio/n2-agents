@@ -640,6 +640,7 @@ protocol PanelActions: AnyObject {
     func setActive(profile: String, vendor: String?)
     func copyCommand(profile: String, vendor: String)
     func copyPath(_ path: String)
+    func revealPath(_ path: String)
     func openDesktop(profile: String, vendor: String)
     func signIn(profile: String, vendor: String, confirm: Bool)
     func finishSetup(profile: String)

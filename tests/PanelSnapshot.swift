@@ -122,6 +122,9 @@ enum Fixture {
             for v in slots[name]! {
                 snapshot.slotDirs[name, default: [:]][v] = NSHomeDirectory() + "/.n2-agents/profiles/\(name)/\(v)"
                 snapshot.signedIn[name, default: [:]][v] = !(name == "Expo" && v == "grok")
+                if let app = vendors.first(where: { $0.id == v })?.desktopName, !app.isEmpty {
+                    snapshot.desktopDirs[name, default: [:]][v] = NSHomeDirectory() + "/Library/Application Support/\(app)-\(name)"
+                }
             }
         }
         let profiles = rows.map { Profile(name: $0.name, running: false, slots: $0.slots) }
@@ -156,6 +159,7 @@ final class NoActions: PanelActions {
     func setActive(profile: String, vendor: String?) {}
     func copyCommand(profile: String, vendor: String) {}
     func copyPath(_ path: String) {}
+    func revealPath(_ path: String) {}
     func openDesktop(profile: String, vendor: String) {}
     func signIn(profile: String, vendor: String, confirm: Bool) {}
     func finishSetup(profile: String) {}
