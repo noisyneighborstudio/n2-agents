@@ -73,7 +73,7 @@ in_group() { [[ $group == all || $group == $1 ]] }
 # --- syntax ----------------------------------------------------------------
 if in_group cli; then
 python3 tests/ReonboardTests.py
-sh -n agents vendors.sh fleet.sh fleet-sync.sh fleet-exec.sh scripts/test-fleet-spike.sh scripts/test-exec.sh scripts/test-sync-review.sh scripts/test-sync-status.sh scripts/test-archive-guard.sh scripts/test-update.sh scripts/test-native-ui.sh shell/agent-as
+sh -n agents vendors.sh fleet.sh fleet-sync.sh fleet-exec.sh scripts/test-fleet-spike.sh scripts/test-exec.sh scripts/test-sync-review.sh scripts/test-sync-status.sh scripts/test-sync-scan.sh scripts/test-archive-guard.sh scripts/test-update.sh scripts/test-native-ui.sh shell/agent-as
 zsh -n install.sh uninstall.sh tray/build.sh \
   scripts/release-build.sh scripts/make-appcast.sh scripts/release-prepare.sh \
   scripts/publish-appcast.sh shell/agents.zsh
@@ -82,6 +82,7 @@ command -v fish >/dev/null && fish -n shell/agents.fish
 sh scripts/test-update.sh
 sh scripts/test-sync-review.sh
 sh scripts/test-sync-status.sh
+sh scripts/test-sync-scan.sh
 sh scripts/test-archive-guard.sh
 fi
 

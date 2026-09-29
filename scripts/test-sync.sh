@@ -1254,6 +1254,7 @@ race() {  # race <remote-digest-mode: body|tomb> -> "<words>|<final-bytes>|<conf
     root=$HOME/profiles
     . ./fleet.sh
     . ./fleet-sync.sh
+    scripts_dir=$1
     config_dir() { echo "$root/$1/$2"; }
     all_profiles() { echo Work; }
     N2_VENDORS=claude
@@ -1297,6 +1298,24 @@ same "race: a remote deletion does not take an edit that landed after the read" 
      "EDIT-INSIDE-WINDOW" "$(printf '%s' "$r" | cut -d'|' -f2)"
 refute "race: and the file is not reported deleted" \
        "deleted" "$(printf '%s' "$r" | cut -d'|' -f1)"
+# A push sends the bytes the manifest scanned and the pass decided on. An edit
+# after the manifest read (it could add a credential) is not sent.
+r=$(env HOME="$base/race-push" sh -c '
+  set -u
+  cd "$1" || exit 1
+  root=$HOME/profiles; . ./fleet.sh; . ./fleet-sync.sh; scripts_dir=$1
+  config_dir() { echo "$root/$1/$2"; }; all_profiles() { echo Work; }; N2_VENDORS=claude
+  mkdir -p "$root/Work/claude" "$fleet_root"; sync_init; rm -f "$(sync_tools_manifest)"
+  addr="settings|Work|claude|CLAUDE.md"; file=$root/Work/claude/CLAUDE.md
+  printf ORIGINAL > "$file"
+  sync_remote_manifest() { :; }
+  sync_manifest() { printf "%s\t%s\n" "$addr" "$(sync_digest_file "$file")"
+                    printf "ANTHROPIC_API_KEY: sk-late-edit" > "$file"; }
+  fleet_call() { cat "$3" >> "$HOME/sent"; echo pull; }
+  w=$(sync_pass_peer peer | cut -f1 | tr "\n" , )
+  printf "%s|%s" "$w" "$(cat "$HOME/sent" 2>/dev/null)"' _ "$repo")
+check  "race: a push after a late edit is not sent" "failed" "$(printf '%s' "$r" | cut -d'|' -f1)"
+refute "race: the late edit's bytes never leave" "QU5USFJPUElDX0FQSV9LRVk6IHNrLWxhdGUtZWRpdA" "$(printf '%s' "$r" | cut -d'|' -f2)"
 
 # --- 44. two responders racing the same resource cannot lose an edit -------
 mark "44. concurrent absorbs of one resource"
@@ -3332,13 +3351,26 @@ same "vendor skills: a user skill still replicates" "my skill" \
 cf=$(peer alpha fleet sync conflicts 2>&1)
 refute "vendor skills: no conflict for the Codex bundle" "skills/.system/" "$cf"
 refute "vendor skills: no conflict for Claude's account skills" "skills/synced/" "$cf"
-# The single-process manifest (used once a vendor's credential sharing is on)
-# keeps its own copy of the rule; check it directly.
-fm=$(/usr/bin/python3 "$repo/fleet-manifest.py" "$(slot alpha Own claude)" Own claude
-     /usr/bin/python3 "$repo/fleet-manifest.py" "$(slot alpha Own codex)" Own codex)
+# The single-process manifest keeps its own copy of the rule; check it directly.
+fm=$(export N2_SYNC_SECRET_KEYS=x N2_SYNC_SECRET_HEADER_KEYS=x
+     /usr/bin/python3 "$repo/fleet-manifest.py" "$(slot alpha Own claude)" Own claude 1 0
+     /usr/bin/python3 "$repo/fleet-manifest.py" "$(slot alpha Own codex)" Own codex 1 0)
 check  "vendor skills: the fast manifest still lists user skills" "skills|Own|claude|skills/mine/SKILL.md" "$fm"
 refute "vendor skills: the fast manifest skips the Codex bundle" "skills/.system/" "$fm"
 refute "vendor skills: the fast manifest skips Claude's account skills" "skills/synced/" "$fm"
+# A manifest that cannot be built stops the pass: an absent entry would read as
+# "not on this Mac" and the pass would act on a partial picture.
+mf=$(env HOME="$base/mfail" sh -c '
+  cd "$1" || exit 1
+  root=$HOME/profiles; . ./fleet.sh; . ./fleet-sync.sh
+  scripts_dir=$HOME/missing
+  config_dir() { echo "$root/$1/$2"; }; all_profiles() { echo Work; }; N2_VENDORS=claude
+  mkdir -p "$root/Work/claude" "$fleet_root"; sync_init
+  printf skill > "$root/Work/claude/CLAUDE.md"
+  sync_remote_manifest() { :; }
+  sync_pass_peer peer; echo "rc=$?"' _ "$repo" 2>&1)
+check "manifest failure: the pass reports it" "failed	manifest" "$mf"
+check "manifest failure: and fails" "rc=1" "$mf"
 
 # The suite ends here. The tally must be the last thing that runs: it is both
 # the report and the exit status. It used to sit after section 55, so sections
