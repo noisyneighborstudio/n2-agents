@@ -20,23 +20,18 @@ The whole-popover pass (`docs/tray-redesign/12-whole-popover.md`) runs first.
 Each slice's proof includes `scripts/panel-snapshot.sh` renders in light and
 dark, and `tray/build.sh`.
 
-1. **Tasks and the Task page** (`tasks-page`).
-   Behavior: Root › Tasks (three rows, status shape, "Send Work…" link) pushes
-   a Task page: hero, ranked actions, timeline, diagnostics.
-   Proof: snapshots per task state.
-
-2. **Send Work page** (`send-work-page`).
+1. **Send Work page** (`send-work-page`).
    Behavior: the composer is a pushed page whose draft lives on the model, and
    it shows the CLI's plan before Send.
    Proof: a test that the draft survives the panel closing; snapshots.
 
-3. **Settings › Fleet** (`settings-fleet`).
+2. **Settings › Fleet** (`settings-fleet`).
    Behavior: Sync & Sharing (with exceptions and conflicts), pairing (Create
    identity, Add a Mac), managed tools and the full Activity feed live in
    Settings; the popover no longer manages.
    Proof: the settings probe; snapshots.
 
-4. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
+3. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
    Behavior: from the QA app, pair two disposable peers, sync (with a held
    profile shared from Fleet settings), send work, show its result and revoke.
    Proof: packaged acceptance driven through accessibility events with

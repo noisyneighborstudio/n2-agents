@@ -264,6 +264,52 @@ struct FleetTask: Identifiable, Equatable {
     }
 }
 
+extension FleetTask {
+    /// How a task reads everywhere it's shown: a symbol whose shape carries
+    /// the state on its own, and one word. An unreachable worker is waiting,
+    /// not failed.
+    enum Look: Equatable { case waiting, moving, running, done, doneWithExit, failed, notAnswering, unknown }
+
+    var look: Look {
+        switch state {
+        case .queued: return .waiting
+        case .preparing, .transferring: return .moving
+        case .running: return .running
+        case .done: return succeeded ? .done : .doneWithExit
+        case .failed: return .failed
+        case .disconnected: return .notAnswering
+        case .unknown: return .unknown
+        }
+    }
+
+    var symbol: String {
+        switch look {
+        case .waiting: return "circle.dotted"
+        case .moving: return "arrow.up.circle"
+        case .running: return "play.circle"
+        case .done: return "checkmark.circle.fill"
+        case .doneWithExit: return "exclamationmark.circle"
+        case .failed: return "xmark.circle.fill"
+        case .notAnswering: return "wifi.slash"
+        case .unknown: return "questionmark.circle"
+        }
+    }
+
+    var word: String {
+        switch look {
+        case .waiting: return String(localized: "Queued", comment: "Task state")
+        case .moving: return state == .preparing ? String(localized: "Preparing", comment: "Task state")
+                                                 : String(localized: "Sending workspace", comment: "Task state")
+        case .running: return String(localized: "Running", comment: "Task state")
+        case .done: return String(localized: "Finished", comment: "Task state")
+        case .doneWithExit: return String(localized: "Exited \(rc)", comment: "Task state: finished with a nonzero exit code")
+        case .failed: return String(localized: "Failed", comment: "Task state")
+        case .notAnswering: return String(localized: "Not answering", comment: "Task state: the worker stopped answering")
+        case .unknown: return String(localized: "Unknown state", comment: "Task state")
+        }
+    }
+}
+
 /// One row of `agents fleet task notices`:
 /// `epoch \t kind \t task \t machine \t text`. This feed is the durable half of
 /// a fleet event; the desktop banner is fired beside it and may be missed, so
@@ -382,6 +428,17 @@ struct FleetData: Equatable {
         return loading.contains(read) && !loaded.contains(read) ? "Loading \(read.label)…" : nil
     }
     var activeTasks: [FleetTask] { tasks.filter { !$0.isFinished } }
+    /// When a task last did something, from the activity feed.
+    func lastSeen(_ task: FleetTask) -> Date? { notices.filter { $0.task == task.id }.map(\.at).max() }
+    /// "1 running · 1 failed": what the Tasks header counts.
+    var taskSummary: [(look: FleetTask.Look, count: Int)] {
+        // Not answering has its own banner; an exit code is a finished task's detail.
+        let order: [FleetTask.Look] = [.running, .moving, .waiting, .failed]
+        return order.compactMap { look in
+            let n = tasks.filter { $0.look == look }.count
+            return n > 0 ? (look, n) : nil
+        }
+    }
     var needsAttention: Bool {
         !pending.isEmpty || sync.conflicts > 0 || tasks.contains(where: \.isStranded)
     }

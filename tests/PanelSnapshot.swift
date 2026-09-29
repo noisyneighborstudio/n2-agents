@@ -30,6 +30,13 @@ import SwiftUI
                                                  transport: "ssh", requestedAt: Date())]
             model.fleet?.conflicts = [FleetConflict(id: "c1", address: "profile|Work|claude|settings", digest: "", remote: "present", inScope: true)]
             model.fleet?.sync.conflicts = 1
+        case "tasks"?, "task"?:
+            model.fleet?.tasks += [FleetTask(id: "t-9d20", state: .disconnected, vendor: "claude", rc: "", label: "nightly evals",
+                                             machine: "mac-mini", role: "dispatcher"),
+                                   FleetTask(id: "t-0b11", state: .done, vendor: "codex", rc: "0", label: "lint fleet docs",
+                                             machine: "mac-mini", role: "dispatcher")]
+            model.fleet?.tasks.sort { ["t-9d20", "t-kc01", "t-7f3a", "t-0b11"].firstIndex(of: $0.id)! < ["t-9d20", "t-kc01", "t-7f3a", "t-0b11"].firstIndex(of: $1.id)! }
+            if state.first == "task" { model.path = [.task(state.count > 1 ? state[1] : "t-kc01")] }
         case "machine"?:
             model.path = [.machine("SHA256:" + String(repeating: "b", count: 43))]
         case "send"?:

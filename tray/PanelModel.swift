@@ -387,12 +387,14 @@ enum PanelRoute: Hashable {
     case machine(String)
     /// Sync conflicts waiting on this Mac.
     case conflicts
+    /// One fleet task, by FleetTask.id.
+    case task(String)
 
     /// The profile the page belongs to; nil for a page that belongs to none.
     var profile: String? {
         switch self {
         case .profile(let p), .provider(let p, _), .configure(let p, _): return p
-        case .sendSession, .machine, .conflicts: return nil
+        case .sendSession, .machine, .conflicts, .task: return nil
         }
     }
 }

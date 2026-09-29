@@ -77,8 +77,6 @@ struct FleetSection: View {
                 }
                 SyncBlock(fleet: fleet, actions: actions)
                 ToolsBlock(fleet: fleet, actions: actions)
-                TasksBlock(fleet: fleet, actions: actions)
-                NoticesBlock(fleet: fleet, actions: actions)
             } else if fleet == nil {
                 Text("Reading fleet state…")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
@@ -293,137 +291,6 @@ private struct ToolsBlock: View {
     }
 }
 
-// MARK: - Tasks
-
-private struct TasksBlock: View {
-    let fleet: FleetData
-    let actions: FleetActions
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            FleetLabel(title: "Tasks", detail: fleet.activeTasks.isEmpty ? "" : "\(fleet.activeTasks.count) unfinished")
-            FleetReadState(fleet: fleet, read: .tasks)
-            ForEach(fleet.tasks.prefix(6)) { task in
-                TaskRow(task: task, fleet: fleet, actions: actions)
-            }
-            Button("Send Work to Another Mac…") { actions.fleetDispatch() }
-                .disabled(!fleet.machinesCurrent)
-                .buttonStyle(FleetPill(prominent: fleet.destinations.count > 1))
-                .disabled(fleet.destinations.count < 2)
-        }
-    }
-}
-
-private struct TaskRow: View {
-    let task: FleetTask
-    let fleet: FleetData
-    let actions: FleetActions
-    @State private var distributing = false
-
-    var body: some View {
-        FleetCard(tint: task.isStranded ? Color(nsColor: .systemOrange) : nil) {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 6) {
-                    Text(verbatim: task.label.isEmpty ? task.id : task.label)
-                        .font(.system(size: 12)).lineLimit(1)
-                    Spacer()
-                    Text(verbatim: stateWord).font(.system(size: 11)).foregroundStyle(.secondary)
-                }
-                HStack(spacing: 6) {
-                    if !task.machine.isEmpty { FleetChip(text: task.machine) }
-                    if !task.vendor.isEmpty { FleetChip(text: task.vendor) }
-                    Spacer()
-                }
-
-                if task.isStranded {
-                    // No automatic retry: the machine being unreachable is not
-                    // proof the work stopped, so the only path forward is a
-                    // choice the user makes with that sentence in front of them.
-                    Text("This Mac stopped answering. The task may still be running there, so nothing was started anywhere else.")
-                        .font(.system(size: 10)).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if task.canRetry {
-                        Button("Run It Somewhere Else") { actions.fleetRetry(task: task.id) }
-                            .disabled(!fleet.tasksCurrent)
-                            .buttonStyle(FleetPill())
-                    }
-                }
-
-                if task.isFinished {
-                    HStack(spacing: 6) {
-                        Button("Show Result") { actions.fleetShowTask(task.id) }
-                            .buttonStyle(FleetPill(small: true))
-                        if task.canFetch {
-                            Button(distributing ? "Cancel" : "Copy Result To…") { distributing.toggle() }
-                                .buttonStyle(FleetPill(small: true))
-                        }
-                        Spacer()
-                    }
-                    if distributing {
-                        // Outputs stay where the task put them. This list is
-                        // the only way one moves, and it is never pre-selected.
-                        VStack(alignment: .leading, spacing: 3) {
-                            ForEach(fleet.destinations) { peer in
-                                Button(peer.isSelf ? "This Mac" : peer.machine) {
-                                    distributing = false
-                                    actions.fleetDistribute(task: task.id, machine: peer.machine)
-                                }
-                                .buttonStyle(FleetPill(small: true))
-                            }
-                            Button("Every Mac in the Fleet") {
-                                distributing = false
-                                actions.fleetDistribute(task: task.id, machine: nil)
-                            }
-                            .buttonStyle(FleetPill(small: true))
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private var stateWord: String {
-        switch task.state {
-        case .queued:       return "queued"
-        case .preparing:    return "preparing"
-        case .transferring: return "sending workspace"
-        case .running:      return "running"
-        case .done:         return task.succeeded ? "finished" : "finished (exit \(task.rc))"
-        case .failed:       return "failed"
-        case .disconnected: return "unreachable"
-        case .unknown:      return "unknown"
-        }
-    }
-}
-
-// MARK: - Notices
-
-private struct NoticesBlock: View {
-    let fleet: FleetData
-    let actions: FleetActions
-
-    var body: some View {
-        // The durable half of a fleet event. A desktop banner can be missed or
-        // suppressed by Focus, so the panel reads the feed and never depends on
-        // a banner having landed.
-        if !fleet.notices.isEmpty || fleet.state(.activity) != nil {
-            VStack(alignment: .leading, spacing: 6) {
-                FleetLabel(title: "Fleet activity", detail: "")
-                FleetReadState(fleet: fleet, read: .activity)
-                ForEach(fleet.notices.prefix(5)) { n in
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(verbatim: n.title).font(.system(size: 11))
-                        Spacer()
-                        Text(verbatim: FleetNoticeTime.string(n.at))
-                            .font(.system(size: 10)).foregroundStyle(.secondary)
-                    }
-                }
-                Button("Check in") { actions.fleetReconcileTasks() }.buttonStyle(FleetPill(small: true))
-            }
-        }
-    }
-}
-
 enum FleetNoticeTime {
     private static let clock: DateFormatter = {
         let f = DateFormatter()
@@ -455,6 +322,15 @@ struct FleetBanners: View {
                         Button(String(localized: "Deny", comment: "Banner: refuse the Mac")) { actions.fleetDeny(peer: p.id) }
                             .buttonStyle(BannerButton())
                         Button(String(localized: "Approve…", comment: "Banner: approve the Mac, after confirming")) { actions.fleetApprove(peer: p.id) }
+                            .buttonStyle(BannerButton(prominent: true))
+                    }
+                }
+                ForEach(fleet.tasks.filter(\.isStranded)) { t in
+                    Banner(symbol: "wifi.slash", ink: Ink.amber,
+                           title: String(localized: "\(t.label.isEmpty ? t.id : t.label) isn’t answering", comment: "Banner: a task's worker stopped answering"),
+                           detail: String(localized: "\(t.machine) stopped answering. The task may still be running there, so nothing was started anywhere else.",
+                                          comment: "Banner: what not answering means")) {
+                        Button(String(localized: "Review", comment: "Banner: open the task")) { model.push(.task(t.id)) }
                             .buttonStyle(BannerButton(prominent: true))
                     }
                 }
@@ -530,7 +406,7 @@ enum MachineWord {
         case .approved: break
         }
         guard peer.isOnline else { return (String(localized: "offline", comment: "Machine status"), Ink.secondary) }
-        let running = tasks.filter { $0.machine == peer.machine && !$0.isFinished }.count
+        let running = tasks.filter { $0.machine == peer.machine && !$0.isFinished && !$0.isStranded }.count
         return running > 0
             ? (inflected("^[\(running) task](inflect: true) running", comment: "Machine status: tasks running there"), Ink.secondary)
             : (String(localized: "online", comment: "Machine status"), Ink.secondary)
@@ -682,6 +558,230 @@ struct MachinePage: View {
                 .background(RoundedRectangle(cornerRadius: 10).fill(Ink.surface))
                 .clipShape(RoundedRectangle(cornerRadius: 10))
         }
+    }
+}
+
+extension FleetTask.Look {
+    var ink: Color {
+        switch self {
+        case .done: return Ink.green
+        case .doneWithExit: return Ink.yellow
+        case .failed: return Ink.red
+        case .notAnswering: return Ink.amber
+        case .running, .moving: return Ink.link
+        case .waiting, .unknown: return Ink.secondary
+        }
+    }
+}
+
+// The fleet's newest work: three rows, each a status shape and a word; the
+// header counts what's live and links to sending more.
+struct TasksSection: View {
+    @ObservedObject var model: PanelModel
+    let actions: FleetActions
+
+    var body: some View {
+        if let fleet = model.fleet, fleet.initialized {
+            VStack(spacing: 4) {
+                HStack(spacing: 7) {
+                    Image(systemName: "paperplane").font(.system(size: 12))
+                    Text("Tasks", comment: "Root: the fleet's tasks").font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(.primary.opacity(0.8))
+                    Text(verbatim: fleet.taskSummary.map { "\($0.count) \(Self.noun($0.look))" }.joined(separator: " · "))
+                        .monospacedDigit().lineLimit(1)
+                    Spacer(minLength: 6)
+                    Button(String(localized: "Send Work…", comment: "Tasks: compose work for another Mac")) { actions.fleetDispatch() }
+                        .buttonStyle(.plain).foregroundStyle(Ink.link)
+                        .disabled(fleet.destinations.count < 2)
+                        .opacity(fleet.destinations.count < 2 ? 0.5 : 1)
+                        .help(fleet.destinations.count < 2
+                              ? String(localized: "No other Mac can take work right now", comment: "Send Work help, disabled")
+                              : String(localized: "Send work to another Mac", comment: "Send Work help"))
+                }
+                .font(.system(size: 11.5)).foregroundStyle(Ink.secondary)
+                .padding(.horizontal, 4).frame(height: 30)
+                if let error = model.fleetNotificationError {
+                    Text(verbatim: error).font(.system(size: 11.5)).foregroundStyle(Ink.amber)
+                        .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 4)
+                }
+                if let state = fleet.state(.tasks) {
+                    Text(verbatim: state).font(.system(size: 11.5)).foregroundStyle(Ink.secondary).padding(.horizontal, 4)
+                }
+                ForEach(fleet.tasks.prefix(3)) { t in
+                    Button { model.push(.task(t.id)) } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: t.symbol).font(.system(size: 15)).foregroundStyle(t.look.ink).frame(width: 20)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(verbatim: t.label.isEmpty ? t.id : t.label).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                                HStack(spacing: 4) {
+                                    if !t.machine.isEmpty { Text("on \(t.machine)", comment: "Task row: where it runs") }
+                                    if let at = fleet.lastSeen(t) { Text(verbatim: "· \(FleetNoticeTime.string(at))") }
+                                }
+                                .font(.system(size: 11.5)).foregroundStyle(Ink.tertiary).lineLimit(1)
+                            }
+                            Spacer(minLength: 6)
+                            Text(verbatim: t.word).font(.system(size: 12)).foregroundStyle(t.look.ink).lineLimit(1)
+                            Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(Ink.tertiary)
+                        }
+                        .padding(.horizontal, 10).frame(height: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(PressableStyle(radius: 8))
+                    .accessibilityLabel("\(t.label.isEmpty ? t.id : t.label), \(t.word)")
+                }
+            }
+        }
+    }
+
+    static func noun(_ look: FleetTask.Look) -> String {
+        switch look {
+        case .running, .moving: return String(localized: "running", comment: "Tasks header count")
+        case .waiting: return String(localized: "queued", comment: "Tasks header count")
+        case .notAnswering: return String(localized: "not answering", comment: "Tasks header count")
+        case .failed: return String(localized: "failed", comment: "Tasks header count")
+        case .doneWithExit: return String(localized: "exited", comment: "Tasks header count")
+        case .done, .unknown: return ""
+        }
+    }
+}
+
+// One task: what it is and where, the action that fits its state first,
+// what happened to it, and its raw facts.
+struct TaskPage: View {
+    @ObservedObject var model: PanelModel
+    let actions: FleetActions
+    let task: FleetTask
+
+    var body: some View {
+        let fleet = model.fleet ?? FleetData()
+        let timeline = fleet.notices.filter { $0.task == task.id }.sorted { $0.at > $1.at }
+        VStack(alignment: .leading, spacing: 0) {
+            NavBar(title: String(localized: "Task", comment: "Task page title"), back: { model.pop() }) {
+                Text(verbatim: model.parentTitle).font(.system(size: 13)).foregroundStyle(Ink.link).lineLimit(1)
+            } trailing: { EmptyView() }
+            FittingScroll(maxHeight: PanelView.bodyLimit) {
+                VStack(alignment: .leading, spacing: 14) {
+                    VStack(spacing: 8) {
+                        Image(systemName: task.symbol).font(.system(size: 26)).foregroundStyle(task.look.ink)
+                            .frame(width: 56, height: 56)
+                            .background(RoundedRectangle(cornerRadius: 14).fill(Ink.tile))
+                        Text(verbatim: task.label.isEmpty ? task.id : task.label)
+                            .font(.system(size: 17, weight: .semibold)).multilineTextAlignment(.center)
+                        HStack(spacing: 4) {
+                            Text(verbatim: task.word).foregroundStyle(task.look.ink)
+                            if !task.machine.isEmpty { Text("on \(task.machine)", comment: "Task page: where it runs") }
+                            if let vendor = model.data?.snapshot.vendor(task.vendor)?.label ?? (task.vendor.isEmpty ? nil : task.vendor) {
+                                Text(verbatim: "· \(vendor)")
+                            }
+                        }
+                        .font(.system(size: 13)).foregroundStyle(Ink.secondary)
+                        if task.isStranded {
+                            Text("\(task.machine) stopped answering. The task may still be running there, so nothing was started anywhere else.",
+                                 comment: "Task page: what not answering means")
+                                .font(.system(size: 12)).foregroundStyle(Ink.secondary).multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    actionsBlock(fleet)
+                    section(String(localized: "Timeline", comment: "Task page section")) {
+                        if timeline.isEmpty {
+                            Text("Nothing recorded yet.", comment: "Task page: empty timeline").font(.system(size: 12)).foregroundStyle(Ink.tertiary)
+                                .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        ForEach(timeline) { n in
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(verbatim: n.title).font(.system(size: 12.5)).lineLimit(1)
+                                Spacer()
+                                Text(verbatim: FleetNoticeTime.string(n.at)).font(.system(size: 11.5)).foregroundStyle(Ink.tertiary)
+                            }
+                            .padding(.horizontal, 12).frame(height: 32)
+                        }
+                    }
+                    section(String(localized: "Diagnostics", comment: "Task page section")) {
+                        ForEach(facts, id: \.0) { key, value in
+                            HStack {
+                                Text(verbatim: key).foregroundStyle(Ink.tertiary)
+                                Spacer()
+                                Text(verbatim: value).font(.system(size: 11.5, design: .monospaced)).textSelection(.enabled)
+                            }
+                            .font(.system(size: 11.5)).padding(.horizontal, 12).frame(height: 24)
+                        }
+                    }
+                }
+                .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 16)
+            }
+        }
+    }
+
+    private var facts: [(String, String)] {
+        [(String(localized: "Task", comment: "Task diagnostics key"), task.id),
+         (String(localized: "State", comment: "Task diagnostics key"), task.state.rawValue),
+         (String(localized: "Exit", comment: "Task diagnostics key"), task.rc),
+         (String(localized: "Agent", comment: "Task diagnostics key"), task.vendor),
+         (String(localized: "Machine", comment: "Task diagnostics key"), task.machine),
+         (String(localized: "Role", comment: "Task diagnostics key"), task.role)].filter { !$0.1.isEmpty }
+    }
+
+    /// Ranked for the state: a stranded task's way forward first, a finished
+    /// one's result first. Retrying is always a new task, never automatic.
+    @ViewBuilder private func actionsBlock(_ fleet: FleetData) -> some View {
+        VStack(spacing: 8) {
+            if task.isStranded, task.canRetry {
+                Button(String(localized: "Run It Somewhere Else…", comment: "Task page: start a second task elsewhere")) {
+                    actions.fleetRetry(task: task.id)
+                }
+                .buttonStyle(WideButton(prominent: true)).disabled(!fleet.tasksCurrent)
+            }
+            if task.isFinished {
+                Button(String(localized: "Show Result", comment: "Task page: the task's output")) { actions.fleetShowTask(task.id) }
+                    .buttonStyle(WideButton(prominent: true))
+                if task.canFetch {
+                    Button(String(localized: "Copy Result To…", comment: "Task page: distribute its outputs")) { popUp(copyTargets(fleet)) }
+                        .buttonStyle(WideButton())
+                }
+            }
+            if !task.isFinished && !task.isStranded {
+                Button(String(localized: "Check In", comment: "Task page: ask it for its state")) { actions.fleetReconcileTasks() }
+                    .buttonStyle(WideButton())
+            }
+        }
+    }
+
+    /// Outputs stay where the task put them; this list is the only way one
+    /// moves, and nothing is chosen for you.
+    private func copyTargets(_ fleet: FleetData) -> [NSMenuItem] {
+        fleet.destinations.map { peer in
+            ClosureItem(peer.isSelf ? String(localized: "This Mac", comment: "Copy result target") : peer.machine,
+                        symbol: peer.isSelf ? "laptopcomputer" : "desktopcomputer") {
+                actions.fleetDistribute(task: task.id, machine: peer.machine)
+            }
+        } + [.separator(), ClosureItem(String(localized: "Every Mac in the Fleet", comment: "Copy result target"), symbol: "square.stack.3d.up") {
+            actions.fleetDistribute(task: task.id, machine: nil)
+        }]
+    }
+
+    private func section<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(verbatim: title).textCase(.uppercase).font(.system(size: 11, weight: .semibold)).foregroundStyle(Ink.tertiary)
+            VStack(spacing: 0) { content() }
+                .background(RoundedRectangle(cornerRadius: 10).fill(Ink.surface))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+    }
+}
+
+struct WideButton: ButtonStyle {
+    var prominent = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13.5, weight: .semibold))
+            .foregroundStyle(prominent ? .white : .primary)
+            .frame(maxWidth: .infinity).frame(height: 36)
+            .background(RoundedRectangle(cornerRadius: 9).fill(prominent ? Ink.chip : Ink.raised))
+            .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(prominent ? .clear : Ink.raisedEdge, lineWidth: 1))
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(Motion.press, value: configuration.isPressed)
     }
 }
 

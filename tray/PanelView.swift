@@ -65,6 +65,10 @@ struct PanelView: View {
             if let fleetActions = actions as? FleetActions, let peer = model.fleet?.peers.first(where: { $0.id == id }) {
                 MachinePage(model: model, actions: fleetActions, peer: peer)
             }
+        case .task(let id)?:
+            if let fleetActions = actions as? FleetActions, let task = model.fleet?.tasks.first(where: { $0.id == id }) {
+                TaskPage(model: model, actions: fleetActions, task: task)
+            }
         case .conflicts?:
             if let fleetActions = actions as? FleetActions { ConflictsPage(model: model, actions: fleetActions) }
         case .configure(let name, let id)?:

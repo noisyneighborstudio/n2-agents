@@ -284,7 +284,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
                     guard let name = route.profile else { return false }
                     guard let p = data.profiles.first(where: { $0.name == name }) else { return true }
                     switch route {
-                    case .profile, .sendSession, .machine, .conflicts: return false
+                    case .profile, .sendSession, .machine, .conflicts, .task: return false
                     case .provider(_, let v), .configure(_, let v): return p.slots[v] == nil
                     }
                 }) {

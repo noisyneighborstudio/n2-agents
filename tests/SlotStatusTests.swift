@@ -184,6 +184,19 @@ import Foundation
         check(SessionInfo.filter(all, profile: "Work", vendor: "codex").map(\.sessionID) == ["1"], "profile and lab")
         check(SessionInfo.filter(all, query: "FIX").map(\.sessionID) == ["3", "1"], "search folds case")
         check(SessionInfo.filter(all, profile: "Home", query: "docs").isEmpty, "filters and search combine")
+        // Task vocabulary: every state has its own shape; unreachable is waiting, not failed.
+        func task(_ st: FleetTask.State, rc: String = "") -> FleetTask {
+            FleetTask(id: "t", state: st, vendor: "", rc: rc, label: "", machine: "", role: "dispatcher")
+        }
+        let looks = [task(.queued), task(.preparing), task(.running), task(.done), task(.done, rc: "2"),
+                     task(.failed), task(.disconnected), task(.unknown)]
+        check(Set(looks.map(\.symbol)).count == looks.count && looks[1].symbol == task(.transferring).symbol,
+              "each look has its own symbol (preparing and sending share one)")
+        check(task(.disconnected).look == .notAnswering && task(.disconnected).look != .failed, "unreachable is not failed")
+        check(task(.done, rc: "2").look == .doneWithExit && task(.done, rc: "0").look == .done, "an exit code is not success")
+        var f = FleetData()
+        f.tasks = [task(.running), task(.running), task(.failed), task(.done)]
+        check(f.taskSummary.map(\.count) == [2, 1] && f.taskSummary.map(\.look) == [.running, .failed], "header counts what's live or failed")
         print("slot status tests passed")
     }
 }
