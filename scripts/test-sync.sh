@@ -178,7 +178,12 @@ check  "scope: mcp config is in scope once the vendor is opted in" \
        "mcp|Work|claude|.mcp.json" "$sc"
 peer alpha fleet sync auth disable claude >/dev/null 2>&1
 sc=$(peer alpha fleet sync scope)
+put alpha "$(slot alpha Work codex)/skills/.system/.codex-system-skills.marker" build
+put alpha "$(slot alpha Work claude)/skills/synced/acct_org/manifest.json" "{}"
+sc=$(peer alpha fleet sync scope)
 refute "scope: transcripts are never synced" "projects/x/session.jsonl" "$sc"
+refute "scope: Codex's bundled skills are never synced" "skills/.system/" "$sc"
+refute "scope: Claude's account skills are never synced" "skills/synced/" "$sc"
 refute "scope: history is never synced"      "history.jsonl" "$sc"
 
 # --- 2. a change made on one machine reaches the other ---------------------
@@ -3307,6 +3312,33 @@ check "approval race: a replacement cannot approve the captured installer"      
 if [ -e "$race_dir/unapproved-ran" ]; then
   bad "approval race: the unapproved installer never executes" "installer ran"
 else ok "approval race: the unapproved installer never executes"; fi
+
+# --- 76. skill trees a vendor installs itself stay each Mac's own ----------
+mark "76. vendor-installed skill trees do not sync"
+for h in alpha beta; do
+  put $h "$(slot $h Own codex)/skills/.system/.codex-system-skills.marker" "$h build"
+  put $h "$(slot $h Own claude)/skills/synced/acct_org/manifest.json" "$h manifest"
+done
+put alpha "$(slot alpha Own claude)/skills/mine/SKILL.md" 'my skill'
+out=$(peer alpha fleet sync now --peer "$B" 2>&1)
+refute "vendor skills: the Codex bundle is not replicated" "skills/.system/" "$out"
+refute "vendor skills: Claude's account skills are not replicated" "skills/synced/" "$out"
+same "vendor skills: beta keeps its own Codex marker" "beta build" \
+     "$(cat "$(slot beta Own codex)/skills/.system/.codex-system-skills.marker" 2>/dev/null)"
+same "vendor skills: beta keeps its own account skill manifest" "beta manifest" \
+     "$(cat "$(slot beta Own claude)/skills/synced/acct_org/manifest.json" 2>/dev/null)"
+same "vendor skills: a user skill still replicates" "my skill" \
+     "$(cat "$(slot beta Own claude)/skills/mine/SKILL.md" 2>/dev/null)"
+cf=$(peer alpha fleet sync conflicts 2>&1)
+refute "vendor skills: no conflict for the Codex bundle" "skills/.system/" "$cf"
+refute "vendor skills: no conflict for Claude's account skills" "skills/synced/" "$cf"
+# The single-process manifest (used once a vendor's credential sharing is on)
+# keeps its own copy of the rule; check it directly.
+fm=$(/usr/bin/python3 "$repo/fleet-manifest.py" "$(slot alpha Own claude)" Own claude
+     /usr/bin/python3 "$repo/fleet-manifest.py" "$(slot alpha Own codex)" Own codex)
+check  "vendor skills: the fast manifest still lists user skills" "skills|Own|claude|skills/mine/SKILL.md" "$fm"
+refute "vendor skills: the fast manifest skips the Codex bundle" "skills/.system/" "$fm"
+refute "vendor skills: the fast manifest skips Claude's account skills" "skills/synced/" "$fm"
 
 # The suite ends here. The tally must be the last thing that runs: it is both
 # the report and the exit status. It used to sit after section 55, so sections

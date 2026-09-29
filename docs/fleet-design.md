@@ -804,7 +804,7 @@ included set is an allowlist per class, not an exclude list:
 | class | included | excluded and why |
 | --- | --- | --- |
 | `settings` | the vendor's own settings/config files (`settings.json`, `config.toml`, …) and agent settings | `projects/`, `history*`, `statsig/`, `*.log`, caches — machine-local churn |
-| `skills` | `skills/**` under the slot | — |
+| `skills` | `skills/**` under the slot | Codex `skills/.system/` and Claude `skills/synced/`: installed per Mac by the vendor's own tool, with its own state |
 | `mcp` | the vendor's MCP server config | credentials referenced by it, which are class `auth` |
 | `auth` | only providers the operator opted in per the matrix below | everything not opted in |
 | `tools` | the fleet-managed utility manifest, not the binaries | arbitrary software on the machine |
