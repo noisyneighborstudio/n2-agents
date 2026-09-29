@@ -14,6 +14,7 @@ sh "$repo/scripts/test-exec-admission.sh" || exit 1
 sh "$repo/scripts/test-linked-workspace.sh" || exit 1
 sh "$repo/scripts/test-exec-preferences.sh" || exit 1
 sh "$repo/scripts/test-exec-prompt.sh" || exit 1
+sh "$repo/scripts/test-exec-session.sh" || exit 1
 base=${N2_EXEC_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/n2exec-test.XXXXXX")}
 mkdir -p "$base"
 pass=0; fail=0

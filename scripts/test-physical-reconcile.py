@@ -157,9 +157,9 @@ def main(native_check_in=None):
                 shutil.copy2(repo / name, root / 'repo' / name)
         if args.keep_request_streams:
             source = root / 'repo/fleet-exec.sh'
-            launch = 'exec_run_local "$hts_id" </dev/null >"$hts_d/worker.log" 2>&1 &'
+            launch = 'exec_run_local "$1" </dev/null >"$esw_d/worker.log" 2>&1 &'
             assert source.read_text().count(launch) == 1
-            source.write_text(source.read_text().replace(launch, 'exec_run_local "$hts_id" &'))
+            source.write_text(source.read_text().replace(launch, 'exec_run_local "$1" &'))
         shutil.copy2(__file__, root / 'acceptance.py')
         for name, code in [('cursor-agent', 0), ('security', 1)]:
             file = root / 'bin' / name

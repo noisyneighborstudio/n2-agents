@@ -24,7 +24,7 @@ for name in ('sender', 'receiver', 'repo', 'bin', 'tmp', 'arrivals', 'runs', 'cl
 for name in helper.run(['git', 'ls-files'], cwd=REPO).splitlines():
     if '/' not in name and (name == 'agents' or name.endswith(('.sh', '.py'))):
         shutil.copy2(REPO / name, base / 'repo' / name)
-launch = '  exec_run_local "$hts_id" </dev/null >"$hts_d/worker.log" 2>&1 &'
+launch = '  if ! exec_start_worker "$hts_id"; then'
 source = base / 'repo/fleet-exec.sh'
 assert source.read_text().count(launch) == 1
 # Record parent-side launch admission so late child scheduling cannot conceal
