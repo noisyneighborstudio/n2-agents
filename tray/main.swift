@@ -1058,7 +1058,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     func showSettings() {
         dismissPanel()
         if settingsWindow == nil {
-            settingsWindow = GlassWindow(rootView: SettingsWindowView(model: model, actions: self), behavior: .floating)
+            settingsWindow = GlassWindow(rootView: SettingsWindowView(model: model, actions: self,
+                                                                          fleet: AnyView(FleetSettingsSection(model: model, actions: self))),
+                                         behavior: .floating)
             settingsWindow?.identifier = NSUserInterfaceItemIdentifier("dev.sethwebster.n2agents.settings")
         }
         settingsWindow?.present()

@@ -8,9 +8,10 @@ Decisions the handoff left open, as built:
 - **Page fill.** A live glass view can't be sampled, and `windowBackgroundColor`
   is pure white in light mode (white cards vanish on it), so `Ink.page` is the
   glass's measured tone: `#ECECF0` light, `#252932` dark.
-- **Features the Fleet page has no place for.** Peers, sync and tasks
-  (`FleetSection`) sit below This Machine until `12-whole-popover.md` gives
-  each its home.
+- **Fleet-managed tools**, which `12-whole-popover.md` doesn't place, live in
+  Settings › Fleet with pairing, kept-local items and the activity feed.
+- **Send Session and Send Work** report their outcome on their page; a
+  session's transfer still re-reads the approved Macs and matches by identity.
 - **Strip bars** of out, failed and signed-out slots are a tinted track with no
   fill: a full bar would read as full capacity in grayscale.
 - **Out with no known return**: the hero reads "Out of allowance" and drops

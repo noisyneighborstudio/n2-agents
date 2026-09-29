@@ -43,11 +43,6 @@ struct FleetPage: View {
                         TasksSection(model: model, actions: fleetActions)
                             .padding(.horizontal, 12).padding(.top, 8)
                     }
-                    // Peers, sync and tasks: the rest of the fleet, below this Mac.
-                    if let fleetActions = actions as? FleetActions {
-                        Rectangle().fill(Ink.hairline).frame(height: 1).padding(.horizontal, 14).padding(.top, 12)
-                        FleetSection(model: model, actions: fleetActions)
-                    }
                     Color.clear.frame(height: 10)
                 }
             }

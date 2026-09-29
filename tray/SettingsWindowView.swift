@@ -4,6 +4,9 @@ import SwiftUI
 struct SettingsWindowView: View {
     @ObservedObject var model: PanelModel
     let actions: PanelActions
+    /// Fleet management (identity, pairing, kept-local items, managed tools,
+    /// activity), supplied by the app: the popover never manages.
+    var fleet: AnyView = AnyView(EmptyView())
     @State private var cliInstallMessage: String?
 
     // "1.2.0 (16)": a prerelease counter resets with every stable release; the
@@ -31,6 +34,7 @@ struct SettingsWindowView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
+                    fleet
                     FleetSyncSettings()
 
                     section("ACCOUNTS", subtitle: "Sign in again to check the account used by every listed profile.") {

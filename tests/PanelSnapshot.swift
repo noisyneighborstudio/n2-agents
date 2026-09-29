@@ -41,6 +41,9 @@ import SwiftUI
             model.workDraft = WorkDraft(task: "Run the nightly evals and summarize regressions", workspace: "~/Development/evals",
                                         state: .planned(FleetPlan.parse("1\tSHA256:b\tmac-mini\tclaude\t90s\tno\t0\t1\t2\t87\n2\tSHA256:a\tmacbook-pro\tcodex\t140s\tno\t0\t0\t2\t138\n")))
             model.path = [.sendWork]
+        case "fleet-settings"?:
+            model.fleet?.tools = [FleetTool(id: "ripgrep", want: "14.1.0", state: .update, disruptive: false)]
+            model.fleet?.exceptions = [FleetException(id: "profile|Work|claude|*", index: 1)]
         case "machine"?:
             model.path = [.machine("SHA256:" + String(repeating: "b", count: 43))]
         case "send"?:
@@ -77,7 +80,9 @@ import SwiftUI
             if state.first == "arrive" { move = { feed.add(tiers[3], from: 10) } }
         }
         let root = Group {
-            if ["stack", "fan", "arrive"].contains(state.first ?? "") {
+            if state.first == "fleet-settings" {
+                FleetSettingsSection(model: model, actions: Fixture.actions).padding(24).frame(width: 500)
+            } else if ["stack", "fan", "arrive"].contains(state.first ?? "") {
                 ToastStack(feed: feed, model: model, actions: Fixture.actions, open: { _ in }).padding(.top, 10)
             } else if state.first == "toast", let card = Fixture.toast(state.count > 1 ? state[1] : "half", model) {
                 card.background(RoundedRectangle(cornerRadius: 18).fill(Ink.page)).padding(10)
@@ -255,7 +260,6 @@ final class NoActions: PanelActions, FleetActions {
     func fleetApprove(peer: String) {}
     func fleetDeny(peer: String) {}
     func fleetRevoke(peer: String) {}
-    func fleetSyncNow() {}
     func fleetResolve(conflict: String, keepLocal: Bool) {}
     func fleetExcept(address: String, add: Bool) {}
     func fleetToolApply(_ name: String?) {}
@@ -265,7 +269,6 @@ final class NoActions: PanelActions, FleetActions {
     func fleetRetry(task: String) {}
     func fleetDistribute(task: String, machine: String?) {}
     func fleetReconcileTasks() {}
-    func fleetOpenTerminal(_ argv: [String]) {}
 
     func openSession(profile: String, vendor: String, terminal: String?) {}
     func setActive(profile: String, vendor: String?) {}

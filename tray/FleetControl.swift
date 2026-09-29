@@ -206,16 +206,6 @@ extension AppDelegate {
 
     // MARK: - Sync, conflicts, exceptions
 
-    func fleetSyncNow() {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let r = self.runCLI(["fleet", "sync", "now"])
-            DispatchQueue.main.async {
-                if r.status != 0 { self.alert("Sync didn't finish", r.output) }
-                self.refreshFleet()
-            }
-        }
-    }
-
     /// The user's choice, carried verbatim. The app never picks a side and
     /// never resolves on a timer — an unresolved conflict stays visible.
     func fleetResolve(conflict: String, keepLocal: Bool) {
@@ -364,11 +354,6 @@ extension AppDelegate {
                 self.refreshFleet()
             }
         }
-    }
-
-    func fleetOpenTerminal(_ argv: [String]) {
-        dismissPanel()
-        runInTerminal(([cliPath] + argv).map(shellQuote).joined(separator: " "))
     }
 
     // MARK: - Small helpers

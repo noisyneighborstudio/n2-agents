@@ -16,19 +16,10 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
 
 ## Queue
 
-The whole-popover pass (`docs/tray-redesign/12-whole-popover.md`) runs first.
-Each slice's proof includes `scripts/panel-snapshot.sh` renders in light and
-dark, and `tray/build.sh`.
-
-1. **Settings › Fleet** (`settings-fleet`).
-   Behavior: Sync & Sharing (with exceptions and conflicts), pairing (Create
-   identity, Add a Mac), managed tools and the full Activity feed live in
-   Settings; the popover no longer manages.
-   Proof: the settings probe; snapshots.
-
-2. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
-   Behavior: from the QA app, pair two disposable peers, sync (with a held
-   profile shared from Fleet settings), send work, show its result and revoke.
+1. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
+   Behavior: from the QA app, pair two disposable peers (Settings › Fleet),
+   sync (with a held profile shared from Fleet settings), send work (the Send
+   Work page), show its result (the Task page) and revoke (the Machine page).
    Proof: packaged acceptance driven through accessibility events with
    disposable homes; each step asserts CLI state, and one negative control
    per step fails.

@@ -16,7 +16,6 @@ import SwiftUI
 //     is one the user explicitly chooses.
 
 private enum FM {
-    static let side: CGFloat = 13
     static let radius: CGFloat = 8
 }
 
@@ -28,7 +27,6 @@ protocol FleetActions: AnyObject {
     func fleetApprove(peer: String)
     func fleetDeny(peer: String)
     func fleetRevoke(peer: String)
-    func fleetSyncNow()
     func fleetResolve(conflict: String, keepLocal: Bool)
     func fleetExcept(address: String, add: Bool)
     func fleetToolApply(_ name: String?)
@@ -38,12 +36,14 @@ protocol FleetActions: AnyObject {
     func fleetRetry(task: String)
     func fleetDistribute(task: String, machine: String?)   // nil = whole fleet
     func fleetReconcileTasks()
-    func fleetOpenTerminal(_ argv: [String])
 }
 
-// MARK: - Root
+// MARK: - Settings › Fleet
 
-struct FleetSection: View {
+// Managing the fleet, in Settings: this Mac's identity and adding others,
+// what's kept local here, the tools the fleet keeps installed, and every
+// recent event. The popover shows state and asks decisions; it never manages.
+struct FleetSettingsSection: View {
     @ObservedObject var model: PanelModel
     let actions: FleetActions
 
@@ -51,69 +51,121 @@ struct FleetSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            FleetLabel(title: "Fleet", detail: headline)
-            if let error = model.fleetNotificationError {
-                Text(error + " Task activity remains available below.")
-                    .font(.system(size: 11)).foregroundStyle(Color(nsColor: .systemOrange))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Text("FLEET").font(.system(size: 10, weight: .semibold)).tracking(0.8).foregroundStyle(Ink.secondary)
             if let error = fleet?.readError {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(error).foregroundStyle(Color(nsColor: .systemOrange))
-                    if let observed = fleet?.observedAt {
-                        Text("Showing last known state from \(observed.formatted(date: .omitted, time: .shortened)). Sending work is paused.")
-                    } else {
-                        Text("Fleet state is unavailable. Waiting for a successful refresh.")
-                    }
-                }
-                .font(.system(size: 11))
-                .fixedSize(horizontal: false, vertical: true)
+                Text(verbatim: error).font(.system(size: 12)).foregroundStyle(Ink.amber).fixedSize(horizontal: false, vertical: true)
             }
             if let fleet, fleet.initialized {
-                HStack(spacing: 6) {
-                    Button("Enroll over Tailscale") { actions.fleetEnroll(transport: "tailscale") }
-                        .buttonStyle(FleetPill())
-                    Button("Pair over SSH") { actions.fleetEnroll(transport: "ssh") }
-                        .buttonStyle(FleetPill())
+                card {
+                    row(String(localized: "This Mac", comment: "Settings › Fleet: this machine's name"), detail: fleet.machine)
+                    Text(verbatim: fleet.selfID).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Ink.secondary)
+                        .textSelection(.enabled).padding(.horizontal, 13).padding(.bottom, 10)
+                    Divider().padding(.leading, 13)
+                    HStack {
+                        Label(String(localized: "Add a Mac", comment: "Settings › Fleet: pair another Mac"), systemImage: "desktopcomputer")
+                        Spacer()
+                        Button(String(localized: "Over Tailscale…", comment: "Settings › Fleet: enroll")) { actions.fleetEnroll(transport: "tailscale") }
+                        Button(String(localized: "Over SSH…", comment: "Settings › Fleet: pair")) { actions.fleetEnroll(transport: "ssh") }
+                    }
+                    .padding(.horizontal, 13).frame(height: 46)
                 }
-                SyncBlock(fleet: fleet, actions: actions)
-                ToolsBlock(fleet: fleet, actions: actions)
+                if !fleet.exceptions.isEmpty {
+                    Text("Kept local on this Mac", comment: "Settings › Fleet: sync exceptions").font(.system(size: 12, weight: .medium))
+                    card {
+                        ForEach(fleet.exceptions) { e in
+                            HStack {
+                                Text(verbatim: e.label).font(.system(size: 12))
+                                Spacer()
+                                Button(String(localized: "Share", comment: "Settings › Fleet: withdraw an exception")) {
+                                    actions.fleetExcept(address: e.id, add: false)
+                                }
+                            }
+                            .padding(.horizontal, 13).frame(height: 38)
+                        }
+                    }
+                }
+                // Absent when nothing is designated: an empty list would invite
+                // adopting whatever is installed, and designation is the user's call.
+                if !fleet.tools.isEmpty {
+                    HStack {
+                        Text("Fleet-managed tools", comment: "Settings › Fleet").font(.system(size: 12, weight: .medium))
+                        Spacer()
+                        if fleet.tools.contains(where: \.needsWork) {
+                            Button(String(localized: "Apply Pending Updates", comment: "Settings › Fleet: tools")) { actions.fleetToolApply(nil) }
+                        }
+                    }
+                    card {
+                        ForEach(fleet.tools) { tool in
+                            HStack {
+                                Text(verbatim: tool.id).font(.system(size: 12))
+                                if !tool.want.isEmpty {
+                                    Text(verbatim: tool.want).font(.system(size: 11, design: .monospaced)).foregroundStyle(Ink.secondary)
+                                }
+                                Spacer()
+                                Text(verbatim: ToolWord.of(tool)).font(.system(size: 11.5)).foregroundStyle(Ink.secondary)
+                            }
+                            .padding(.horizontal, 13).frame(height: 36)
+                        }
+                    }
+                }
+                Text("Activity", comment: "Settings › Fleet: the event feed").font(.system(size: 12, weight: .medium))
+                card {
+                    if fleet.notices.isEmpty {
+                        Text("Nothing yet.", comment: "Settings › Fleet: no activity").font(.system(size: 12)).foregroundStyle(Ink.secondary)
+                            .padding(13).frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    ForEach(fleet.notices.prefix(30)) { n in
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(verbatim: n.title).font(.system(size: 12))
+                            if !n.text.isEmpty { Text(verbatim: n.text).font(.system(size: 11.5)).foregroundStyle(Ink.secondary).lineLimit(1) }
+                            Spacer()
+                            Text(verbatim: FleetNoticeTime.string(n.at)).font(.system(size: 11.5)).foregroundStyle(Ink.secondary)
+                        }
+                        .padding(.horizontal, 13).frame(height: 30)
+                    }
+                }
             } else if fleet == nil {
-                Text("Reading fleet state…")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                Text("Reading fleet state…", comment: "Settings › Fleet: loading").font(.system(size: 12)).foregroundStyle(Ink.secondary)
             } else if fleet?.readError == nil {
-                FleetFirstRun(actions: actions)
+                // No identity yet: offer to make one rather than draw an empty fleet.
+                card {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("This Mac isn’t in a fleet yet.", comment: "Settings › Fleet: first run").font(.system(size: 13, weight: .medium))
+                        Text("Creating an identity generates a key for this Mac. Other Macs still have to be approved before they receive profiles or credentials.",
+                             comment: "Settings › Fleet: first run")
+                            .font(.system(size: 12)).foregroundStyle(Ink.secondary).fixedSize(horizontal: false, vertical: true)
+                        Button(String(localized: "Create Fleet Identity", comment: "Settings › Fleet: first run")) { actions.fleetInit() }
+                    }
+                    .padding(13)
+                }
             }
         }
-        .padding(.horizontal, FM.side)
-        .padding(.vertical, 11)
     }
 
-    /// The one-line truth at the top: this machine, and how many others answered.
-    private var headline: String {
-        guard let fleet else { return "" }
-        if fleet.readError != nil { return "unavailable" }
-        guard fleet.initialized else { return "" }
-        let online = fleet.online.count, others = fleet.others.count
-        if others == 0 { return "\(fleet.machine) · only machine" }
-        return "\(fleet.machine) · \(online)/\(others) online"
+    private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 0) { content() }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Ink.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func row(_ title: String, detail: String) -> some View {
+        HStack { Text(verbatim: title); Spacer(); Text(verbatim: detail).foregroundStyle(Ink.secondary) }
+            .font(.system(size: 13)).padding(.horizontal, 13).frame(height: 40)
     }
 }
 
-/// No identity yet. `fleet status` says `uninitialized` and the panel offers to
-/// create one rather than drawing an empty fleet that does not exist.
-private struct FleetFirstRun: View {
-    let actions: FleetActions
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("This Mac is not in a fleet yet.")
-                .font(.system(size: 12, weight: .medium))
-            Text("Creating an identity generates a key for this machine. Other Macs still have to be approved before they receive profiles or credentials.")
-                .font(.system(size: 11)).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Button("Create Fleet Identity") { actions.fleetInit() }
-                .buttonStyle(FleetPill(prominent: true))
+/// A held update reads as held, never as missing: the fleet defers a
+/// disruptive update around live work rather than killing the work.
+enum ToolWord {
+    static func of(_ tool: FleetTool) -> String {
+        if tool.deferred { return String(localized: "waiting for running work", comment: "Managed tool state") }
+        switch tool.state {
+        case .ok: return String(localized: "installed", comment: "Managed tool state")
+        case .pendingApproval: return String(localized: "needs local approval", comment: "Managed tool state")
+        case .install: return String(localized: "will install", comment: "Managed tool state")
+        case .update: return String(localized: "will update", comment: "Managed tool state")
+        case .unmanaged: return String(localized: "not managed here", comment: "Managed tool state")
+        case .invalid: return String(localized: "malformed designation", comment: "Managed tool state")
         }
     }
 }
@@ -132,77 +184,6 @@ private struct FleetReadState: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-    }
-}
-
-// MARK: - Sync
-
-private struct SyncBlock: View {
-    let fleet: FleetData
-    let actions: FleetActions
-    @State private var showAuth = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            FleetLabel(title: "Shared profile", detail: summary)
-            FleetReadState(fleet: fleet, read: .sync)
-
-            FleetReadState(fleet: fleet, read: .exceptions)
-            if !fleet.exceptions.isEmpty {
-                FleetCard {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Kept local on this Mac")
-                            .font(.system(size: 11, weight: .medium))
-                        ForEach(fleet.exceptions) { e in
-                            HStack(spacing: 6) {
-                                Text(verbatim: e.label).font(.system(size: 11)).foregroundStyle(.secondary)
-                                Spacer()
-                                Button("Share") { actions.fleetExcept(address: e.id, add: false) }
-                                    .buttonStyle(FleetPill(small: true))
-                            }
-                        }
-                    }
-                }
-            }
-
-            HStack(spacing: 6) {
-                Button("Sync Now") { actions.fleetSyncNow() }.buttonStyle(FleetPill())
-                Button(showAuth ? "Hide Sign-in Sharing" : "Sign-in Sharing") { showAuth.toggle() }
-                    .buttonStyle(FleetPill())
-            }
-
-            if showAuth {
-                // Provider honesty lives here. The verdict is the CLI's and the
-                // app has no path to upgrade it, so an unverified lab cannot be
-                // made to look like it syncs by a newer, friendlier UI.
-                FleetCard {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(fleet.sync.auth) { row in
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack(spacing: 6) {
-                                    Text(verbatim: row.vendor).font(.system(size: 11, weight: .medium))
-                                    FleetChip(text: row.support.rawValue)
-                                    Spacer()
-                                    Text(verbatim: row.enabled ? "sharing" : "off")
-                                        .font(.system(size: 10)).foregroundStyle(.secondary)
-                                }
-                                Text(row.explanation)
-                                    .font(.system(size: 10)).foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private var summary: String {
-        let s = fleet.sync
-        guard fleet.loaded.contains(.sync) else { return "" }
-        if s.conflicts > 0 { return "\(s.conflicts) needs you" }
-        if s.resources == 0 { return "nothing shared yet" }
-        return s.settled ? "in step" : "\(s.agreed)/\(s.resources) in step"
     }
 }
 
@@ -237,58 +218,6 @@ struct ConflictRow: View {
         conflict.isDeletion
             ? "This Mac still has this, and another Mac deleted it while disconnected. Nothing is applied until you choose."
             : "This Mac and another Mac both changed this while disconnected. Nothing is applied until you choose."
-    }
-}
-
-// MARK: - Managed tools
-
-private struct ToolsBlock: View {
-    let fleet: FleetData
-    let actions: FleetActions
-
-    var body: some View {
-        // The block is absent when nothing is designated. An empty "managed
-        // tools" list invites adopting whatever is installed, and designation
-        // is the user's authorization, not a default.
-        if !fleet.tools.isEmpty || fleet.state(.tools) != nil {
-            VStack(alignment: .leading, spacing: 6) {
-                FleetLabel(title: "Fleet-managed tools", detail: fleet.tools.isEmpty ? "" : pending == 0 ? "up to date" : "\(pending) pending")
-                FleetReadState(fleet: fleet, read: .tools)
-                ForEach(fleet.tools) { tool in
-                    FleetCard {
-                        HStack(spacing: 6) {
-                            Text(verbatim: tool.id).font(.system(size: 12))
-                            if !tool.want.isEmpty {
-                                Text(verbatim: tool.want)
-                                    .font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Text(verbatim: word(tool)).font(.system(size: 11)).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                if pending > 0 {
-                    Button("Apply Pending Updates") { actions.fleetToolApply(nil) }
-                        .buttonStyle(FleetPill())
-                }
-            }
-        }
-    }
-
-    private var pending: Int { fleet.tools.filter(\.needsWork).count }
-
-    /// A held update reads as held, never as missing: the fleet defers a
-    /// disruptive update around live work rather than killing the work.
-    private func word(_ tool: FleetTool) -> String {
-        if tool.deferred { return "waiting for running work" }
-        switch tool.state {
-        case .ok:        return "installed"
-        case .pendingApproval: return "needs local approval"
-        case .install:   return "will install"
-        case .update:    return "will update"
-        case .unmanaged: return "not managed here"
-        case .invalid:   return "malformed designation"
-        }
     }
 }
 
@@ -814,23 +743,6 @@ struct ConflictsPage: View {
 
 // MARK: - Controls
 
-private struct FleetLabel: View {
-    let title: LocalizedStringKey
-    let detail: String
-
-    var body: some View {
-        HStack {
-            Text(title)
-                .textCase(.uppercase)
-                .font(.system(size: 11, weight: .semibold))
-                .tracking(0.55)
-            Spacer()
-            Text(verbatim: detail).font(.system(size: 11))
-        }
-        .foregroundStyle(.secondary)
-    }
-}
-
 private struct FleetCard<Content: View>: View {
     var tint: Color? = nil
     @ViewBuilder let content: Content
@@ -844,18 +756,6 @@ private struct FleetCard<Content: View>: View {
                 RoundedRectangle(cornerRadius: FM.radius, style: .continuous)
                     .fill((tint ?? Color.primary).opacity(tint == nil ? 0.04 : 0.10))
             )
-    }
-}
-
-private struct FleetChip: View {
-    let text: String
-
-    var body: some View {
-        Text(verbatim: text)
-            .font(.system(size: 9, weight: .medium))
-            .padding(.horizontal, 5).padding(.vertical, 1.5)
-            .background(Capsule().fill(Color.primary.opacity(0.08)))
-            .foregroundStyle(.secondary)
     }
 }
 
