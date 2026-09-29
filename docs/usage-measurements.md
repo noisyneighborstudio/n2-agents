@@ -38,6 +38,13 @@ than using a different account's stored token to measure the requested profile.
 This routing change is covered by synthetic tests; it does not establish live
 Claude account identity on every machine.
 
+An idle route's access token expires within hours while its refresh token stays
+valid. When the stored token has expired and a refresh token is present, the
+reader runs `claude -p /usage --no-session-persistence` on that route so the
+provider renews its own token, then re-reads the store. `/usage` is a local
+command: it makes no model request. N2 never writes the credential store. If the
+token is still expired afterwards, the row stays `stale-token` with no reading.
+
 Claude's model-specific weekly windows and overage/spend information remain in
 the structured output. A limit's `severity` grades its percentage ("critical"
 was seen at 92% weekly use); it is kept out of validation beyond its type. Disabled overage alone does not block included allowance.

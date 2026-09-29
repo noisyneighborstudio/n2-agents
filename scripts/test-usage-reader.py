@@ -267,6 +267,55 @@ class ReaderTests(unittest.TestCase):
         data['limits'][1]['severity'] = None
         self.assertEqual(read()['status'], 'fetch-error')
 
+    def test_expired_claude_token_is_renewed_by_the_provider(self):
+        expired = {'accessToken': 'synthetic-old', 'refreshToken': 'synthetic-refresh', 'expiresAt': 1000}
+        fresh = {'accessToken': 'synthetic-new', 'refreshToken': 'synthetic-refresh', 'expiresAt': 9999999999999}
+        profile = {'account': {'uuid': '11111111-1111-4111-8111-111111111111'},
+                   'organization': {'uuid': '22222222-2222-4222-8222-222222222222'}}
+        def provider(renews, stored=expired):
+            state = {'credential': stored}
+            calls = []
+            def run(argv, **kwargs):
+                calls.append((argv, kwargs))
+                if argv[0] == 'security':
+                    self.assertEqual(argv[1], 'find-generic-password', 'N2 must never write the store')
+                    return SimpleNamespace(returncode=0, stdout=json.dumps({'claudeAiOauth': state['credential']}))
+                if argv[:3] == ['claude', '-p', '/usage']:
+                    if renews: state['credential'] = fresh
+                    return SimpleNamespace(returncode=0, stdout='', stderr='')
+                if argv[:3] == ['claude', 'auth', 'status']:
+                    return SimpleNamespace(returncode=0, stdout=json.dumps(
+                        {'loggedIn': True, 'authMethod': 'claude.ai', 'apiProvider': 'firstParty'}))
+                raise AssertionError(argv)
+            return run, calls
+        with tempfile.TemporaryDirectory() as cfg, patch.dict(os.environ, {'USER': 'fixture'}, clear=True):
+            run, calls = provider(renews=True)
+            with patch.object(u.subprocess, 'run', side_effect=run), \
+                 patch.object(u, 'claude_oauth_read', side_effect=[profile, {'five_hour': {'utilization': 2}}]) as read:
+                status, fetch = u.claude('Default', cfg)
+                self.assertEqual(status, 'ok')
+                fetch()
+            self.assertEqual(read.call_args.args, ('usage', 'synthetic-new'))
+            renewal = next((argv, kwargs) for argv, kwargs in calls if argv[:2] == ['claude', '-p'])
+            self.assertIn('--no-session-persistence', renewal[0], 'a usage poll must not add sessions')
+            self.assertEqual(renewal[1]['env']['CLAUDE_CONFIG_DIR'], cfg)
+            # A route the provider cannot renew still needs sign-in, with no reading.
+            run, calls = provider(renews=False)
+            output = io.StringIO()
+            with patch.object(u.subprocess, 'run', side_effect=run), \
+                 patch.object(u, 'claude_oauth_read', side_effect=AssertionError('network forbidden')), \
+                 patch.dict(os.environ, {'N2_USAGE_FORMAT': 'json'}), \
+                 patch.object(u.sys, 'argv', ['usage.py', 'claude', 'Default=' + cfg]), contextlib.redirect_stdout(output):
+                u.main()
+            result = json.loads(output.getvalue())
+            self.assertEqual((result['status'], result['windows']), ('stale-token', []))
+            self.assertEqual(result['display']['longUsed'], '-')
+            # Without a refresh token there is nothing to renew.
+            run, calls = provider(renews=True, stored=dict(expired, refreshToken=None))
+            with patch.object(u.subprocess, 'run', side_effect=run):
+                self.assertEqual(u.claude('Default', cfg), ('stale-token', None))
+            self.assertFalse([argv for argv, _ in calls if argv[0] == 'claude'])
+
     def test_claude_custom_base_does_not_measure_first_party_allowance(self):
         with patch.dict(os.environ, {'ANTHROPIC_BASE_URL': 'https://gateway.example.invalid'}, clear=True):
             self.assertEqual(u.claude_creds('/fixture', True), (None, 'credential-override'))
