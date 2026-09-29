@@ -13,38 +13,45 @@ struct DispatchQueue {
     }
 }
 
-let firstStarted=DispatchSemaphore(value:0)
-let releaseFirst=DispatchSemaphore(value:0)
+// The older read reports machine "Old" and the newer "New", so any publication
+// from the older read is visible in what the model saw.
+let olderStarted=DispatchSemaphore(value:0)
+let releaseOlder=DispatchSemaphore(value:0)
 final class ReadModel {
- var firstPublished: FleetData?
+ var newerStarted=false
  var observations:[[String:Any]]=[]
  var fleet: FleetData? {didSet {
   precondition(Thread.isMainThread)
-  if firstPublished == nil { firstPublished = fleet }
-  observations.append(["states":fleet!.tasks.map{$0.state.rawValue},"error":fleet!.readError as Any? ?? NSNull()])
-  releaseFirst.signal()
+  let f=fleet!
+  if f.machine=="New" || f.readError != nil { newerStarted=true }
+  precondition(!newerStarted || f.machine != "Old", "obsolete read published after a newer one")
+  observations.append(["machine":f.machine,"states":f.tasks.map{$0.state.rawValue},"error":f.readError as Any? ?? NSNull()])
+  // The older read finishes only after the newer one has published everything.
+  if newerStarted && f.loading.isEmpty { releaseOlder.signal() }
  }}
 }
 final class AppDelegate {
  var fleetReadID: UUID?
  let model=ReadModel()
  let lock=NSLock()
- var calls=0
+ var statusCalls=0
+ var taskCalls=0
  var announcements=0
  var attention=0
  let scenario=CommandLine.arguments[1]
- func runCLI(_ args:[String])->(status:Int32,output:String){
+ func runCLI(_ args:[String], timeout: TimeInterval? = nil)->(status:Int32,output:String){
   let command=args.dropFirst().joined(separator:" ")
   if command=="status --no-probe" {
-   lock.lock();calls+=1;let request=calls;lock.unlock()
-   Thread.current.threadDictionary["request"]=request
-   if request==1 {firstStarted.signal();releaseFirst.wait()}
+   lock.lock();statusCalls+=1;let request=statusCalls;lock.unlock()
+   if request==1 && scenario != "older-sections" {olderStarted.signal();releaseOlder.wait()}
    if (request==1 && scenario=="older-failure") || (request==2 && scenario=="newer-failure") {return (1,"")}
-   return (0,"self\tFixture\tself-id\n")
+   return (0,"self\t"+(request==1 ? "Old" : "New")+"\tself-id\n")
   }
   if command=="task list" {
-   let request=Thread.current.threadDictionary["request"] as! Int
-   return (0,"task-1\t"+(request==1 ? "running" : "completed")+"\tcodex\t0\tWork\tPeer\tdispatcher\n")
+   lock.lock();taskCalls+=1;let call=taskCalls;lock.unlock()
+   let older=call==1 && scenario=="older-sections"
+   if older {olderStarted.signal();releaseOlder.wait()}
+   return (0,"task-1\t"+(older ? "running" : "completed")+"\tcodex\t0\tWork\tPeer\tdispatcher\n")
   }
   return (0,"")
  }
@@ -55,22 +62,20 @@ final class AppDelegate {
 @main struct Proof {
  static let app=AppDelegate()
  static func main(){
-  DispatchQueue.global(qos: .utility).async { app.refreshFleet() }
+  DispatchQueue.main.async { app.refreshFleet() }
   Dispatch.DispatchQueue.global().async {
-   firstStarted.wait()
+   olderStarted.wait()
    Dispatch.DispatchQueue.main.async {
     app.refreshFleet()
     DispatchQueue.group.notify(queue:.main){
-     precondition(app.model.observations.count == 1, "obsolete read published")
-     precondition(app.attention == 1, "obsolete read changed attention")
      let value = app.model.fleet!
-     precondition(value.observedAt == app.model.firstPublished!.observedAt, "obsolete read changed timestamp")
+     precondition(app.attention == app.model.observations.count, "every publication updates attention once")
      if app.scenario == "newer-failure" {
       precondition(value.readError != nil && value.tasks.isEmpty && value.observedAt == nil)
       precondition(app.announcements == 0)
      } else {
-      precondition(value.readError == nil && value.tasks.first?.state == .done && value.observedAt != nil)
-      precondition(app.announcements == 1)
+      precondition(value.readError == nil && value.machine == "New" && value.tasks.first?.state == .done)
+      precondition(value.observedAt != nil && value.loading.isEmpty)
      }
      let output:[String:Any]=["scenario":app.scenario,"publications":app.model.observations,"announcements":app.announcements]
      let data=try! JSONSerialization.data(withJSONObject:output,options:[.sortedKeys])

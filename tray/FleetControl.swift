@@ -8,8 +8,8 @@ import UserNotifications
 // user's choice to it and the result back. Nothing decides fleet policy.
 //
 // Two behaviors are deliberate and easy to lose in a refactor:
-//   · a fleet read never blocks the panel — it runs on its own queue beside
-//     the profile read, and publishes whether or not the CLI answered;
+//   · a fleet read never blocks the panel — each section reads on its own
+//     queue, publishes the moment it answers, and gives up after 20 seconds;
 //   · the notifier announces a notice exactly once per machine. The feed is
 //     durable and re-read every refresh, so without the seen-set every refresh
 //     would re-announce finished work.
@@ -19,7 +19,9 @@ extension AppDelegate {
     // MARK: - Reading
 
     /// One fleet read. `status` first: if there is no identity the rest of the
-    /// verbs would only print usage errors, so they are not run at all.
+    /// verbs would only print usage errors, so they are not run at all. Then
+    /// every section reads at once and publishes the moment it answers; a read
+    /// that hangs gives up after 20 seconds and marks only its own section.
     func refreshFleet() {
         guard Thread.isMainThread else {
             DispatchQueue.main.async { self.refreshFleet() }
@@ -28,50 +30,51 @@ extension AppDelegate {
         let requestID = UUID()
         fleetReadID = requestID
         DispatchQueue.global(qos: .utility).async {
-            struct ReadFailure: Error { let message: String }
-            func read(_ label: String, _ args: [String]) throws -> String {
-                let result = self.runCLI(["fleet"] + args)
-                guard result.status == 0 else { throw ReadFailure(message: "Couldn't read \(label).") }
-                return result.output
-            }
-            do {
-                let status = try read("fleet state", ["status", "--no-probe"])
-                var data = FleetData.parseStatus(status)
-                guard data.initialized || status.trimmingCharacters(in: .whitespacesAndNewlines) == "fleet\tuninitialized" else {
-                    throw ReadFailure(message: "Couldn't understand fleet state.")
+            let status = self.runCLI(["fleet", "status", "--no-probe"], timeout: 20)
+            let data = FleetData.parseStatus(status.output)
+            let understood = status.status == 0 && (data.initialized
+                || status.output.trimmingCharacters(in: .whitespacesAndNewlines) == "fleet\tuninitialized")
+            DispatchQueue.main.async {
+                guard self.fleetReadID == requestID else { return }
+                var fleet = self.model.fleet ?? FleetData()
+                if !understood {
+                    fleet.readError = status.status == 0 ? "Couldn't understand fleet state." : "Couldn't read fleet state."
+                } else if !data.initialized {
+                    fleet = data
+                    fleet.observedAt = Date()
+                } else {
+                    // Identity and approval requests come from status. Every
+                    // other section keeps its last values until its read answers.
+                    fleet.readError = nil
+                    fleet.initialized = true
+                    fleet.machine = data.machine
+                    fleet.selfID = data.selfID
+                    fleet.pending = data.pending
+                    if !fleet.loaded.contains(.machines) { fleet.peers = data.peers }
+                    fleet.observedAt = Date()
+                    fleet.loading = Set(FleetRead.allCases)
                 }
-                if data.initialized {
-                    data.peers = FleetPeer.parse(try read("machines", ["peers"]))
-                    data.sync = FleetSync.parse(try read("sync state", ["sync", "status"]))
-                    data.conflicts = FleetConflict.parse(try read("conflicts", ["sync", "conflicts"]))
-                    data.exceptions = FleetException.parse(try read("sync exceptions", ["sync", "except", "list"]))
-                    data.tools = FleetTool.join(list: try read("shared tools", ["tools", "list"]),
-                                               status: try read("tool status", ["tools", "status"]),
-                                               deferred: try read("pending tool updates", ["tools", "deferred"]))
-                    let tasks = try read("tasks", ["task", "list"])
-                    data.tasks = FleetTask.parse(tasks)
-                    guard tasks.split(separator: "\n").allSatisfy({ $0.split(separator: "\t", omittingEmptySubsequences: false).count >= 7 }),
-                          data.tasks.count == tasks.split(separator: "\n").count,
-                          !data.tasks.contains(where: { $0.state == .unknown }) else {
-                        throw ReadFailure(message: "Couldn't understand the task list.")
+                self.model.fleet = fleet
+                self.updateFleetAttention(fleet)
+                guard understood && data.initialized else { return }
+                for read in FleetRead.allCases {
+                    DispatchQueue.global(qos: .utility).async {
+                        let change = read.read { self.runCLI($0, timeout: 20) }
+                        DispatchQueue.main.async {
+                            guard self.fleetReadID == requestID, var fleet = self.model.fleet else { return }
+                            fleet.loading.remove(read)
+                            if let change {
+                                change(&fleet)
+                                fleet.loaded.insert(read)
+                                fleet.unavailable.remove(read)
+                            } else {
+                                fleet.unavailable.insert(read)
+                            }
+                            self.model.fleet = fleet
+                            if read == .activity && change != nil { self.announce(fleet.notices) }
+                            self.updateFleetAttention(fleet)
+                        }
                     }
-                    data.notices = FleetNotice.parse(try read("task activity", ["task", "notices"]))
-                }
-                data.observedAt = Date()
-                DispatchQueue.main.async {
-                    guard self.fleetReadID == requestID else { return }
-                    self.model.fleet = data
-                    self.announce(data.notices)
-                    self.updateFleetAttention(data)
-                }
-            } catch {
-                let message = (error as? ReadFailure)?.message ?? "Couldn't read fleet state."
-                DispatchQueue.main.async {
-                    guard self.fleetReadID == requestID else { return }
-                    var previous = self.model.fleet ?? FleetData()
-                    previous.readError = message
-                    self.model.fleet = previous
-                    self.updateFleetAttention(previous)
                 }
             }
         }
@@ -266,8 +269,8 @@ extension AppDelegate {
     /// estimate computed here.
     func fleetDispatch() {
         guard let fleet = model.fleet else { return }
-        guard fleet.readError == nil else {
-            alert("Fleet state unavailable", "Wait for a successful fleet refresh before sending work.")
+        guard fleet.readError == nil, !fleet.initialized || fleet.machinesCurrent else {
+            alert("Fleet machines unavailable", "Wait for the machine list to load before sending work.")
             return
         }
         dismissPanel()
@@ -371,8 +374,8 @@ extension AppDelegate {
     /// A retry is a new task the user asked for. It is never automatic, and the
     /// CLI links it to the original rather than reusing its identity.
     func fleetRetry(task: String) {
-        guard let fleet = model.fleet, fleet.readError == nil else {
-            alert("Fleet state unavailable", "Wait for a successful fleet refresh before starting more work.")
+        guard let fleet = model.fleet, fleet.tasksCurrent else {
+            alert("Fleet tasks unavailable", "Wait for the task list to load before starting more work.")
             return
         }
         dismissPanel()

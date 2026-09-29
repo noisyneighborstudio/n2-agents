@@ -57,10 +57,6 @@ Blocked on authorization:
   marker replaced by delete-on-sight, 0 of 8 with the grace reset removed.
   Replace them with deterministic interleavings, or delete them.
 
-- The panel's Fleet section draws only after all ten of its reads finish, and
-  those reads have no timeout: a hang stacks one process per poll. Apply the UI
-  rule in AGENTS.md: per-section states as reads arrive, and a bounded read.
-
 - Any same-user process can open `n2agents://reonboard-done` (or `login-done`)
   and make the app treat a running account reset as finished.
 

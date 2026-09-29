@@ -356,10 +356,31 @@ struct FleetData: Equatable {
     var tasks: [FleetTask] = []
     var notices: [FleetNotice] = []
 
+    /// Reads in flight, reads answered at least once, and reads whose latest
+    /// attempt failed. A section keeps its last values whatever these say.
+    var loading: Set<FleetRead> = []
+    var loaded: Set<FleetRead> = []
+    var unavailable: Set<FleetRead> = []
+
     var others: [FleetPeer] { peers.filter { !$0.isSelf } }
     var online: [FleetPeer] { others.filter { $0.isOnline } }
+    /// Sending work needs a current machine list; retrying needs a current task list.
+    var machinesCurrent: Bool { current(.machines) }
+    var tasksCurrent: Bool { current(.tasks) }
     /// Where a task could actually go, self included.
-    var destinations: [FleetPeer] { readError == nil ? peers.filter { $0.canDispatch } : [] }
+    var destinations: [FleetPeer] { machinesCurrent ? peers.filter { $0.canDispatch } : [] }
+
+    private func current(_ read: FleetRead) -> Bool {
+        readError == nil && loaded.contains(read) && !unavailable.contains(read)
+    }
+
+    /// What a section says above its values while they are missing or stale.
+    func state(_ read: FleetRead) -> String? {
+        if unavailable.contains(read) {
+            return "Couldn't read \(read.label)." + (loaded.contains(read) ? " Showing the last values." : "")
+        }
+        return loading.contains(read) && !loaded.contains(read) ? "Loading \(read.label)…" : nil
+    }
     var activeTasks: [FleetTask] { tasks.filter { !$0.isFinished } }
     var needsAttention: Bool {
         !pending.isEmpty || sync.conflicts > 0 || tasks.contains(where: \.isStranded)
@@ -384,6 +405,67 @@ struct FleetData: Equatable {
         }
         d.peers = FleetPeer.parse(peerLines.joined(separator: "\n"))
         return d
+    }
+}
+
+/// The panel's fleet reads after `status`. Each is its own CLI call and fills
+/// its own part of FleetData the moment it answers, so one slow or failed verb
+/// never holds back or blanks the rest.
+enum FleetRead: String, CaseIterable {
+    case machines, sync, conflicts, exceptions, tools, tasks, activity
+
+    var label: String {
+        switch self {
+        case .machines: return "machines"
+        case .sync: return "sync state"
+        case .conflicts: return "conflicts"
+        case .exceptions: return "sync exceptions"
+        case .tools: return "shared tools"
+        case .tasks: return "tasks"
+        case .activity: return "task activity"
+        }
+    }
+
+    /// Runs this read's verbs and returns how it changes FleetData, or nil when
+    /// a verb fails, times out or answers something the panel can't understand.
+    func read(_ run: ([String]) -> (status: Int32, output: String)) -> ((inout FleetData) -> Void)? {
+        func out(_ args: [String]) -> String? {
+            let r = run(["fleet"] + args)
+            return r.status == 0 ? r.output : nil
+        }
+        switch self {
+        case .machines:
+            guard let text = out(["peers"]) else { return nil }
+            let peers = FleetPeer.parse(text)
+            return { $0.peers = peers }
+        case .sync:
+            guard let text = out(["sync", "status"]) else { return nil }
+            let sync = FleetSync.parse(text)
+            return { $0.sync = sync }
+        case .conflicts:
+            guard let text = out(["sync", "conflicts"]) else { return nil }
+            let conflicts = FleetConflict.parse(text)
+            return { $0.conflicts = conflicts }
+        case .exceptions:
+            guard let text = out(["sync", "except", "list"]) else { return nil }
+            let exceptions = FleetException.parse(text)
+            return { $0.exceptions = exceptions }
+        case .tools:
+            guard let list = out(["tools", "list"]), let status = out(["tools", "status"]),
+                  let deferred = out(["tools", "deferred"]) else { return nil }
+            let tools = FleetTool.join(list: list, status: status, deferred: deferred)
+            return { $0.tools = tools }
+        case .tasks:
+            guard let text = out(["task", "list"]) else { return nil }
+            let tasks = FleetTask.parse(text), lines = text.split(separator: "\n")
+            guard lines.allSatisfy({ $0.split(separator: "\t", omittingEmptySubsequences: false).count >= 7 }),
+                  tasks.count == lines.count, !tasks.contains(where: { $0.state == .unknown }) else { return nil }
+            return { $0.tasks = tasks }
+        case .activity:
+            guard let text = out(["task", "notices"]) else { return nil }
+            let notices = FleetNotice.parse(text)
+            return { $0.notices = notices }
+        }
     }
 }
 
