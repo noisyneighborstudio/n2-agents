@@ -157,6 +157,9 @@ struct SessionsWindowView: View {
     @ObservedObject var model: PanelModel
     let actions: PanelActions
     @State private var query = ""
+    /// Scope to one profile and one lab; nil is every one.
+    @State private var profile: String?
+    @State private var vendor: String?
     @FocusState private var searching: Bool
 
     static let identifier = NSUserInterfaceItemIdentifier("sessions")
@@ -169,9 +172,7 @@ struct SessionsWindowView: View {
 
     /// Once per render: every part of the window reads the same filtered list.
     private func filtered() -> [SessionInfo] {
-        let folded = SessionInfo.fold(trimmed)
-        let tokens = folded.split(separator: " ")
-        return tokens.isEmpty ? model.allSessions : model.allSessions.filter { $0.matches(tokens) }
+        SessionInfo.filter(model.allSessions, profile: profile, vendor: vendor, query: trimmed)
     }
 
     var body: some View {
@@ -191,8 +192,12 @@ struct SessionsWindowView: View {
                         Image(systemName: "xmark.circle.fill").font(.system(size: 11)).foregroundStyle(Ink.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help("Clear")
+                    .help("Clear search")
                 }
+                filterMenu(String(localized: "Profile", comment: "Sessions window: profile filter"), selection: $profile,
+                           options: (model.data?.profiles ?? []).map { ($0.name, $0.name) })
+                filterMenu(String(localized: "Lab", comment: "Sessions window: lab filter"), selection: $vendor,
+                           options: (model.data?.snapshot.installedVendors ?? []).filter(\.hasSessions).map { ($0.id, $0.label) })
             }
             .padding(.horizontal, Metrics.side)
             .frame(height: 34)
@@ -208,6 +213,20 @@ struct SessionsWindowView: View {
         }
     }
 
+    /// "All" or one value, as a native pop-up menu.
+    private func filterMenu(_ title: String, selection: Binding<String?>, options: [(id: String, label: String)]) -> some View {
+        Menu {
+            Button(String(localized: "All", comment: "Sessions window: no filter")) { selection.wrappedValue = nil }
+            Divider()
+            ForEach(options, id: \.id) { option in
+                Button(option.label) { selection.wrappedValue = option.id }
+            }
+        } label: {
+            Text(verbatim: options.first { $0.id == selection.wrappedValue }?.label ?? title).font(.system(size: 12))
+        }
+        .menuStyle(.borderlessButton).fixedSize()
+    }
+
     private func focusSearch() {
         DispatchQueue.main.async { searching = true }
     }
@@ -221,7 +240,7 @@ struct SessionsWindowView: View {
             Spacer()
             if model.sessionsLoading { ProgressView().controlSize(.small) }
             if !model.allSessions.isEmpty {
-                Text(trimmed.isEmpty ? "\(rows.count)" : "\(rows.count) of \(model.allSessions.count)")
+                Text(trimmed.isEmpty && profile == nil && vendor == nil ? "\(rows.count)" : "\(rows.count) of \(model.allSessions.count)")
                     .font(.system(size: 11)).monospacedDigit()
                     .foregroundStyle(Ink.secondary)
             }

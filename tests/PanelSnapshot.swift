@@ -25,6 +25,10 @@ import SwiftUI
             model.path = [.profile(profile)]
         case "provider"?:
             model.path = [.profile(profile), .provider(profile: profile, vendor: vendor)]
+        case "send"?:
+            let id = "codex/7c1e4b8a-0000-4000-8000-000000000001"
+            model.sendDrafts[id] = SendDraft(cwd: "/Users/seth/Development/n2-agents")
+            model.path = [.sendSession(id)]
         case "configure"?:
             model.path = [.profile(profile), .provider(profile: profile, vendor: vendor), .configure(profile: profile, vendor: vendor)]
         // Motion: settle, move, and capture a frame every 40 ms until it lands.
@@ -172,7 +176,13 @@ enum Fixture {
         }
         let profiles = rows.map { Profile(name: $0.name, running: false, slots: $0.slots) }
         let model = PanelModel()
-        model.data = PanelData(snapshot: snapshot, profiles: profiles, sessions: [],
+        let now = Date().timeIntervalSince1970
+        let sessions = SessionInfo.parse("""
+            Default\tcodex\t7c1e4b8a-0000-4000-8000-000000000001\t\(now - 240)\t\(NSHomeDirectory())/Development/n2-agents\tRedesign the menu bar panel\tseth/tray-redesign\tStart/configure UI redesign
+            Work\tclaude\tsess-2\t\(now - 3600)\t\(NSHomeDirectory())/Development/site\tFix the pricing table\tmain\t
+            Default\tclaude\tsess-3\t\(now - 7200)\t\(NSHomeDirectory())/Development/n2-agents\tWrite fleet docs\tmain\tFleet readiness notes
+            """)
+        model.data = PanelData(snapshot: snapshot, profiles: profiles, sessions: sessions,
                                terminals: ["Ghostty", "Terminal", "iTerm2", "Warp"], desktops: ["claude", "codex"])
         let hour: TimeInterval = 3600, day = 24 * hour
         var out = reading(used: 100, resets: 3 * day + 10 * hour + 54 * 60)
@@ -232,6 +242,7 @@ final class NoActions: PanelActions {
     func finishSetup(profile: String) {}
     func resumeSession(_ session: SessionInfo) {}
     func sendSession(_ session: SessionInfo) {}
+    func sendSession(_ session: SessionInfo, to peer: String, cwd: String) {}
     func moveSession(_ session: SessionInfo, to profile: String) {}
     func copyResumeCommand(_ session: SessionInfo) {}
     func showAllSessions() {}

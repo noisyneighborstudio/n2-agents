@@ -57,6 +57,10 @@ struct PanelView: View {
             if let profile = data.profiles.first(where: { $0.name == name }), let vendor = data.snapshot.vendor(id) {
                 ProviderPage(model: model, actions: actions, data: data, profile: profile, vendor: vendor)
             }
+        case .sendSession(let id)?:
+            if let session = model.session(id) {
+                SendSessionPage(model: model, actions: actions, session: session)
+            }
         case .configure(let name, let id)?:
             if let profile = data.profiles.first(where: { $0.name == name }), let vendor = data.snapshot.vendor(id) {
                 ConfigurePage(model: model, actions: actions, data: data, profile: profile, vendor: vendor)

@@ -17,6 +17,17 @@ extension PanelModel {
         withAnimation(Motion.nav(reduce: Motion.reduced)) { path.append(route) }
     }
 
+    /// What the top page's back button names: the page beneath it.
+    var parentTitle: String {
+        switch path.dropLast().last {
+        case nil: return "N2 Agents"
+        case .profile(let p)?: return p
+        case .provider(_, let v)?: return data?.snapshot.vendor(v)?.label ?? v
+        case .configure?: return String(localized: "Configure", comment: "Configure page title")
+        case .sendSession?: return String(localized: "Send Session", comment: "Send Session page title")
+        }
+    }
+
     func pop() {
         guard !path.isEmpty else { return }
         withAnimation(Motion.nav(reduce: Motion.reduced)) { _ = path.removeLast() }
@@ -105,6 +116,7 @@ struct PageStack<Page: View>: View {
         case .profile?: kind = "profile"
         case .provider?: kind = "provider"
         case .configure?: kind = "configure"
+        case .sendSession?: kind = "send-session"
         }
         return "\(depth)-\(kind)"
     }

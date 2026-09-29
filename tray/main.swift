@@ -281,9 +281,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
                 self.model.data = data
                 // A page whose profile or lab is gone closes, with what it led to.
                 if let gone = self.model.path.firstIndex(where: { route in
-                    guard let p = data.profiles.first(where: { $0.name == route.profile }) else { return true }
+                    guard let name = route.profile else { return false }
+                    guard let p = data.profiles.first(where: { $0.name == name }) else { return true }
                     switch route {
-                    case .profile: return false
+                    case .profile, .sendSession: return false
                     case .provider(_, let v), .configure(_, let v): return p.slots[v] == nil
                     }
                 }) {
@@ -988,21 +989,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 
     @MainActor private lazy var sessionTransferCoordinator = SessionTransferCoordinator()
 
+    /// Send Session is a page, not an alert: from the sessions window (or
+    /// anywhere outside the panel) it opens the panel on that page.
     func sendSession(_ session: SessionInfo) {
+        sessionsWindow?.dismiss()
+        if model.sendDrafts[session.id] == nil { model.sendDrafts[session.id] = SendDraft(cwd: session.cwd ?? "") }
+        model.path = [.sendSession(session.id)]
+        model.closedAt = nil
+        if !panel.isShowing { togglePanel() }
+    }
+
+    /// The page's choice, sent through the same coordinator and checks as
+    /// before; the outcome lands on the draft rather than in an alert.
+    func sendSession(_ session: SessionInfo, to peerID: String, cwd: String) {
         let cli = cliPath, environment = Self.scriptEnvironment
-        dismissPanel()
+        model.sendDrafts[session.id, default: SendDraft(cwd: cwd)].state = .sending
         Task { @MainActor in
             await sessionTransferCoordinator.perform(thread: session.sessionID, vendor: session.vendor,
                 run: { SignInPlan.run(cli: cli, environment: environment, args: $0) },
-                choose: { peers in
-                    let (alert, picker, path) = SessionTransferPlan.prompt(
-                        title: session.title ?? session.snippet, peers: peers, cwd: session.cwd)
-                    NSApp.activate(ignoringOtherApps: true)
-                    guard alert.runModal() == .alertFirstButtonReturn,
-                          peers.indices.contains(picker.indexOfSelectedItem) else { return nil }
-                    return (peers[picker.indexOfSelectedItem], path.stringValue)
-                }, finish: { message in self.alert("Session sent", message) },
-                fail: { message in self.alert("Session transfer", message) })
+                // The coordinator re-reads the approved machines; the choice
+                // must be one of those, matched by identity.
+                choose: { peers in peers.first { $0.id == peerID }.map { ($0, cwd) } },
+                finish: { message in self.model.sendDrafts[session.id]?.state = .sent(message) },
+                fail: { message in self.model.sendDrafts[session.id]?.state = .failed(message) })
+            if case .sending? = self.model.sendDrafts[session.id]?.state {
+                self.model.sendDrafts[session.id]?.state = .failed(String(localized: "That machine is no longer approved.",
+                                                                          comment: "Send Session: the chosen peer vanished"))
+            }
         }
     }
 

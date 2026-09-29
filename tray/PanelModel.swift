@@ -381,12 +381,25 @@ enum PanelRoute: Hashable {
     case profile(String)
     case provider(profile: String, vendor: String)
     case configure(profile: String, vendor: String)
+    /// Send one saved session to another Mac, by SessionInfo.id.
+    case sendSession(String)
 
-    var profile: String {
+    /// The profile the page belongs to; nil for a page that belongs to none.
+    var profile: String? {
         switch self {
         case .profile(let p), .provider(let p, _), .configure(let p, _): return p
+        case .sendSession: return nil
         }
     }
+}
+
+/// A Send Session page's choices and outcome, kept on the model so closing
+/// the panel loses nothing.
+struct SendDraft: Equatable {
+    enum State: Equatable { case editing, sending, sent(String), failed(String) }
+    var peer: String?        // FleetPeer.id
+    var cwd: String
+    var state: State = .editing
 }
 
 enum NextBest {
@@ -448,6 +461,8 @@ final class PanelModel: ObservableObject {
     @Published var fleet: FleetData?
     @Published var fleetNotificationError: String?
     @Published var allSessions: [SessionInfo] = []
+    /// Send Session drafts, by SessionInfo.id.
+    @Published var sendDrafts: [String: SendDraft] = [:]
     @Published var sessionsLoading = false
 
     /// A profile's status and its capacity, read together because they answer
@@ -604,7 +619,10 @@ protocol PanelActions: AnyObject {
     func signIn(profile: String, vendor: String, confirm: Bool)
     func finishSetup(profile: String)
     func resumeSession(_ session: SessionInfo)
+    /// Opens the Send Session page for it (from the sessions window, too).
     func sendSession(_ session: SessionInfo)
+    /// Sends it, recording the outcome on its draft.
+    func sendSession(_ session: SessionInfo, to peer: String, cwd: String)
     func moveSession(_ session: SessionInfo, to profile: String)
     func copyResumeCommand(_ session: SessionInfo)
     func showAllSessions()

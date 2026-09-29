@@ -54,9 +54,6 @@ import AppKit
             choose: { _ in fatalError() }, finish: { _ in fatalError() }, fail: { message in precondition(message.contains("already in progress")); failed += 1 })
         pending.cancel(); release.signal(); await pending.value
         precondition(!coordinator.isRunning && finished == 1 && failed == 4)
-        let (alert, picker, field) = SessionTransferPlan.prompt(title: "Synthetic saved session", peers: [peer], cwd: "/Users/test/project")
-        precondition(picker.numberOfItems == 1 && field.stringValue == "/Users/test/project")
-        precondition(alert.buttons.map(\.title) == ["Send", "Cancel"] && alert.informativeText.contains("does not move a running agent"))
         print("Native session transfer arguments, approval, cancellation, responsiveness and receipts passed")
     }
 }

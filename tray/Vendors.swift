@@ -162,6 +162,18 @@ struct SessionInfo: Identifiable {
         tokens.allSatisfy { searchKey.contains($0) }
     }
 
+    /// The sessions a page or window shows: one profile, one lab, or both,
+    /// then every search token; newest first, each session once.
+    static func filter(_ all: [SessionInfo], profile: String? = nil, vendor: String? = nil,
+                       query: String = "") -> [SessionInfo] {
+        let tokens = fold(query.trimmingCharacters(in: .whitespaces)).split(separator: " ")
+        var seen = Set<String>()
+        return all.sorted { $0.mtime > $1.mtime }.filter { s in
+            (profile == nil || s.profile == profile) && (vendor == nil || s.vendor == vendor)
+                && (tokens.isEmpty || s.matches(tokens)) && seen.insert(s.id).inserted
+        }
+    }
+
     static func parse(_ text: String) -> [SessionInfo] {
         text.split(separator: "\n").compactMap { line in
             let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)

@@ -48,6 +48,8 @@ struct ProfilePage: View {
                         }
                         .buttonStyle(PressableStyle(radius: 8))
                     }
+                    RecentSection(model: model, actions: actions, profile: profile.name, limit: 3)
+                        .padding(.horizontal, 4).padding(.top, 8)
                 }
                 .padding(.horizontal, 8).padding(.top, 5).padding(.bottom, 7)
             }

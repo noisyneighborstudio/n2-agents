@@ -172,6 +172,18 @@ import Foundation
                                        .init(profile: "Home", vendor: "claude", checked: false)], "each lab checks its active profile")
         check(ActiveMenu.title(Snapshot(vendors: [], profiles: [], active: "mixed")) == nil
               && ActiveMenu.title(Snapshot(vendors: [], profiles: [], active: "Work")) == "Work", "the header names one profile or none")
+        // Session filters: scope by profile, lab, both; search tokens; newest first, each once.
+        func sess(_ p: String, _ v: String, _ id: String, _ age: TimeInterval, _ title: String) -> SessionInfo {
+            SessionInfo.parse("\(p)\t\(v)\t\(id)\t\(now.timeIntervalSince1970 - age)\t/Users/me/n2\t\(title)\tmain\t\(title)").first!
+        }
+        let all = [sess("Work", "codex", "1", 300, "fix build"), sess("Work", "claude", "2", 100, "write docs"),
+                   sess("Home", "codex", "3", 200, "fix login"), sess("Work", "codex", "1", 300, "fix build")]
+        check(SessionInfo.filter(all).map(\.sessionID) == ["2", "3", "1"], "newest first, duplicates once")
+        check(SessionInfo.filter(all, profile: "Work").map(\.sessionID) == ["2", "1"], "one profile")
+        check(SessionInfo.filter(all, vendor: "codex").map(\.sessionID) == ["3", "1"], "one lab")
+        check(SessionInfo.filter(all, profile: "Work", vendor: "codex").map(\.sessionID) == ["1"], "profile and lab")
+        check(SessionInfo.filter(all, query: "FIX").map(\.sessionID) == ["3", "1"], "search folds case")
+        check(SessionInfo.filter(all, profile: "Home", query: "docs").isEmpty, "filters and search combine")
         print("slot status tests passed")
     }
 }

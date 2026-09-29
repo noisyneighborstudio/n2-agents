@@ -30,6 +30,8 @@ struct FleetPage: View {
                             }
                         }
                         .padding(.horizontal, 12).padding(.vertical, 2)
+                        RecentSection(model: model, actions: actions)
+                            .padding(.horizontal, 12).padding(.top, 10)
                     }
                     // Peers, sync and tasks: the rest of the fleet, below this Mac.
                     if let fleetActions = actions as? FleetActions {
@@ -442,9 +444,6 @@ private struct FleetFooter: View {
             }
             .buttonStyle(PressableStyle(radius: 7))
             .help(updateHelp)
-            icon("clock.arrow.circlepath", String(localized: "Recent sessions", comment: "Footer: open the sessions window")) {
-                actions.showAllSessions()
-            }
             icon("ladybug", String(localized: "Report a bug", comment: "Footer: file an issue")) { actions.reportBug() }
             icon("power", String(localized: "Quit N2 Agents", comment: "Footer: quit the app")) { actions.quit() }
         }

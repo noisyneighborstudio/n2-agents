@@ -33,22 +33,6 @@ struct SessionTransferPlan {
         }
         return "Saved on \(peer.machine) at \(destination). The session keeps its original account. Open N2 Agents there to resume it."
     }
-    @MainActor static func prompt(title: String, peers: [FleetPeer], cwd: String?) -> (NSAlert, NSPopUpButton, NSTextField) {
-        let alert = NSAlert(); alert.messageText = "Send saved session?"
-        alert.informativeText = "\(title)\n\nChoose an approved machine and the directory to use there. This copies saved history and keeps the original account. It does not move a running agent or copy workspace files."
-        alert.addButton(withTitle: "Send"); alert.addButton(withTitle: "Cancel")
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 410, height: 110))
-        let peerLabel = NSTextField(labelWithString: "Destination machine")
-        peerLabel.frame = NSRect(x: 0, y: 88, width: 410, height: 18)
-        let picker = NSPopUpButton(frame: NSRect(x: 0, y: 57, width: 410, height: 28), pullsDown: false)
-        picker.addItems(withTitles: peers.map { "\($0.machine) · \($0.id.prefix(19))…" })
-        let pathLabel = NSTextField(labelWithString: "Directory on that machine")
-        pathLabel.frame = NSRect(x: 0, y: 32, width: 410, height: 18)
-        let path = NSTextField(string: cwd ?? ""); path.placeholderString = "/Users/you/project"
-        path.frame = NSRect(x: 0, y: 0, width: 410, height: 24)
-        for child in [peerLabel, picker, pathLabel, path] { view.addSubview(child) }
-        alert.accessoryView = view; return (alert, picker, path)
-    }
 }
 
 @MainActor final class SessionTransferCoordinator {
