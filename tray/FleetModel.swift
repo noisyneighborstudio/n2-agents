@@ -651,4 +651,3 @@ struct WorkDraft: Equatable {
                                  requirements: requirements.trimmingCharacters(in: .whitespaces), machine: machine, agent: agent)
     }
 }
-
