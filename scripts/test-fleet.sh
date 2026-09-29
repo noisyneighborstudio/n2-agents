@@ -1007,6 +1007,10 @@ EOF
       "$(raw frsrv "fleet_peer_state '$F2'")"
     check "fresh-ssh: pairing installed the paired joiner's fleet key" "n2-fleet:$F2" \
       "$(cat "$base/frsrv/.ssh/authorized_keys")"
+    # frcl2 names no address, so the server dials it back where it came from,
+    # not at its machine name.
+    check "fresh-ssh: the server records the joiner at the address it connected from" "127.0.0.1" \
+      "$(raw frsrv 'fleet_meta "$(fleet_peer_dir "'"$F2"'")" address')"
     check "fresh-ssh: --port survived the pairing hop too" "$fport" \
       "$(raw frcl2 'fleet_meta "$(fleet_peer_dir "'"$FS"'")" port')"
     # The one-time code really is one-time: replaying it is refused.

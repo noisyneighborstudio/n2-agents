@@ -43,8 +43,8 @@ Blocked on authorization:
   and make the app treat a running account reset as finished.
 
 - test-fleet-auth-manage.py's SIGINT cancel case allows 5s for exit and failed
-  once with three test groups running on one Mac; it passes alone. Runners share
-  each Mac, so capture exit receipts if it recurs in CI.
+  twice (2026-09-28, 2026-09-29) with three test groups running on one Mac; it
+  passes alone. Runners share each Mac, so capture exit receipts if it recurs in CI.
 
 - The inherited full-suite quota fixture fails intermittently (main saw it at
   scripts/test.sh:682 and :685). Suspect: tests/fake-loop-agent.sh decrements
