@@ -114,6 +114,23 @@ private struct FleetFirstRun: View {
     }
 }
 
+/// A section's own loading or unavailable line. Draws nothing once the
+/// section's read has answered.
+private struct FleetReadState: View {
+    let fleet: FleetData
+    let read: FleetRead
+
+    var body: some View {
+        if let text = fleet.state(read) {
+            HStack(spacing: 6) {
+                if fleet.loading.contains(read) { ProgressView().controlSize(.small) }
+                Text(text).font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
 // MARK: - Machines
 
 private struct MachinesBlock: View {
@@ -131,6 +148,7 @@ private struct MachinesBlock: View {
                     PendingRow(pending: p, actions: actions)
                 }
             }
+            FleetReadState(fleet: fleet, read: .machines)
             ForEach(fleet.peers) { peer in
                 PeerRow(peer: peer, actions: actions)
             }
@@ -251,13 +269,16 @@ private struct SyncBlock: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             FleetLabel(title: "Shared profile", detail: summary)
+            FleetReadState(fleet: fleet, read: .sync)
 
             // Conflicts are the only thing in this panel that blocks: they are
             // shown before anything else and cannot be dismissed, only answered.
+            FleetReadState(fleet: fleet, read: .conflicts)
             ForEach(fleet.conflicts) { c in
                 ConflictRow(conflict: c, actions: actions)
             }
 
+            FleetReadState(fleet: fleet, read: .exceptions)
             if !fleet.exceptions.isEmpty {
                 FleetCard {
                     VStack(alignment: .leading, spacing: 4) {
@@ -309,6 +330,7 @@ private struct SyncBlock: View {
 
     private var summary: String {
         let s = fleet.sync
+        guard fleet.loaded.contains(.sync) else { return "" }
         if s.conflicts > 0 { return "\(s.conflicts) needs you" }
         if s.resources == 0 { return "nothing shared yet" }
         return s.settled ? "in step" : "\(s.agreed)/\(s.resources) in step"
@@ -359,9 +381,10 @@ private struct ToolsBlock: View {
         // The block is absent when nothing is designated. An empty "managed
         // tools" list invites adopting whatever is installed, and designation
         // is the user's authorization, not a default.
-        if !fleet.tools.isEmpty {
+        if !fleet.tools.isEmpty || fleet.state(.tools) != nil {
             VStack(alignment: .leading, spacing: 6) {
-                FleetLabel(title: "Fleet-managed tools", detail: pending == 0 ? "up to date" : "\(pending) pending")
+                FleetLabel(title: "Fleet-managed tools", detail: fleet.tools.isEmpty ? "" : pending == 0 ? "up to date" : "\(pending) pending")
+                FleetReadState(fleet: fleet, read: .tools)
                 ForEach(fleet.tools) { tool in
                     FleetCard {
                         HStack(spacing: 6) {
@@ -409,11 +432,12 @@ private struct TasksBlock: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             FleetLabel(title: "Tasks", detail: fleet.activeTasks.isEmpty ? "" : "\(fleet.activeTasks.count) unfinished")
+            FleetReadState(fleet: fleet, read: .tasks)
             ForEach(fleet.tasks.prefix(6)) { task in
                 TaskRow(task: task, fleet: fleet, actions: actions)
             }
             Button("Send Work to Another Mac…") { actions.fleetDispatch() }
-                .disabled(fleet.readError != nil)
+                .disabled(!fleet.machinesCurrent)
                 .buttonStyle(FleetPill(prominent: fleet.destinations.count > 1))
                 .disabled(fleet.destinations.count < 2)
         }
@@ -450,7 +474,7 @@ private struct TaskRow: View {
                         .fixedSize(horizontal: false, vertical: true)
                     if task.canRetry {
                         Button("Run It Somewhere Else") { actions.fleetRetry(task: task.id) }
-                            .disabled(fleet.readError != nil)
+                            .disabled(!fleet.tasksCurrent)
                             .buttonStyle(FleetPill())
                     }
                 }
@@ -512,9 +536,10 @@ private struct NoticesBlock: View {
         // The durable half of a fleet event. A desktop banner can be missed or
         // suppressed by Focus, so the panel reads the feed and never depends on
         // a banner having landed.
-        if !fleet.notices.isEmpty {
+        if !fleet.notices.isEmpty || fleet.state(.activity) != nil {
             VStack(alignment: .leading, spacing: 6) {
                 FleetLabel(title: "Fleet activity", detail: "")
+                FleetReadState(fleet: fleet, read: .activity)
                 ForEach(fleet.notices.prefix(5)) { n in
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Text(verbatim: n.title).font(.system(size: 11))

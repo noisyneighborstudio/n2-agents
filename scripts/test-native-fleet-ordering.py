@@ -15,7 +15,7 @@ with tempfile.TemporaryDirectory(prefix='n2-fleet-ordering-') as work:
     executable = work / 'proof'
     subprocess.run(['swiftc', '-swift-version', '5', '-parse-as-library',
                     str(root / 'tray/FleetModel.swift'), str(swift), '-o', str(executable)], check=True)
-    for scenario in ('older-success', 'older-failure', 'newer-failure'):
+    for scenario in ('older-success', 'older-failure', 'newer-failure', 'older-sections'):
         result = subprocess.run([str(executable), scenario], capture_output=True, text=True, timeout=20)
         assert result.returncode == 0, result.stdout + result.stderr
         print(result.stdout.strip())
