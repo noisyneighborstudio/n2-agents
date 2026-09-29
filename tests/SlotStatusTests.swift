@@ -197,6 +197,26 @@ import Foundation
         var f = FleetData()
         f.tasks = [task(.running), task(.running), task(.failed), task(.done)]
         check(f.taskSummary.map(\.count) == [2, 1] && f.taskSummary.map(\.look) == [.running, .failed], "header counts what's live or failed")
+        // Send Work: the draft is the spec the CLI gets; the plan is the CLI's ranking.
+        var draft = WorkDraft()
+        check(draft.spec == nil, "no work, nothing to send")
+        draft.task = "  run the evals  "; draft.workspace = "~/n2"; draft.machine = "mac-mini"
+        check(draft.spec.map { ($0.task, $0.prompt, $0.workspace.hasSuffix("/n2") && !$0.workspace.hasPrefix("~"), $0.machine) }
+              .map { $0 == "run the evals" && $1 && $2 && $3 == "mac-mini" } == true, "trimmed task, prompt mode, expanded path, pin")
+        draft.shell = true
+        check(draft.spec?.prompt == false && draft.spec?.arguments.contains("--prompt") == false, "a shell command is not a prompt")
+        let plan = FleetPlan.parse("rank\tpeer\tmachine\tagent\teta\tassumed\tqueue\ttransfer\tprepare\texecute\n"
+                                   + "1\tSHA256:b\tmac-mini\tclaude\t90s\tno\t0\t1\t2\t87\n"
+                                   + "\nexcluded:\nstudio\tcodex\tmissing tool: node\n")
+        check(plan.candidates == [.init(rank: 1, machine: "mac-mini", agent: "claude", eta: "90s")]
+              && plan.excluded == ["studio\tcodex\tmissing tool: node"], "plan rows and exclusions")
+        check(FleetPlan.parse("").candidates.isEmpty && !FleetDispatchSpec.hasCandidate(""), "an empty plan names nothing")
+        // The draft outlives the page and the panel: a reset path leaves it.
+        let composer = PanelModel()
+        composer.workDraft.task = "half-written"
+        composer.path = [.sendWork]
+        composer.path = []
+        check(composer.workDraft.task == "half-written", "closing the page keeps the draft")
         print("slot status tests passed")
     }
 }

@@ -389,12 +389,14 @@ enum PanelRoute: Hashable {
     case conflicts
     /// One fleet task, by FleetTask.id.
     case task(String)
+    /// Compose work for another Mac.
+    case sendWork
 
     /// The profile the page belongs to; nil for a page that belongs to none.
     var profile: String? {
         switch self {
         case .profile(let p), .provider(let p, _), .configure(let p, _): return p
-        case .sendSession, .machine, .conflicts, .task: return nil
+        case .sendSession, .machine, .conflicts, .task, .sendWork: return nil
         }
     }
 }
@@ -467,6 +469,8 @@ final class PanelModel: ObservableObject {
     @Published var fleet: FleetData?
     @Published var fleetNotificationError: String?
     @Published var allSessions: [SessionInfo] = []
+    /// The Send Work page's draft.
+    @Published var workDraft = WorkDraft()
     /// Send Session drafts, by SessionInfo.id.
     @Published var sendDrafts: [String: SendDraft] = [:]
     @Published var sessionsLoading = false

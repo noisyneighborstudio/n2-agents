@@ -32,7 +32,8 @@ protocol FleetActions: AnyObject {
     func fleetResolve(conflict: String, keepLocal: Bool)
     func fleetExcept(address: String, add: Bool)
     func fleetToolApply(_ name: String?)
-    func fleetDispatch()
+    func fleetPlan(_ spec: FleetDispatchSpec)
+    func fleetDispatch(_ spec: FleetDispatchSpec)
     func fleetShowTask(_ id: String)
     func fleetRetry(task: String)
     func fleetDistribute(task: String, machine: String?)   // nil = whole fleet
@@ -590,7 +591,7 @@ struct TasksSection: View {
                     Text(verbatim: fleet.taskSummary.map { "\($0.count) \(Self.noun($0.look))" }.joined(separator: " · "))
                         .monospacedDigit().lineLimit(1)
                     Spacer(minLength: 6)
-                    Button(String(localized: "Send Work…", comment: "Tasks: compose work for another Mac")) { actions.fleetDispatch() }
+                    Button(String(localized: "Send Work…", comment: "Tasks: compose work for another Mac")) { model.push(.sendWork) }
                         .buttonStyle(.plain).foregroundStyle(Ink.link)
                         .disabled(fleet.destinations.count < 2)
                         .opacity(fleet.destinations.count < 2 ? 0.5 : 1)

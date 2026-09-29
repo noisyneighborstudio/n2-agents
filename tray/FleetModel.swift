@@ -592,3 +592,63 @@ struct FleetDispatchSpec {
         }
     }
 }
+
+/// `fleet task run --plan`: the ranked machine and agent pairs the dispatcher
+/// would choose between, and what it excluded and why. Shown before Send, so
+/// the estimate is the CLI's, not a second one made here.
+struct FleetPlan: Equatable {
+    struct Candidate: Equatable {
+        let rank: Int
+        let machine: String
+        let agent: String
+        let eta: String
+    }
+
+    let candidates: [Candidate]
+    let excluded: [String]
+
+    static func parse(_ text: String) -> FleetPlan {
+        var candidates: [Candidate] = []
+        var excluded: [String] = []
+        var inExcluded = false
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
+            if line == "excluded:" { inExcluded = true; continue }
+            if inExcluded {
+                if !line.isEmpty { excluded.append(line) }
+                continue
+            }
+            let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard f.count >= 6, let rank = Int(f[0]), rank > 0 else { continue }
+            candidates.append(Candidate(rank: rank, machine: f[2], agent: f[3], eta: f[4]))
+        }
+        return FleetPlan(candidates: candidates, excluded: excluded)
+    }
+}
+
+/// The Send Work page's form and where it got to. It lives on the model, so
+/// closing the panel mid-draft loses nothing.
+struct WorkDraft: Equatable {
+    enum State: Equatable { case editing, planning, planned(FleetPlan), sending, sent(String), failed(String) }
+
+    var shell = false
+    var task = ""
+    var workspace = ""
+    var contextFile = ""
+    var requirements = ""
+    var machine: String?
+    var agent: String?
+    var state: State = .editing
+
+    /// What the CLI would be asked; nil until there is work to describe.
+    var spec: FleetDispatchSpec? {
+        let text = task.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        func path(_ p: String) -> String {
+            let t = p.trimmingCharacters(in: .whitespaces)
+            return t.isEmpty ? "" : (t as NSString).expandingTildeInPath
+        }
+        return FleetDispatchSpec(task: text, prompt: !shell, workspace: path(workspace), contextFile: path(contextFile),
+                                 requirements: requirements.trimmingCharacters(in: .whitespaces), machine: machine, agent: agent)
+    }
+}
+

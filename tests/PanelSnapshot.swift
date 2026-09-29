@@ -37,6 +37,10 @@ import SwiftUI
                                              machine: "mac-mini", role: "dispatcher")]
             model.fleet?.tasks.sort { ["t-9d20", "t-kc01", "t-7f3a", "t-0b11"].firstIndex(of: $0.id)! < ["t-9d20", "t-kc01", "t-7f3a", "t-0b11"].firstIndex(of: $1.id)! }
             if state.first == "task" { model.path = [.task(state.count > 1 ? state[1] : "t-kc01")] }
+        case "work"?:
+            model.workDraft = WorkDraft(task: "Run the nightly evals and summarize regressions", workspace: "~/Development/evals",
+                                        state: .planned(FleetPlan.parse("1\tSHA256:b\tmac-mini\tclaude\t90s\tno\t0\t1\t2\t87\n2\tSHA256:a\tmacbook-pro\tcodex\t140s\tno\t0\t0\t2\t138\n")))
+            model.path = [.sendWork]
         case "machine"?:
             model.path = [.machine("SHA256:" + String(repeating: "b", count: 43))]
         case "send"?:
@@ -255,7 +259,8 @@ final class NoActions: PanelActions, FleetActions {
     func fleetResolve(conflict: String, keepLocal: Bool) {}
     func fleetExcept(address: String, add: Bool) {}
     func fleetToolApply(_ name: String?) {}
-    func fleetDispatch() {}
+    func fleetPlan(_ spec: FleetDispatchSpec) {}
+    func fleetDispatch(_ spec: FleetDispatchSpec) {}
     func fleetShowTask(_ id: String) {}
     func fleetRetry(task: String) {}
     func fleetDistribute(task: String, machine: String?) {}

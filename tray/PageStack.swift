@@ -27,6 +27,7 @@ extension PanelModel {
         case .sendSession?: return String(localized: "Send Session", comment: "Send Session page title")
         case .machine(let id)?: return fleet?.peers.first { $0.id == id }?.machine ?? "Mac"
         case .conflicts?: return String(localized: "Conflicts", comment: "Conflicts page title")
+        case .sendWork?: return String(localized: "Send Work", comment: "Send Work page title")
         case .task(let id)?: return fleet?.tasks.first { $0.id == id }.map { $0.label.isEmpty ? $0.id : $0.label } ?? id
         }
     }
@@ -123,6 +124,7 @@ struct PageStack<Page: View>: View {
         case .machine?: kind = "machine"
         case .conflicts?: kind = "conflicts"
         case .task?: kind = "task"
+        case .sendWork?: kind = "send-work"
         }
         return "\(depth)-\(kind)"
     }

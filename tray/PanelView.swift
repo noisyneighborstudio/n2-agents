@@ -69,6 +69,8 @@ struct PanelView: View {
             if let fleetActions = actions as? FleetActions, let task = model.fleet?.tasks.first(where: { $0.id == id }) {
                 TaskPage(model: model, actions: fleetActions, task: task)
             }
+        case .sendWork?:
+            if let fleetActions = actions as? FleetActions { SendWorkPage(model: model, actions: fleetActions) }
         case .conflicts?:
             if let fleetActions = actions as? FleetActions { ConflictsPage(model: model, actions: fleetActions) }
         case .configure(let name, let id)?:

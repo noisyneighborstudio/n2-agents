@@ -264,105 +264,44 @@ extension AppDelegate {
 
     // MARK: - Dispatch and tasks
 
-    /// Asks for the work and the pins, then shows the CLI's own ranking before
-    /// anything is sent — the estimate the dispatcher will use, not a second
-    /// estimate computed here.
-    func fleetDispatch() {
-        guard let fleet = model.fleet else { return }
-        guard fleet.readError == nil, !fleet.initialized || fleet.machinesCurrent else {
-            alert("Fleet machines unavailable", "Wait for the machine list to load before sending work.")
+    /// The CLI's own ranking for this work, shown on the page before Send —
+    /// the estimate the dispatcher will use, not a second one made here.
+    func fleetPlan(_ spec: FleetDispatchSpec) {
+        model.workDraft.state = .planning
+        DispatchQueue.global(qos: .userInitiated).async {
+            let plan = self.runCLI(spec.arguments + ["--plan", "--", spec.task])
+            DispatchQueue.main.async {
+                guard self.model.workDraft.spec?.task == spec.task else { return }   // edited since
+                self.model.workDraft.state = plan.status == 0 ? .planned(FleetPlan.parse(plan.output))
+                    : .failed(plan.output.isEmpty ? "Couldn't plan this work." : plan.output)
+            }
+        }
+    }
+
+    /// Plans again and sends only when the plan names a machine and agent: an
+    /// empty plan (a pin that matches nothing) exits 0 and must not be sent.
+    func fleetDispatch(_ spec: FleetDispatchSpec) {
+        guard let fleet = model.fleet, fleet.readError == nil, fleet.machinesCurrent else {
+            model.workDraft.state = .failed("Wait for the machine list to load before sending work.")
             return
         }
-        dismissPanel()
-        guard fleet.initialized else { return }
-        let box = NSView(frame: NSRect(x: 0, y: 0, width: 440, height: 310))
-        func field(_ label: String, _ placeholder: String, y: CGFloat) -> NSTextField {
-            let title = NSTextField(labelWithString: label)
-            title.frame = NSRect(x: 0, y: y + 25, width: 440, height: 18)
-            let input = NSTextField(frame: NSRect(x: 0, y: y, width: 440, height: 24))
-            input.placeholderString = placeholder
-            box.addSubview(title); box.addSubview(input)
-            return input
-        }
-        let mode = NSPopUpButton(frame: NSRect(x: 0, y: 280, width: 440, height: 25))
-        mode.addItems(withTitles: ["Agent task", "Shell command"])
-        box.addSubview(mode)
-        let task = field("Task or command", "Describe the work to do", y: 230)
-        let workspace = field("Workspace directory", "Optional, includes uncommitted changes", y: 175)
-        let context = field("Context file", "Optional file with decisions and progress", y: 120)
-        let requirements = field("Required tools", "Optional, comma-separated: node,git", y: 65)
-        let machines = fleet.destinations.map(\.machine)
-        let agents = model.data?.snapshot.vendors.map(\.id) ?? []
-        let machine = NSPopUpButton(frame: NSRect(x: 0, y: 15, width: 215, height: 25))
-        machine.addItem(withTitle: "Fastest eligible Mac")
-        machines.forEach { machine.addItem(withTitle: $0) }
-        let agent = NSPopUpButton(frame: NSRect(x: 225, y: 15, width: 215, height: 25))
-        agent.addItem(withTitle: "Best eligible agent")
-        agents.forEach { agent.addItem(withTitle: $0) }
-        box.addSubview(machine); box.addSubview(agent)
-        let form = NSAlert()
-        form.messageText = "Send work"
-        form.informativeText = "Without a workspace, work runs in an empty task directory. Deliverable files written to $N2_FLEET_OUTPUTS can be fetched or distributed when you request them."
-        form.accessoryView = box
-        form.addButton(withTitle: "Send work")
-        form.addButton(withTitle: "Cancel")
-        NSApp.activate(ignoringOtherApps: true)
-        guard form.runModal() == .alertFirstButtonReturn else { return }
-        let text = task.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { alert("Task required", "Enter a task or shell command."); return }
-        let spec = FleetDispatchSpec(task: text, prompt: mode.indexOfSelectedItem == 0,
-            workspace: (workspace.stringValue as NSString).expandingTildeInPath,
-            contextFile: (context.stringValue as NSString).expandingTildeInPath,
-            requirements: requirements.stringValue,
-            machine: machine.indexOfSelectedItem > 0 ? machines[machine.indexOfSelectedItem - 1] : nil,
-            agent: agent.indexOfSelectedItem > 0 ? agents[agent.indexOfSelectedItem - 1] : nil)
+        model.workDraft.state = .sending
         DispatchQueue.global(qos: .userInitiated).async {
             let plan = self.runCLI(spec.arguments + ["--plan", "--", spec.task])
             guard plan.status == 0, FleetDispatchSpec.hasCandidate(plan.output) else {
                 DispatchQueue.main.async {
-                    self.alert("Nothing can run this", plan.output.isEmpty ? "No eligible machine and agent were found." : plan.output)
+                    self.model.workDraft.state = .failed(plan.output.isEmpty ? "No eligible machine and agent were found." : plan.output)
                 }
                 return
             }
             let result = self.runCLI(spec.arguments + ["--", spec.task])
             DispatchQueue.main.async {
-                if result.status != 0 { self.alert("Dispatch refused", result.output) }
+                self.model.workDraft.state = result.status == 0
+                    ? .sent(result.output.trimmingCharacters(in: .whitespacesAndNewlines))
+                    : .failed(result.output.isEmpty ? "Dispatch refused." : result.output)
                 self.refreshFleet()
             }
         }
-    }
-
-    /// Machine, agent, both, or neither — the four pins the CLI accepts, asked
-    /// in one sheet so "both" is a single decision. The agent list is the labs
-    /// actually installed here; the machine list is only the peers that could
-    /// take work. Leaving a row on "let the fleet choose" sends no flag at all,
-    /// so the dispatcher still ranks that dimension.
-    private func pinChoice(_ fleet: FleetData) -> [String]? {
-        let machines = fleet.destinations.map(\.machine)
-        let agents = model.data?.snapshot.vendors.map(\.id) ?? []
-        let box = NSView(frame: NSRect(x: 0, y: 0, width: 280, height: 58))
-        let machinePop = NSPopUpButton(frame: NSRect(x: 0, y: 33, width: 280, height: 25))
-        machinePop.addItem(withTitle: "Let the fleet choose the Mac")
-        machines.forEach { machinePop.addItem(withTitle: "Pin to \($0)") }
-        let agentPop = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 280, height: 25))
-        agentPop.addItem(withTitle: "Let the fleet choose the agent")
-        agents.forEach { agentPop.addItem(withTitle: "Pin to \($0)") }
-        box.addSubview(machinePop)
-        box.addSubview(agentPop)
-
-        let alert = NSAlert()
-        alert.messageText = "Where should this run?"
-        alert.informativeText = "Pinning skips the speed comparison for whatever you pin. Pin both and only that pairing is considered."
-        alert.accessoryView = box
-        alert.addButton(withTitle: "Continue")
-        NSApp.activate(ignoringOtherApps: true)
-        alert.runModal()
-
-        let m = machinePop.indexOfSelectedItem
-        let a = agentPop.indexOfSelectedItem
-        let pins = FleetPins.flags(machine: m > 0 && m - 1 < machines.count ? machines[m - 1] : nil,
-                                   agent: a > 0 && a - 1 < agents.count ? agents[a - 1] : nil)
-        return pins.isEmpty ? nil : pins
     }
 
     func fleetShowTask(_ id: String) {
