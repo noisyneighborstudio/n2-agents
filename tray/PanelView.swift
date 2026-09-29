@@ -562,8 +562,7 @@ private struct SlotRow: View {
             HStack(spacing: 4) {
                 Button { toggle() } label: {
                     HStack(spacing: 10) {
-                        LabMark(vendor: vendor, size: 16)
-                            .foregroundStyle(Color.primary.opacity(0.82))
+                        LogoTile(vendor: vendor, status: status)
                             .frame(width: 28, height: 28)
                             .matchedGeometryEffect(id: SlotID.mono(profile.name, vendor.id), in: namespace)
                         Text(verbatim: vendor.label)
@@ -889,8 +888,7 @@ private struct CapacitySegment: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 5) {
-                LabMark(vendor: vendor, size: 12.5)
-                    .foregroundStyle(status.left != nil ? Color.primary.opacity(0.82) : status.ink)
+                LogoTile(vendor: vendor, status: status)
                     .frame(width: 22, height: 22)
                     .matchedGeometryEffect(id: SlotID.mono(profile, vendor.id), in: namespace)
                 Text(verbatim: status.stripValue)

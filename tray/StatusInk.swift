@@ -76,6 +76,27 @@ enum SlotStatus: Equatable {
         }
     }
 
+    /// The logo tile under a slot: neutral while there is capacity to read,
+    /// washed in the status ink when the state itself is the news.
+    var tileFill: Color {
+        switch self {
+        case .ready, .low, .checking: return Ink.tile
+        case .out: return Ink.Tone.amber.wash(0.16)
+        case .unmetered: return Ink.Tone.neutral.wash(0.06)
+        case .checkFailed: return Ink.Tone.yellow.wash(0.14)
+        case .signedOut: return Ink.Tone.red.wash(0.14)
+        }
+    }
+
+    /// The logo on that tile: the status ink on a tinted tile, neutral otherwise.
+    var logoInk: Color {
+        switch self {
+        case .ready, .low, .checking: return Ink.logo
+        case .out, .checkFailed, .signedOut: return ink
+        case .unmetered: return Ink.secondary
+        }
+    }
+
     /// The label a row shows beside its ring.
     var label: String {
         switch self {
@@ -110,6 +131,12 @@ enum SlotStatus: Equatable {
     static func day(_ date: Date) -> String {
         date.timeIntervalSinceNow > 6 * 86400 ? date.formatted(.dateTime.month(.abbreviated).day())
                                               : date.formatted(.dateTime.weekday(.abbreviated))
+    }
+}
+
+extension LogoTile {
+    init(vendor: Vendor, status: SlotStatus) {
+        self.init(vendor: vendor, fill: status.tileFill, ink: status.logoInk)
     }
 }
 
@@ -172,7 +199,10 @@ struct StatusRing: View {
         case .signedOut:
             Cross().stroke(status.ink, style: StrokeStyle(lineWidth: stroke * 0.72, lineCap: .round))
                 .frame(width: size * 0.9, height: size * 0.9)
-        case .ready, .low, .unmetered, .checkFailed, .checking:
+        case .checkFailed:
+            Bang().stroke(status.ink, style: StrokeStyle(lineWidth: stroke * 0.72, lineCap: .round))
+                .frame(width: size, height: size)
+        case .ready, .low, .unmetered, .checking:
             EmptyView()
         }
     }
@@ -193,6 +223,16 @@ private struct Cross: Shape {
         var p = Path()
         p.move(to: CGPoint(x: r.minX, y: r.minY)); p.addLine(to: CGPoint(x: r.maxX, y: r.maxY))
         p.move(to: CGPoint(x: r.maxX, y: r.minY)); p.addLine(to: CGPoint(x: r.minX, y: r.maxY))
+        return p
+    }
+}
+
+// "!": a stroke and a dot, the failed check's mark.
+private struct Bang: Shape {
+    func path(in r: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: r.midX, y: r.minY)); p.addLine(to: CGPoint(x: r.midX, y: r.minY + r.height * 0.58))
+        p.move(to: CGPoint(x: r.midX, y: r.maxY)); p.addLine(to: CGPoint(x: r.midX, y: r.maxY - 0.01))
         return p
     }
 }

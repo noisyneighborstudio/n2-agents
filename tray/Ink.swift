@@ -30,6 +30,10 @@ enum Ink {
     /// Cards and rows sit on this, not on the bare glass, so their text has a
     /// ground that doesn't depend on the wallpaper.
     static let surface = Tone(NSColor.white.withAlphaComponent(0.85), NSColor.white.withAlphaComponent(0.06)).color
+    /// A logo tile with nothing to report. Not text.
+    static let tile = Tone(NSColor.black.withAlphaComponent(0.05), NSColor.white.withAlphaComponent(0.09)).color
+    /// A logo on a neutral tile: a glyph, held to 3:1 (well over it at 85% / 92%).
+    static let logo = Tone(NSColor.black.withAlphaComponent(0.85), NSColor.white.withAlphaComponent(0.92)).color
     /// Ring and bar tracks. Not text.
     static let track = Tone(NSColor.black.withAlphaComponent(0.08), NSColor.white.withAlphaComponent(0.10)).color
     /// Rows and cards under the pointer. Not text.
@@ -49,6 +53,7 @@ enum Ink {
         static let red = Tone(rgb(0xB8261C), rgb(0xFF7369))
         static let info = Tone(rgb(0x006A8E), rgb(0x64D2FF))
         static let chip = Tone(rgb(0x0A4FC2), rgb(0x0A5BD6))
+        static let neutral = Tone(.black, .white)
 
         var color: Color {
             let (light, dark) = (light, dark)

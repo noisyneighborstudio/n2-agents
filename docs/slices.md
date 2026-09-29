@@ -20,24 +20,24 @@ The menu bar redesign runs first, in the order of `docs/tray-redesign/08-slices.
 Every tray slice's proof includes `scripts/panel-snapshot.sh` renders in light
 and dark, and `tray/build.sh`.
 
-1. **Real logos in status tiles** (`real-logos-everywhere`).
-   Behavior: every provider glyph is `LabMark` inside a tile whose corner is
-   25% of its side, filled and tinted per `SlotStatus`.
-   Proof: grep finds no monogram drawn outside `LabMark`'s fallback; snapshots.
-   Scope: tiles only.
-
-2. **Fleet and Profile pages** (`page-stack-fleet-profile`).
+1. **Fleet and Profile pages** (`page-stack-fleet-profile`).
    Behavior: the panel opens on Fleet (This Machine plus profile cards with
    capacity strips); a card pushes its Profile page, the strip logos fly into
    the rows, and Back, Esc or ⌘[ pops. The accordion is gone.
    Proof: snapshots of both pages; a recording of push/pop, and with Reduce Motion.
    Scope: a row still opens the old slot actions until `provider-page`.
 
-3. **Provider page** (`provider-page`).
+2. **Provider page** (`provider-page`).
    Behavior: a row pushes the hero, chips, primary split button, tiles and the
    Configure/Diagnostics rows; the glyph flies to the hero, the ring draws in.
    Proof: snapshots of each status's page; Diagnostics shows a restricted slot's raw note.
    Scope: Configure may push a placeholder until `configure-page`.
+
+3. **Configure page** (`configure-page`).
+   Behavior: Account / Launch / Files groups with Reveal and Copy icon
+   buttons; Copy shows a checkmark and announces "Copied"; Sign out confirms.
+   Proof: a test that copy puts the exact path or command on the pasteboard; snapshots.
+   Scope: no new CLI verbs.
 
 4. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
    Behavior: from the QA app, pair two disposable peers, sync (with a held
