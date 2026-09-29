@@ -70,6 +70,17 @@ import Foundation
         check(SlotStatus.ready(left: 32).stripValue == SlotStatus.percent(32), "strip shows the remaining percent")
         check(SlotStatus.checkFailed.stripValue == "?" && SlotStatus.unmetered.stripValue == "—", "unknowns have no figure")
         check(!SlotStatus.low(left: 12).label.contains("used"), "rows say left, not used")
+        // Profile note: first match wins, and failed checks are never "All ready".
+        let back = Date()
+        check(ProfileNote.of([.ready(left: 50), .signedOut, .out(back: back)]).text.hasPrefix("1 signed out"), "sign-outs lead")
+        check(ProfileNote.of([.out(back: back), .checkFailed]).text == "1 out · 1 unchecked", "out names unchecked beside it")
+        check(ProfileNote.of([.low(left: 5), .ready(left: 80)]).tone == .amber, "low is amber")
+        check(ProfileNote.of([.checkFailed, .ready(left: 80)]).text == "1 unchecked", "a failed check alone is not all ready")
+        check(ProfileNote.of([.ready(left: 80), .unmetered]).text == "All ready", "ready and unmetered are all ready")
+        check(ProfileNote.of([.ready(left: 80)], pending: 1).tone == .red, "unfinished setup counts as signed out")
+        // Tally: every slot lands in at most one count, and checking in none.
+        let tally = FleetTally([.ready(left: 80), .low(left: 3), .unmetered, .out(back: nil), .checkFailed, .signedOut, .checking])
+        check(tally == { var t = FleetTally([]); t.ready = 3; t.out = 1; t.attention = 2; return t }(), "tally sums the cards")
         print("slot status tests passed")
     }
 }

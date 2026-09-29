@@ -37,6 +37,8 @@ final class GlassWindow: NSPanel {
 
     /// Shown, and not on its way out.
     var isShowing: Bool { isVisible && !dismissing }
+    /// Told each time the window starts to close.
+    var onDismiss: (() -> Void)?
 
     /// The SwiftUI content's ideal size, as SwiftUI itself last measured it.
     private let measured = MeasuredSize()
@@ -197,6 +199,7 @@ final class GlassWindow: NSPanel {
     /// (160 ms). Floating: close for good.
     func dismiss() {
         guard isShowing else { return }
+        onDismiss?()
         if let monitor = clickMonitor {
             NSEvent.removeMonitor(monitor)
             clickMonitor = nil
@@ -250,6 +253,11 @@ final class GlassWindow: NSPanel {
         return window.convertToScreen(button.convert(button.bounds, to: nil)).contains(NSEvent.mouseLocation)
     }
 
+    private var followsPages: Bool {
+        if case .floating = behavior { return false }
+        return true
+    }
+
     private func fit(recenter: Bool) {
         guard !unfurling else { return }   // present()'s completion refits
         let size = measured.size == .zero ? content.intrinsicContentSize : measured.size
@@ -277,8 +285,9 @@ final class GlassWindow: NSPanel {
         }
     }
 
-    /// The SwiftUI content animates its own height (a card opening, 320 ms on
-    /// the design curve), and the glass follows on the same clock. Nothing is
+    /// The SwiftUI content animates its own height (a page pushed, 480 ms on
+    /// the navigation curve; the setup window's steps, 320 ms), and the glass
+    /// follows on the same clock. Nothing is
     /// resized mid-flight: an animated window frame is shown a beat before
     /// its content redraws, and a resizing glass view re-lays out its content
     /// on its own schedule — both read as the whole panel jumping. Instead the
@@ -325,8 +334,11 @@ final class GlassWindow: NSPanel {
         let reveal = CABasicAnimation(keyPath: "path")
         reveal.fromValue = (mask.presentation()?.path ?? mask.path) ?? path(from)
         reveal.toValue = path(to)
-        reveal.duration = 0.32
-        reveal.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
+        // The panel's pages move on the navigation curve, and its height with them.
+        let (duration, curve) = followsPages ? (Motion.navDuration, CAMediaTimingFunction(controlPoints: 0.32, 0.72, 0, 1))
+                                             : (0.32, CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1))
+        reveal.duration = duration
+        reveal.timingFunction = curve
         mask.path = path(to)
         mask.add(reveal, forKey: "reveal")
         CATransaction.commit()
@@ -336,7 +348,7 @@ final class GlassWindow: NSPanel {
         let shadow = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
             self?.invalidateShadow()
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.36) { shadow.invalidate() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.04) { shadow.invalidate() }
     }
 }
 

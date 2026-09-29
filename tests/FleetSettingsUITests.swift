@@ -18,6 +18,8 @@ final class PanelActions {
     func setUpdateChannel(_ value: UpdateChannel) {}
     func setPanelShortcut() {}
     func checkForUpdates() {}
+    func reportBug() {}
+    func quit() {}
     func reonboardAccounts() {}
     func signInMissingAccounts() {}
 }

@@ -20,24 +20,24 @@ The menu bar redesign runs first, in the order of `docs/tray-redesign/08-slices.
 Every tray slice's proof includes `scripts/panel-snapshot.sh` renders in light
 and dark, and `tray/build.sh`.
 
-1. **Fleet and Profile pages** (`page-stack-fleet-profile`).
-   Behavior: the panel opens on Fleet (This Machine plus profile cards with
-   capacity strips); a card pushes its Profile page, the strip logos fly into
-   the rows, and Back, Esc or ⌘[ pops. The accordion is gone.
-   Proof: snapshots of both pages; a recording of push/pop, and with Reduce Motion.
-   Scope: a row still opens the old slot actions until `provider-page`.
-
-2. **Provider page** (`provider-page`).
+1. **Provider page** (`provider-page`).
    Behavior: a row pushes the hero, chips, primary split button, tiles and the
    Configure/Diagnostics rows; the glyph flies to the hero, the ring draws in.
    Proof: snapshots of each status's page; Diagnostics shows a restricted slot's raw note.
    Scope: Configure may push a placeholder until `configure-page`.
 
-3. **Configure page** (`configure-page`).
+2. **Configure page** (`configure-page`).
    Behavior: Account / Launch / Files groups with Reveal and Copy icon
    buttons; Copy shows a checkmark and announces "Copied"; Sign out confirms.
    Proof: a test that copy puts the exact path or command on the pasteboard; snapshots.
    Scope: no new CLI verbs.
+
+3. **Suggestion and Switch** (`suggestion-and-switch`).
+   Behavior: an out or low slot's page shows "{Provider} has room" per
+   `docs/tray-redesign/03-states.md`; Switch pushes the candidate's page with a glyph flight.
+   Proof: unit tests on the picker (same profile first; never unmetered, failed,
+   stale or signed out; nil when nothing qualifies); Switch never rebinds an account.
+   Scope: panel only; toasts come later.
 
 4. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
    Behavior: from the QA app, pair two disposable peers, sync (with a held

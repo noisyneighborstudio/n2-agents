@@ -155,6 +155,82 @@ extension PanelModel {
     }
 }
 
+/// One line that says where a profile stands, first match wins: anything
+/// signed out, anything out, anything low, anything unread.
+struct ProfileNote: Equatable {
+    enum Tone { case red, amber, plain }
+    let text: String
+    let tone: Tone
+
+    var ink: Color {
+        switch tone {
+        case .red: return Ink.red
+        case .amber: return Ink.amber
+        case .plain: return Ink.secondary
+        }
+    }
+
+    static func of(_ statuses: [SlotStatus], pending: Int = 0) -> ProfileNote {
+        func count(_ match: (SlotStatus) -> Bool) -> Int { statuses.filter(match).count }
+        let signedOut = count { $0 == .signedOut } + pending
+        let out = count { if case .out = $0 { return true }; return false }
+        let low = count { if case .low = $0 { return true }; return false }
+        let unchecked = count { $0 == .checkFailed }
+        if signedOut > 0 {
+            return .init(text: String(localized: "\(signedOut) signed out", comment: "Profile note: labs with no login"), tone: .red)
+        }
+        if out > 0 {
+            return .init(text: unchecked > 0
+                         ? String(localized: "\(out) out · \(unchecked) unchecked", comment: "Profile note: labs out of allowance, labs whose check failed")
+                         : String(localized: "\(out) out", comment: "Profile note: labs out of allowance"), tone: .amber)
+        }
+        if low > 0 {
+            return .init(text: String(localized: "\(low) running low", comment: "Profile note: labs under 20% left"), tone: .amber)
+        }
+        if unchecked > 0 {
+            return .init(text: String(localized: "\(unchecked) unchecked", comment: "Profile note: labs whose usage check failed"), tone: .amber)
+        }
+        if statuses.contains(.checking) {
+            return .init(text: String(localized: "Checking…", comment: "Profile note: usage checks running"), tone: .plain)
+        }
+        return .init(text: String(localized: "All ready", comment: "Profile note: every lab can start work"), tone: .plain)
+    }
+}
+
+/// The Fleet header's three counts, summed over every slot the cards show.
+struct FleetTally: Equatable {
+    var ready = 0      // ready, low and unmetered: can start work
+    var out = 0
+    var attention = 0  // a failed check or a sign-out to fix
+
+    init(_ statuses: [SlotStatus]) {
+        for s in statuses {
+            switch s {
+            case .ready, .low, .unmetered: ready += 1
+            case .out: out += 1
+            case .checkFailed, .signedOut: attention += 1
+            case .checking: break
+            }
+        }
+    }
+}
+
+extension PanelModel {
+    func statuses(_ profile: Profile) -> [SlotStatus] {
+        (data?.slotted(profile) ?? []).map { status(profile.name, $0).status }
+    }
+
+    func note(_ profile: Profile) -> ProfileNote {
+        let slotted = Set(data?.slotted(profile).map(\.id) ?? [])
+        let signedOut = Set((data?.slotted(profile) ?? []).filter { status(profile.name, $0).status == .signedOut }.map(\.id))
+        // Labs whose setup never finished count as signed out, once.
+        let pending = Set(pendingSetups[profile.name] ?? []).intersection(slotted).subtracting(signedOut).count
+        return ProfileNote.of(statuses(profile), pending: pending)
+    }
+
+    var tally: FleetTally { FleetTally((data?.profiles ?? []).flatMap(statuses)) }
+}
+
 // The ring every surface draws for a slot: remaining allowance as an arc from
 // twelve o'clock, clockwise, or a shape that says why there is none.
 struct StatusRing: View {

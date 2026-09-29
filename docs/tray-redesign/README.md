@@ -4,6 +4,20 @@ Kept as received, except where an implemented slice corrected it (the note
 mapping in `03-states.md`, the `tertiary` and dark `red` values in
 `06-tokens.md`); those tables describe the shipped code.
 
+Decisions the handoff left open, as built:
+- **Page fill.** A live glass view can't be sampled, and `windowBackgroundColor`
+  is pure white in light mode (white cards vanish on it), so `Ink.page` is the
+  glass's measured tone: `#ECECF0` light, `#252932` dark.
+- **Features the Fleet page has no place for.** Peers, sync and tasks
+  (`FleetSection`) sit below This Machine. Recent sessions open from a footer
+  icon (`clock.arrow.circlepath`). Version, update status, Report a bug and
+  Quit live in Settings → About; an update waiting puts a dot on the footer's
+  Settings icon.
+- **Strip bars** of out, failed and signed-out slots are a tinted track with no
+  fill: a full bar would read as full capacity in grayscale.
+- **Profile note** adds "{n} unchecked" when checks failed and nothing is out,
+  rather than "All ready".
+
 **Read this file first, all the way through, before writing any code.**
 
 The design canvas and its HTML prototype (source of truth for look and

@@ -80,8 +80,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     private lazy var quotaToast = QuotaToast(anchor: statusItem.button!) { [weak self] in self?.togglePanel() }
     // Built on first use (an open, or the first quota reading): it anchors to
     // the status item's button.
-    private lazy var panel = GlassWindow(rootView: PanelView(model: model, actions: self),
-                                         behavior: .transient(anchor: statusItem.button!))
+    private lazy var panel: GlassWindow = {
+        let panel = GlassWindow(rootView: PanelView(model: model, actions: self),
+                                behavior: .transient(anchor: statusItem.button!))
+        panel.onDismiss = { [weak self] in self?.model.closedAt = Date() }
+        return panel
+    }()
     private lazy var hotKey = GlobalHotKey { [weak self] in self?.togglePanel() }
     /// Recent sessions, opened out of the panel into its own window.
     private var sessionsWindow: GlassWindow?
@@ -223,7 +227,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         quotaToast.dismiss()
         var still = Transaction()
         still.disablesAnimations = true
-        withTransaction(still) { model.presented = false }
+        withTransaction(still) {
+            model.presented = false
+            // Back within a minute, the panel reopens where it was; after
+            // that, at Fleet.
+            if let closed = model.closedAt, Date().timeIntervalSince(closed) > 60 {
+                model.path = []
+                model.selection = nil
+            }
+        }
         // Sized from the already-loaded content, so the first frame is the
         // finished panel, not an empty one that grows into place.
         panel.present()
@@ -256,6 +268,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
                 if let s = self.model.selection,
                    data.profiles.first(where: { $0.name == s.profile })?.slots[s.vendor] == nil {
                     self.model.selection = nil
+                }
+                // A page whose profile or lab is gone closes, with what it led to.
+                if let gone = self.model.path.firstIndex(where: { route in
+                    guard let p = data.profiles.first(where: { $0.name == route.profile }) else { return true }
+                    switch route {
+                    case .profile: return false
+                    case .provider(_, let v), .configure(_, let v): return p.slots[v] == nil
+                    }
+                }) {
+                    self.model.path.removeSubrange(gone...)
                 }
                 self.refreshUsage(force: false)
             }
@@ -352,6 +374,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
                     usage[id] = Usage.merge(usage[id] ?? [:], rows, commandFailed: result.failed, profiles: profiles)
                 }
                 self.model.usage = usage
+                self.model.refreshedAt = Date()
                 if self.usageRefetch {
                     let onDemand = self.usageRefetchOnDemand
                     self.usageRefetch = false

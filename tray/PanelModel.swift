@@ -386,6 +386,19 @@ struct LowQuota: Equatable {
     var tier: StatusIcon.Tier { StatusIcon.Tier(remaining: left) }
 }
 
+/// A page in the panel: Fleet → Profile → Provider → Configure.
+enum PanelRoute: Hashable {
+    case profile(String)
+    case provider(profile: String, vendor: String)
+    case configure(profile: String, vendor: String)
+
+    var profile: String {
+        switch self {
+        case .profile(let p), .provider(let p, _), .configure(let p, _): return p
+        }
+    }
+}
+
 struct Selection: Equatable {
     let profile: String
     let vendor: String
@@ -435,11 +448,14 @@ final class PanelModel: ObservableObject {
     var usageSweeping: Bool { usageLoading && !usageSlow }
     /// Flips false → true on every open; the content rises into place off it.
     @Published var presented = true
-    /// The one profile showing its labs. One at a time keeps the panel's
-    /// height bounded, which is what lets depth 3 open in place.
-    @Published var expanded: String?
-    /// The one slot showing its actions, inside the expanded profile.
+    /// The pages pushed over Fleet, deepest last. Empty is Fleet itself.
+    @Published var path: [PanelRoute] = []
+    /// The one slot showing its actions on its profile's page.
     @Published var selection: Selection?
+    /// When the last usage reading landed, for the footer.
+    @Published var refreshedAt: Date?
+    /// When the panel last closed: a reopen within a minute keeps the path.
+    var closedAt: Date?
     @Published var updateStatus: UpdateStatus?
     /// Profiles whose setup was left unfinished: profile -> the labs it set up.
     @Published var pendingSetups: [String: [String]] = [:]

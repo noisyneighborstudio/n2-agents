@@ -18,42 +18,67 @@ import SwiftUI
 
         let model = Fixture.model()
         let state = args[1].split(separator: "/").map(String.init)
+        let profile = state.count > 1 ? state[1] : "Default", vendor = state.count > 2 ? state[2] : "codex"
+        var move: (() -> Void)?
         switch state.first {
         case "profile"?:
-            model.expanded = state.count > 1 ? state[1] : "Default"
+            model.path = [.profile(profile)]
         case "slot"?:
-            model.expanded = state.count > 1 ? state[1] : "Default"
-            model.selection = Selection(profile: model.expanded!, vendor: state.count > 2 ? state[2] : "codex")
+            model.path = [.profile(profile)]
+            model.selection = Selection(profile: profile, vendor: vendor)
+        // Motion: settle, move, and capture a frame every 40 ms until it lands.
+        case "push"?:
+            move = { model.push(.profile(profile)) }
+        case "pop"?:
+            model.path = [.profile(profile)]
+            move = { model.pop() }
         default:
             break
         }
+        model.refreshedAt = Date().addingTimeInterval(-120)
+        // Pinned top over the glass's tone, as GlassWindow holds it.
         let root = PanelView(model: model, actions: Fixture.actions)
-            .background(Color(nsColor: dark ? NSColor(srgbRed: 0x25 / 255, green: 0x29 / 255, blue: 0x32 / 255, alpha: 1)
-                                             : NSColor(srgbRed: 0xEC / 255, green: 0xEC / 255, blue: 0xF0 / 255, alpha: 1)))
+            .frame(maxHeight: .infinity, alignment: .top)
+            .background(Ink.page)
             .environment(\.colorScheme, dark ? .dark : .light)
         let host = NSHostingView(rootView: root)
         host.appearance = app.appearance
-        let size = host.fittingSize
-        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless],
+        let window = NSWindow(contentRect: NSRect(x: -4000, y: -4000, width: 360, height: 100), styleMask: [.borderless],
                               backing: .buffered, defer: false)
         window.appearance = app.appearance
         window.contentView = host
-        host.frame = NSRect(origin: .zero, size: size)
-        host.layoutSubtreeIfNeeded()
-        // Let SwiftUI settle one turn (onAppear, preference changes) before drawing.
-        RunLoop.main.run(until: Date().addingTimeInterval(0.6))
-        host.layoutSubtreeIfNeeded()
-        let final = host.fittingSize
-        host.frame = NSRect(origin: .zero, size: final)
-        window.setContentSize(final)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
-        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
-        NSAppearance(named: dark ? .darkAqua : .aqua)!.performAsCurrentDrawingAppearance {
-            host.cacheDisplay(in: host.bounds, to: rep)
+        window.orderFrontRegardless()
+        // Let SwiftUI settle (onAppear, preference changes) before drawing.
+        func settle(_ seconds: Double) {
+            RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+            host.layoutSubtreeIfNeeded()
         }
-        guard let png = rep.representation(using: .png, properties: [:]) else { exit(1) }
-        try! png.write(to: URL(fileURLWithPath: args[3]))
-        print("\(args[3]) \(Int(final.width))x\(Int(final.height))")
+        func draw(_ path: String, height: CGFloat? = nil) {
+            let size = NSSize(width: 360, height: height ?? host.fittingSize.height)
+            window.setContentSize(size)
+            host.frame = NSRect(origin: .zero, size: size)
+            host.layoutSubtreeIfNeeded()
+            guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
+            NSAppearance(named: dark ? .darkAqua : .aqua)!.performAsCurrentDrawingAppearance {
+                host.cacheDisplay(in: host.bounds, to: rep)
+            }
+            guard let png = rep.representation(using: .png, properties: [:]) else { exit(1) }
+            try! png.write(to: URL(fileURLWithPath: path))
+            print("\(path) \(Int(size.width))x\(Int(size.height))")
+        }
+        settle(0.6)
+        guard let move else {
+            settle(0.3)
+            draw(args[3])
+            return
+        }
+        let height = max(host.fittingSize.height, 460)
+        draw(args[3].replacingOccurrences(of: ".png", with: "-00.png"), height: height)
+        move()
+        for frame in 1...20 {
+            settle(0.04)
+            draw(args[3].replacingOccurrences(of: ".png", with: String(format: "-%02d.png", frame)), height: height)
+        }
     }
 }
 

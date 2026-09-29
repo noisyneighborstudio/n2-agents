@@ -6,8 +6,13 @@ struct SettingsWindowView: View {
     let actions: PanelActions
     @State private var cliInstallMessage: String?
 
+    // "1.2.0 (16)": a prerelease counter resets with every stable release; the
+    // build number always climbs.
     private var version: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
+        let short = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0")
+            .prefix { $0 != "-" }
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
+        return UpdateChannel.isQABuild ? "\(short) (\(build)) · QA build" : "\(short) (\(build))"
     }
 
     var body: some View {
@@ -135,6 +140,20 @@ struct SettingsWindowView: View {
                                 Label("Software updates", systemImage: "arrow.down.circle")
                                 Spacer()
                                 Button("Check Now…") { actions.checkForUpdates() }
+                            }
+                            .padding(.horizontal, 13).frame(height: 46)
+                            Divider().padding(.leading, 13)
+                            HStack {
+                                Label("Report a bug", systemImage: "ladybug")
+                                Spacer()
+                                Button("Report…") { actions.reportBug() }
+                            }
+                            .padding(.horizontal, 13).frame(height: 46)
+                            Divider().padding(.leading, 13)
+                            HStack {
+                                Label("Quit N2 Agents", systemImage: "power")
+                                Spacer()
+                                Button("Quit") { actions.quit() }
                             }
                             .padding(.horizontal, 13).frame(height: 46)
                         }
