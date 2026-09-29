@@ -217,6 +217,15 @@ import Foundation
         composer.path = [.sendWork]
         composer.path = []
         check(composer.workDraft.task == "half-written", "closing the page keeps the draft")
+        // Root Recent filter: profile, provider, search, age order, and a limit.
+        let newest = SessionInfo.filter(all)
+        check(RecentFilter().apply(newest, limit: 2).map(\.sessionID) == ["2", "3"], "unfiltered: the two newest")
+        check(RecentFilter(profile: "Work").apply(newest, limit: 5).map(\.sessionID) == ["2", "1"], "by profile")
+        check(RecentFilter(vendor: "codex").apply(newest, limit: 5).map(\.sessionID) == ["3", "1"], "by provider")
+        check(RecentFilter(query: "fix").apply(newest, limit: 5).map(\.sessionID) == ["3", "1"], "by search")
+        check(RecentFilter(oldestFirst: true).apply(newest, limit: 5).map(\.sessionID) == ["1", "3", "2"], "oldest first")
+        check(RecentFilter(vendor: "codex", oldestFirst: true).apply(newest, limit: 1).map(\.sessionID) == ["1"], "filters, order and limit combine")
+        check(!RecentFilter(oldestFirst: true).narrowed && RecentFilter(query: " x ").narrowed, "sorting alone doesn't narrow")
         print("slot status tests passed")
     }
 }

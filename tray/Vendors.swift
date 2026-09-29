@@ -188,3 +188,26 @@ struct SessionInfo: Identifiable {
         }
     }
 }
+
+/// How the root's Recent is narrowed: one profile, one provider, a search,
+/// and which end of time comes first.
+struct RecentFilter: Equatable {
+    var profile: String?
+    var vendor: String?
+    var query = ""
+    var oldestFirst = false
+    /// The search field is open.
+    var searching = false
+
+    var narrowed: Bool { profile != nil || vendor != nil || !query.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    /// From a list already newest first and unique.
+    func apply(_ newestFirst: [SessionInfo], limit: Int) -> [SessionInfo] {
+        let tokens = SessionInfo.fold(query.trimmingCharacters(in: .whitespaces)).split(separator: " ")
+        let ordered: AnySequence<SessionInfo> = oldestFirst ? AnySequence(newestFirst.reversed()) : AnySequence(newestFirst)
+        return Array(ordered.lazy.filter { s in
+            (profile == nil || s.profile == profile) && (vendor == nil || s.vendor == vendor)
+                && (tokens.isEmpty || s.matches(tokens))
+        }.prefix(limit))
+    }
+}

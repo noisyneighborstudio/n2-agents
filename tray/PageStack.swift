@@ -106,6 +106,9 @@ struct PageStack<Page: View>: View {
     @State private var generation = 0
     /// The path as last drawn, to tell a push from a pop.
     @State private var shown: [PanelRoute] = []
+    /// A move is still animating: the page beneath stays drawn until it lands.
+    @State private var settling = false
+    @State private var moves = 0
 
     private var stack: [(depth: Int, route: PanelRoute?)] {
         [(0, nil)] + model.path.enumerated().map { ($0.offset + 1, $0.element) }
@@ -132,7 +135,11 @@ struct PageStack<Page: View>: View {
     var body: some View {
         let all = stack
         let top = all.count - 1
-        let visible = all.suffix(2)
+        // At rest only the top page is drawn, so a refresh re-renders one page,
+        // not two; the one beneath joins for the length of a move.
+        let moving = settling || model.path != shown
+        let visible = all.suffix(moving ? 2 : 1)
+        let popping = model.path.count < shown.count
         ZStack(alignment: .topLeading) {
             ForEach(visible, id: \.depth) { item in
                 let key = id(item.depth, item.route)
@@ -150,7 +157,10 @@ struct PageStack<Page: View>: View {
                     .allowsHitTesting(isTop)
                     .accessibilityHidden(!isTop)
                     .zIndex(Double(item.depth))
-                    .transition(reduceMotion ? .opacity : .move(edge: .trailing))
+                    .transition(reduceMotion ? .opacity
+                                : isTop && popping ? .asymmetric(insertion: .modifier(active: Beneath(shown: false), identity: Beneath(shown: true)),
+                                                                 removal: .move(edge: .trailing))
+                                : .move(edge: .trailing))
                     .id(key)
             }
         }
@@ -165,6 +175,12 @@ struct PageStack<Page: View>: View {
         .onChange(of: model.path) { new in
             fly(from: shown, to: new)
             shown = new
+            settling = true
+            moves += 1
+            let move = moves
+            DispatchQueue.main.asyncAfter(deadline: .now() + Motion.navDuration + 0.05) {
+                if moves == move { settling = false }
+            }
         }
         .onAppear { shown = model.path }
         .background {
@@ -230,6 +246,14 @@ struct PageStack<Page: View>: View {
         for f in flights where !landed.contains(f.id) && frames[f.to] != nil {
             withAnimation(Motion.flight(f.index)) { _ = landed.insert(f.id) }
         }
+    }
+}
+
+/// A page a pop reveals comes back from 30% left, fading in, as it left.
+private struct Beneath: ViewModifier {
+    let shown: Bool
+    func body(content: Content) -> some View {
+        content.offset(x: shown ? 0 : -0.3 * Metrics.width).opacity(shown ? 1 : 0)
     }
 }
 

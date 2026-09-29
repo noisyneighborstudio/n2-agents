@@ -37,6 +37,8 @@ import SwiftUI
                                              machine: "mac-mini", role: "dispatcher")]
             model.fleet?.tasks.sort { ["t-9d20", "t-kc01", "t-7f3a", "t-0b11"].firstIndex(of: $0.id)! < ["t-9d20", "t-kc01", "t-7f3a", "t-0b11"].firstIndex(of: $1.id)! }
             if state.first == "task" { model.path = [.task(state.count > 1 ? state[1] : "t-kc01")] }
+        case "recent"?:
+            model.recentFilter = RecentFilter(profile: "Default", query: "", oldestFirst: true, searching: true)
         case "work"?:
             model.workDraft = WorkDraft(task: "Run the nightly evals and summarize regressions", workspace: "~/Development/evals",
                                         state: .planned(FleetPlan.parse("1\tSHA256:b\tmac-mini\tclaude\t90s\tno\t0\t1\t2\t87\n2\tSHA256:a\tmacbook-pro\tcodex\t140s\tno\t0\t0\t2\t138\n")))
@@ -119,6 +121,23 @@ import SwiftUI
             print("\(path) \(Int(size.width))x\(Int(size.height))")
         }
         settle(0.6)
+        // Timing: how long a push keeps the main thread from drawing its first frame.
+        if state.first == "time" {
+            let rows = (0..<1705).map { i in
+                "\(i % 2 == 0 ? "Default" : "Work")\t\(i % 3 == 0 ? "codex" : "claude")\ts-\(i)\t\(Date().timeIntervalSince1970 - Double(i) * 600)\t/Users/me/p\(i)\tprompt \(i)\tmain\ttitle \(i)"
+            }
+            model.allSessions = SessionInfo.parse(rows.joined(separator: "\n"))
+            settle(0.5)
+            for route in [PanelRoute.profile("Default"), .provider(profile: "Default", vendor: "codex")] {
+                let start = Date()
+                model.push(route)
+                host.layoutSubtreeIfNeeded()
+                host.display()
+                print(String(format: "push %@: %.1f ms to first frame", "\(route)", Date().timeIntervalSince(start) * 1000))
+                settle(0.8)
+            }
+            return
+        }
         guard let move else {
             settle(1.0)
             draw(args[3])

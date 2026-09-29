@@ -188,7 +188,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
             guard let self else { return }
             self.model.usage = self.model.usage.mapValues { Usage.expire($0, at: Date()) }
         }
-        Timer.scheduledTimer(withTimeInterval: 180, repeats: true) { [weak self] _ in self?.refreshPanel() }
+        Timer.scheduledTimer(withTimeInterval: 180, repeats: true) { [weak self] _ in
+            self?.refreshPanel()
+            // Every session too, so a profile's Recent is there before it's opened.
+            self?.loadAllSessions()
+        }
 
         // Keep claude-as / claude-<profile> on PATH in step with the profile
         // list — real executables, so apps and scripts get them too, and
@@ -254,10 +258,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         // finished panel, not an empty one that grows into place.
         panel.present()
         DispatchQueue.main.async { self.model.presented = true }
-        refreshPanel()
+        // Everything shown was read in advance, on the timers. Opening re-reads
+        // only what has gone stale, so the panel isn't re-rendering under the
+        // pointer while it's being used.
+        if Date().timeIntervalSince(panelReadAt) > Self.openFreshness { refreshPanel() }
         refreshUsage(force: false, onDemand: true)
-        refreshFleet()
+        if Date().timeIntervalSince(model.fleet?.observedAt ?? .distantPast) > Self.openFreshness { refreshFleet() }
     }
+
+    /// How old a read may be and still be shown as is when the panel opens.
+    private static let openFreshness: TimeInterval = 30
+    private var panelReadAt = Date.distantPast
+    /// The last panel read as published: an identical read publishes nothing.
+    private var panelSource: String?
 
     // Anything that opens a window, dialog or terminal closes the panel first:
     // a transient panel would otherwise vanish under it mid-click.
@@ -277,7 +290,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         DispatchQueue.global(qos: .userInitiated).async {
             let data = self.loadPanelData()
             DispatchQueue.main.async {
-                guard generation == self.refreshGeneration, let data else { return }
+                guard generation == self.refreshGeneration, let (data, source) = data else { return }
+                self.panelReadAt = Date()
+                defer { self.refreshUsage(force: false) }
+                guard source != self.panelSource else { return }
+                self.panelSource = source
                 self.model.data = data
                 // A page whose profile or lab is gone closes, with what it led to.
                 if let gone = self.model.path.firstIndex(where: { route in
@@ -290,7 +307,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
                 }) {
                     self.model.path.removeSubrange(gone...)
                 }
-                self.refreshUsage(force: false)
             }
         }
     }
@@ -306,14 +322,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     // next launch can draw from it before the CLI has answered.
     // A failed read returns nil and the panel keeps what it has, rather than
     // replacing real profiles with an empty, first-run-looking one.
-    private func loadPanelData() -> PanelData? {
+    /// The read, and what it was read from: CLI output and the local facts
+    /// (terminals, desktop apps) that buildPanelData adds.
+    private func loadPanelData() -> (PanelData, String)? {
         let porcelain = runCLI(["porcelain"])
         guard porcelain.status == 0 else { return nil }
         let sessions = runCLI(["sessions", "--porcelain", "--limit", "2"])
         let sessionText = sessions.status == 0 ? sessions.output : ""
         defaults.set(porcelain.output, forKey: CacheKey.porcelain)
         defaults.set(sessionText, forKey: CacheKey.sessions)
-        return buildPanelData(porcelain: porcelain.output, sessions: sessionText)
+        let data = buildPanelData(porcelain: porcelain.output, sessions: sessionText)
+        let source = [porcelain.output, sessionText, data.terminals.joined(separator: ","),
+                      data.desktops.sorted().joined(separator: ",")].joined(separator: "\u{1F}")
+        return (data, source)
     }
 
     // Everything else is local and fast enough to run on the main thread.

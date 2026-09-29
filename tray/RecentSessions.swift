@@ -2,14 +2,14 @@ import AppKit
 import SwiftUI
 
 extension PanelModel {
-    /// Sessions to show, newest first: the full list once the window's read
-    /// has landed, the panel's own two before that.
-    func sessions(profile: String? = nil, vendor: String? = nil) -> [SessionInfo] {
-        SessionInfo.filter(allSessions + (data?.sessions ?? []), profile: profile, vendor: vendor)
+    /// Sessions to show, newest first, from the list sorted when it landed.
+    func sessions(profile: String? = nil, vendor: String? = nil, limit: Int = .max) -> [SessionInfo] {
+        Array(recentSessions.lazy.filter { (profile == nil || $0.profile == profile) && (vendor == nil || $0.vendor == vendor) }
+            .prefix(limit))
     }
 
     func session(_ id: String) -> SessionInfo? {
-        (allSessions + (data?.sessions ?? [])).first { $0.id == id }
+        recentSessions.first { $0.id == id }
     }
 }
 
@@ -22,30 +22,151 @@ struct RecentSection: View {
     var profile: String? = nil
     var vendor: String? = nil
     var limit = 2
+    @FocusState private var searchFocused: Bool
+
+    /// Root's Recent narrows by profile, provider and search, and sorts by age;
+    /// a page's Recent is already scoped by the page.
+    private var filterable: Bool { profile == nil && vendor == nil }
 
     var body: some View {
-        let recent = Array(model.sessions(profile: profile, vendor: vendor).prefix(limit))
-        if !recent.isEmpty {
+        let filter = filterable ? model.recentFilter : RecentFilter()
+        let recent = filterable
+            ? filter.apply(model.recentSessions, limit: filter.narrowed ? 5 : limit)
+            : model.sessions(profile: profile, vendor: vendor, limit: limit)
+        // Only the panel's two newest are known until the full list lands:
+        // a scoped or narrowed section holds its place with placeholders meanwhile.
+        let pending = model.allSessions.isEmpty && model.sessionsLoading && (!filterable || filter.narrowed)
+        if !recent.isEmpty || pending || filter.narrowed || filter.searching {
             VStack(spacing: 6) {
-                HStack(spacing: 6) {
-                    Image(systemName: "clock.arrow.circlepath").font(.system(size: 11, weight: .semibold))
-                    Text("Recent", comment: "Section: the newest sessions").font(.system(size: 11.5, weight: .semibold))
-                    Spacer()
-                    Button { actions.showAllSessions() } label: {
-                        Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 10, weight: .semibold))
-                            .frame(width: 22, height: 22).contentShape(Rectangle())
-                    }
-                    .buttonStyle(PressableStyle(radius: 6))
-                    .help(String(localized: "All sessions", comment: "Recent: open the sessions window"))
-                    .accessibilityLabel(String(localized: "All sessions", comment: "Recent: open the sessions window"))
-                }
-                .foregroundStyle(Ink.secondary)
-                .padding(.leading, 4)
+                header(filter)
+                if filterable && (filter.searching || !filter.query.isEmpty) { searchField }
+                if filterable && (filter.profile != nil || filter.vendor != nil || filter.oldestFirst) { chips(filter) }
                 ForEach(recent) { s in
                     RecentCard(session: s, model: model, actions: actions)
                 }
+                if pending {
+                    ForEach(recent.count..<max(recent.count, min(limit, 2)), id: \.self) { _ in SkeletonCard() }
+                } else if recent.isEmpty && filter.narrowed {
+                    Text("No sessions match.", comment: "Recent: nothing matches the filters")
+                        .font(.system(size: 12)).foregroundStyle(Ink.tertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 4).padding(.vertical, 6)
+                }
             }
         }
+    }
+
+    private func header(_ filter: RecentFilter) -> some View {
+        HStack(spacing: 2) {
+            Image(systemName: "clock.arrow.circlepath").font(.system(size: 11, weight: .semibold))
+            Text("Recent", comment: "Section: the newest sessions").font(.system(size: 11.5, weight: .semibold))
+                .padding(.leading, 4)
+            Spacer()
+            if filterable {
+                tool(filter.searching ? "magnifyingglass.circle.fill" : "magnifyingglass",
+                     String(localized: "Search sessions", comment: "Recent: search")) {
+                    model.recentFilter.searching.toggle()
+                    if !model.recentFilter.searching { model.recentFilter.query = "" }
+                }
+                tool(filter.profile != nil || filter.vendor != nil || filter.oldestFirst
+                        ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle",
+                     String(localized: "Filter and sort", comment: "Recent: filter menu")) { popUp(filterMenu(filter)) }
+            }
+            tool("arrow.up.left.and.arrow.down.right", String(localized: "All sessions", comment: "Recent: open the sessions window")) {
+                actions.showAllSessions()
+            }
+        }
+        .foregroundStyle(Ink.secondary)
+        .padding(.leading, 4)
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(Ink.tertiary)
+            TextField(String(localized: "Title, folder, branch, prompt", comment: "Recent: search placeholder"),
+                      text: Binding(get: { model.recentFilter.query }, set: { model.recentFilter.query = $0 }))
+                .textFieldStyle(.plain).font(.system(size: 12.5))
+                .focused($searchFocused)
+                .onAppear { DispatchQueue.main.async { searchFocused = model.recentFilter.searching } }
+            if !model.recentFilter.query.isEmpty {
+                Button { model.recentFilter.query = "" } label: {
+                    Image(systemName: "xmark.circle.fill").font(.system(size: 11)).foregroundStyle(Ink.tertiary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(String(localized: "Clear search", comment: "Recent: clear the search"))
+            }
+        }
+        .padding(.horizontal, 10).frame(height: 28)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Ink.surface))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Ink.cardEdge, lineWidth: 0.5))
+    }
+
+    /// What narrows or orders the list, each removable on its own.
+    private func chips(_ filter: RecentFilter) -> some View {
+        HStack(spacing: 6) {
+            if let p = filter.profile {
+                chip(p, dot: profileColor(p)) { model.recentFilter.profile = nil }
+            }
+            if let v = filter.vendor {
+                chip(model.data?.snapshot.vendor(v)?.label ?? v) { model.recentFilter.vendor = nil }
+            }
+            if filter.oldestFirst {
+                chip(String(localized: "Oldest first", comment: "Recent: sort chip")) { model.recentFilter.oldestFirst = false }
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func chip(_ text: String, dot: Color? = nil, remove: @escaping () -> Void) -> some View {
+        Button(action: remove) {
+            HStack(spacing: 5) {
+                if let dot { Circle().fill(dot).frame(width: 6, height: 6) }
+                Text(verbatim: text)
+                Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).foregroundStyle(Ink.tertiary)
+            }
+            .font(.system(size: 11.5)).foregroundStyle(Ink.secondary)
+            .padding(.horizontal, 8).frame(height: 22)
+            .background(Capsule().fill(Ink.chipFill))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(String(localized: "Remove filter \(text)", comment: "Recent: remove a filter chip"))
+    }
+
+    /// Profile ▸, Provider ▸ and Sort ▸, as the system's own menu.
+    private func filterMenu(_ filter: RecentFilter) -> [NSMenuItem] {
+        let profiles = model.data?.profiles.map(\.name) ?? []
+        let vendors = (model.data?.snapshot.installedVendors ?? []).filter(\.hasSessions)
+        let all = String(localized: "All", comment: "Recent filter: no filter")
+        return [
+            submenu(String(localized: "Profile", comment: "Recent filter"), symbol: "person.crop.circle",
+                    [ClosureItem(all, checked: filter.profile == nil) { model.recentFilter.profile = nil }]
+                    + profiles.map { p in ClosureItem(p, checked: filter.profile == p) { model.recentFilter.profile = p } }),
+            submenu(String(localized: "Provider", comment: "Recent filter"), symbol: "square.stack.3d.up",
+                    [ClosureItem(all, checked: filter.vendor == nil) { model.recentFilter.vendor = nil }]
+                    + vendors.map { v in ClosureItem(v.label, checked: filter.vendor == v.id) { model.recentFilter.vendor = v.id } }),
+            submenu(String(localized: "Sort", comment: "Recent filter"), symbol: "arrow.up.arrow.down", [
+                ClosureItem(String(localized: "Newest First", comment: "Recent sort"), checked: !filter.oldestFirst) {
+                    model.recentFilter.oldestFirst = false
+                },
+                ClosureItem(String(localized: "Oldest First", comment: "Recent sort"), checked: filter.oldestFirst) {
+                    model.recentFilter.oldestFirst = true
+                },
+            ]),
+            .separator(),
+            ClosureItem(String(localized: "Clear Filters", comment: "Recent filter"), symbol: "xmark.circle") {
+                model.recentFilter = RecentFilter()
+            },
+        ]
+    }
+
+    private func tool(_ symbol: String, _ label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 11, weight: .semibold))
+                .frame(width: 24, height: 22).contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle(radius: 6))
+        .help(label)
+        .accessibilityLabel(label)
     }
 }
 
@@ -124,6 +245,20 @@ private struct RecentCard: View {
             actions.copyResumeCommand(session)
         })
         return items
+    }
+}
+
+/// A session card's shape with nothing in it yet.
+private struct SkeletonCard: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Pulse(width: 180, height: 10)
+            Pulse(width: 120, height: 8)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Ink.surface))
+        .accessibilityLabel(String(localized: "Loading sessions", comment: "Recent: placeholder while sessions load"))
     }
 }
 

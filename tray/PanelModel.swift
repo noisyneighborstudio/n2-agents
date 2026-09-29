@@ -441,7 +441,7 @@ enum UpdateStatus: Equatable {
 }
 
 final class PanelModel: ObservableObject {
-    @Published var data: PanelData?
+    @Published var data: PanelData? { didSet { sortSessions() } }
     /// Quota for data.quotaVendors, vendor -> profile -> row. A lab is
     /// missing until its first fetch lands.
     @Published var usage: [String: [String: Usage]] = [:]
@@ -468,7 +468,15 @@ final class PanelModel: ObservableObject {
     /// two newest. Kept between opens, so the window never starts empty.
     @Published var fleet: FleetData?
     @Published var fleetNotificationError: String?
-    @Published var allSessions: [SessionInfo] = []
+    @Published var allSessions: [SessionInfo] = [] { didSet { sortSessions() } }
+    /// Every known session, newest first, each once: sorted when a list
+    /// lands, never on a render.
+    private(set) var recentSessions: [SessionInfo] = []
+    func sortSessions() {
+        recentSessions = SessionInfo.filter(allSessions + (data?.sessions ?? []))
+    }
+    /// How the root's Recent is narrowed and ordered; kept across opens.
+    @Published var recentFilter = RecentFilter()
     /// The Send Work page's draft.
     @Published var workDraft = WorkDraft()
     /// Send Session drafts, by SessionInfo.id.

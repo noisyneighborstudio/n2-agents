@@ -3,8 +3,17 @@ import Foundation
 /// A localized string with automatic grammar agreement ("^[3 profile](inflect:
 /// true)" → "3 profiles"). String(localized:) leaves that markup as text; only
 /// an attributed string resolves it.
+/// Agreement is costly to compute, so each distinct sentence is resolved once.
 func inflected(_ value: String.LocalizationValue, comment: StaticString) -> String {
-    String(AttributedString(localized: value, comment: comment).characters)
+    let key = String(localized: value, comment: comment)
+    if let done = Inflections.done[key] { return done }
+    let resolved = String(AttributedString(localized: value, comment: comment).characters)
+    Inflections.done[key] = resolved
+    return resolved
+}
+
+private enum Inflections {
+    nonisolated(unsafe) static var done: [String: String] = [:]
 }
 
 /// The Active switch's menu, as data: every profile (checked when it's active

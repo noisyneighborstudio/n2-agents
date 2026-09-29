@@ -172,7 +172,12 @@ struct SessionsWindowView: View {
 
     /// Once per render: every part of the window reads the same filtered list.
     private func filtered() -> [SessionInfo] {
-        SessionInfo.filter(model.allSessions, profile: profile, vendor: vendor, query: trimmed)
+        // Already newest first and unique; a keystroke only filters.
+        let tokens = SessionInfo.fold(trimmed).split(separator: " ")
+        return model.recentSessions.filter { s in
+            (profile == nil || s.profile == profile) && (vendor == nil || s.vendor == vendor)
+                && (tokens.isEmpty || s.matches(tokens))
+        }
     }
 
     var body: some View {
