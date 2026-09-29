@@ -52,6 +52,24 @@ Blocked on authorization:
 - Configure has no "Sign out of {Provider}": the CLI has no per-slot sign-out,
   and provider logout is deferred (below). Add the row with that verb.
 
+- Default's Claude login lives in two Keychain entries: `agents run` uses the
+  path-hashed one, plain `claude` (via ~/.claude -> Default slot) the unscoped
+  one. They can hold different accounts; usage measures only the first.
+
+- Muse on one live Mac (three profiles) reads `ok` with no figures: the key
+  endpoint reply has no `subs_usage`. The panel shows "check failed".
+
+- Codex /status shows a monthly credit limit on business plans (one profile:
+  0 of 3,000) that the reader drops; only `hasCredits` survives.
+
+- Audit finding 5 is still open for ranking: `pick_best` scores a missing
+  window as 0 when the other window is measured, and `loop/Slots.swift`
+  `headroom` has the same shape. The live panel's "0% used" rows were real
+  readings (Claude /usage and Codex /status agree), so no display fix here.
+
+- Token renewal runs `claude -p /usage`, which loads the profile's settings and
+  hooks. If a SessionStart hook misbehaves under polling, restrict setting sources.
+
 - Live proof of fleet-gui-session-exec is still owed: after release, dispatch
   a one-word Claude prompt task between two enrolled Macs over ssh and show
   "ok" (it answered "Not logged in" before). Needs two Macs on the new build.
@@ -65,8 +83,8 @@ Blocked on authorization:
   and make the app treat a running account reset as finished.
 
 - test-fleet-auth-manage.py's SIGINT cancel case allows 5s for exit and failed
-  once with three test groups running on one Mac; it passes alone. Runners share
-  each Mac, so capture exit receipts if it recurs in CI.
+  twice (2026-09-28, 2026-09-29) with three test groups running on one Mac; it
+  passes alone. Runners share each Mac, so capture exit receipts if it recurs in CI.
 
 - The inherited full-suite quota fixture fails intermittently (main saw it at
   scripts/test.sh:682 and :685). Suspect: tests/fake-loop-agent.sh decrements

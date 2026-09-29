@@ -536,6 +536,11 @@ fleet_handle_enroll() {
   etag=$(sed -n 's/^tag=//p' "$hepf" | head -1)
   ecodeid=$(sed -n 's/^codeid=//p' "$hepf" | head -1)
   sed -n 's/^host=//p' "$hepf" | fleet_host_line > "$hed/host.pub"
+  # A joiner that names no address is recorded at the one its ssh connection
+  # came from, which is where this Mac can reach it back. With neither there is
+  # nothing to dial, so the request is refused rather than filed unreachable.
+  if [ -z "$address" ]; then address=${SSH_CONNECTION:-}; address=${address%% *}; fi
+  [ -n "$address" ] || { fleet_event reject "enroll no-address"; echo "ERR no-address"; return 1; }
 
   if [ "$(fleet_peer_state "$hefrom")" = approved ]; then
     # Re-enrollment is the operator's recovery path when an approval callback
@@ -1404,7 +1409,11 @@ fleet_enroll_request() {  # transport address user home [code] [hostkey] [port] 
     printf 'key=%s\n' "$(awk '{print $1" "$2}' "$(fleet_key).pub")"
     printf 'machine=%s\n' "$(fleet_self_machine)"
     printf 'transport=%s\n' "$t"
-    printf 'address=%s\n' "${N2_FLEET_SELF_ADDRESS:-$(fleet_self_machine)}"
+    # Where the other Mac dials us back. Unless named, it records the address
+    # this connection arrives from: a machine name is not an address. The exec
+    # carrier never dials one, so its label stays as before.
+    if [ -n "${N2_FLEET_SELF_ADDRESS:-}" ]; then printf 'address=%s\n' "$N2_FLEET_SELF_ADDRESS"
+    elif [ "$t" = exec ]; then printf 'address=%s\n' "$(fleet_self_machine)"; fi
     printf 'user=%s\n' "${N2_FLEET_SELF_USER:-$(id -un)}"
     [ -n "${N2_FLEET_SELF_PORT:-}" ] && printf 'port=%s\n' "$N2_FLEET_SELF_PORT"
     [ "$t" = exec ] && printf 'home=%s\n' "$HOME"

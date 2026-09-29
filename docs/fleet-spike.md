@@ -60,9 +60,11 @@ Use Tailscale DNS names as the SSH addresses. No host verification is disabled.
    `fleet id --host-key`. Transfer the one-use code and public host key through
    the already authenticated management connection.
 3. On the joining Mac, run `fleet pair --to <tailnet-name> --user <user>
-   --code <code> --host-key '<line>'`. Set `N2_FLEET_SELF_ADDRESS` to its tailnet
-   DNS name if its local hostname differs. Codes bound to that exact identity
-   constitute approval; unbound requests remain pending for approval.
+   --code <code> --host-key '<line>'`. The enrolled Mac records the joiner at
+   the address its ssh connection came from (its tailnet IP over Tailscale);
+   set `N2_FLEET_SELF_ADDRESS` to name a different one, such as its tailnet DNS
+   name. Codes bound to that exact identity constitute approval; unbound
+   requests remain pending for approval.
 4. Repeat for the other peer pairs. Check `fleet peers` from every Mac.
 
 Enrollment adds tagged, restricted QA fleet-key entries to `~/.ssh/authorized_keys`.
