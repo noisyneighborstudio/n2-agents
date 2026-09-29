@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // Every animation constant the panel uses. Views name one of these; none
@@ -23,6 +24,9 @@ enum Motion {
     static let fade = Animation.easeInOut(duration: 0.2)
 
     static func nav(reduce: Bool) -> Animation { reduce ? fade : nav }
+
+    /// Reduce Motion, for code that runs outside a view's environment.
+    static var reduced: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 }
 
 extension View {

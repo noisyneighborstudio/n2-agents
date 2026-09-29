@@ -33,6 +33,12 @@ import SwiftUI
         case "pop"?:
             model.path = [.profile(profile)]
             move = { model.pop() }
+        case "switch"?:
+            model.path = [.profile(profile), .provider(profile: profile, vendor: vendor)]
+            move = {
+                guard let v = model.data?.snapshot.vendor(vendor), let s = model.suggestion(for: profile, v) else { return }
+                model.switchTo(s)
+            }
         case "open"?:
             model.path = [.profile(profile)]
             move = { model.push(.provider(profile: profile, vendor: vendor)) }

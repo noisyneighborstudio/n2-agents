@@ -13,6 +13,7 @@ struct ProviderPage: View {
 
     private var usage: Usage? { model.effectiveUsage(profile.name, vendor.id) }
     private var monthly: Bool { vendor.longWindow == "mo" }
+    private var suggestion: Suggestion? { model.suggestion(for: profile.name, vendor) }
 
     var body: some View {
         let (status, resets) = model.status(profile.name, vendor)
@@ -30,8 +31,13 @@ struct ProviderPage: View {
                     ProviderHero(model: model, actions: actions, vendor: vendor, profile: profile.name,
                                  status: status, resets: resets, usage: usage, monthly: monthly)
                         .padding(.top, 12)
+                    if let suggestion {
+                        SuggestionCard(suggestion: suggestion, data: data) { model.switchTo(suggestion) }
+                            .padding(.horizontal, 16).padding(.top, 16)
+                            .staggered(4)
+                    }
                     PrimaryAction(status: status, terminals: data.terminals, actions: actions,
-                                  profile: profile.name, vendor: vendor)
+                                  profile: profile.name, vendor: vendor, suggested: suggestion != nil)
                         .padding(.horizontal, 16).padding(.top, 14)
                         .staggered(5)
                     ActionTiles(data: data, profile: profile, vendor: vendor, actions: actions)
@@ -41,6 +47,9 @@ struct ProviderPage: View {
                         .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 16)
                         .staggered(7)
                 }
+                // A new subject (Switch) is a new page's worth of content: it restaggers.
+                .id("\(profile.name)/\(vendor.id)")
+                .transition(.identity)
             }
         }
     }
@@ -149,6 +158,53 @@ private struct ProviderHero: View {
         default:
             EmptyView()
         }
+    }
+}
+
+// "Cursor has room": a lab with a fresh, ready reading, offered in place of
+// one that's out or low. Switch goes to its page; Start there opens it.
+private struct SuggestionCard: View {
+    let suggestion: Suggestion
+    let data: PanelData
+    let switchTo: () -> Void
+
+    var body: some View {
+        let label = data.snapshot.vendor(suggestion.vendor)?.label ?? suggestion.vendor
+        HStack(spacing: 10) {
+            if let v = data.snapshot.vendor(suggestion.vendor) {
+                LogoTile(vendor: v)
+                    .frame(width: 28, height: 28)
+                    .glyph(.suggestion, profile: suggestion.profile, vendor: v.id)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(verbatim: suggestion.sameProfile
+                     ? String(localized: "\(label) has room", comment: "Suggestion: a lab in this profile with allowance left")
+                     : String(localized: "\(label) in \(suggestion.profile) has room", comment: "Suggestion: a lab in another profile with allowance left"))
+                    .font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                Text(verbatim: sub).font(.system(size: 12)).foregroundStyle(Ink.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            Button(action: switchTo) {
+                Text("Switch", comment: "Suggestion: go to the suggested lab")
+                    .font(.system(size: 12.5, weight: .semibold)).foregroundStyle(.white)
+                    .padding(.horizontal, 12).frame(height: 28)
+                    .background(Capsule().fill(Ink.chip))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(PressableStyle(radius: 14, scale: 0.97))
+        }
+        .padding(.leading, 12).padding(.trailing, 10).padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Ink.Tone.chip.wash(dark: 0.12, light: 0.08)))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Ink.Tone.chip.wash(dark: 0.4, light: 0.3), lineWidth: 0.5))
+        .accessibilityElement(children: .combine)
+    }
+
+    private var sub: String {
+        let left = SlotStatus.percent(suggestion.left)
+        guard let resets = suggestion.resets else {
+            return String(localized: "\(left) left", comment: "Suggestion: allowance left, reset unknown")
+        }
+        return String(localized: "\(left) left · resets \(SlotStatus.day(resets))", comment: "Suggestion: allowance left and reset day")
     }
 }
 

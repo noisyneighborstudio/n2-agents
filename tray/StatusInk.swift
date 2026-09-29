@@ -274,6 +274,78 @@ enum Diagnostics {
     }
 }
 
+/// A lab with room to start in instead of one that's out or low. Only a
+/// fresh, ready reading qualifies — never unmetered, failed, stale, checking
+/// or signed out — so a suggestion never advertises capacity nobody measured.
+struct Suggestion: Equatable {
+    let profile: String
+    let vendor: String
+    let left: Int
+    let resets: Date?
+    /// Found in the same profile, so its card needn't name the profile.
+    let sameProfile: Bool
+
+    struct Slot {
+        let profile: String
+        let vendor: String
+        let status: SlotStatus
+        let resets: Date?
+    }
+
+    /// Same profile first, most left, soonest reset breaking ties; failing
+    /// that, the fleet's next best if it qualifies; failing that, none.
+    static func pick(for profile: String, vendor: String, among slots: [Slot],
+                     nextBest: (profile: String, vendor: String)?) -> Suggestion? {
+        func ready(_ s: Slot) -> Int? { if case .ready(let left) = s.status { return left }; return nil }
+        let candidates = slots.filter { ready($0) != nil && !($0.profile == profile && $0.vendor == vendor) }
+        let mine = candidates.filter { $0.profile == profile }.sorted { a, b in
+            let (la, lb) = (ready(a)!, ready(b)!)
+            if la != lb { return la > lb }
+            return (a.resets ?? .distantFuture) < (b.resets ?? .distantFuture)
+        }
+        if let best = mine.first {
+            return Suggestion(profile: best.profile, vendor: best.vendor, left: ready(best)!, resets: best.resets, sameProfile: true)
+        }
+        if let next = nextBest, let slot = candidates.first(where: { $0.profile == next.profile && $0.vendor == next.vendor }) {
+            return Suggestion(profile: slot.profile, vendor: slot.vendor, left: ready(slot)!, resets: slot.resets, sameProfile: false)
+        }
+        return nil
+    }
+}
+
+extension PanelModel {
+    /// The suggestion for an out or low slot's page, nil for any other state.
+    func suggestion(for profile: String, _ vendor: Vendor) -> Suggestion? {
+        switch status(profile, vendor).status {
+        case .out, .low: break
+        default: return nil
+        }
+        guard let data else { return nil }
+        let slots = data.profiles.flatMap { p in
+            data.slotted(p).map { v -> Suggestion.Slot in
+                let (s, r) = status(p.name, v)
+                return .init(profile: p.name, vendor: v.id, status: s, resets: r)
+            }
+        }
+        var best: (String, String)?
+        if case .slot(let p, let v, _)? = nextBest { best = (p, v) }
+        return Suggestion.pick(for: profile, vendor: vendor.id, among: slots, nextBest: best)
+    }
+
+    /// Switch: go to the suggested lab's page. It opens nothing and binds no
+    /// account — the page's Start does that, as a new session.
+    func switchTo(_ s: Suggestion) {
+        let target = PanelRoute.provider(profile: s.profile, vendor: s.vendor)
+        withAnimation(Motion.nav(reduce: Motion.reduced)) {
+            if s.sameProfile, !path.isEmpty {
+                path[path.count - 1] = target
+            } else {
+                path = [.profile(s.profile), target]
+            }
+        }
+    }
+}
+
 /// One line that says where a profile stands, first match wins: anything
 /// signed out, anything out, anything low, anything unread.
 struct ProfileNote: Equatable {

@@ -119,7 +119,7 @@ struct ConfigurePage: View {
         .frame(minHeight: 50)
         .contentShape(Rectangle())
         if vendor.id == "codex" {
-            Button { withAnimation(Motion.nav(reduce: PanelModel.reduceMotion)) { showOwnership.toggle() } } label: { content }
+            Button { withAnimation(Motion.nav(reduce: Motion.reduced)) { showOwnership.toggle() } } label: { content }
                 .buttonStyle(PressableStyle(radius: 0))
             if showOwnership {
                 AccountOwnershipView(profile: profile.name)

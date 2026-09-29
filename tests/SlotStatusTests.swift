@@ -89,6 +89,38 @@ import Foundation
         check(!facts.contains { $0.key == "Account" || $0.key == "Credits" }, "absent facts are omitted")
         check(!facts.contains { $0.value.lowercased().contains("unknown") }, "nothing says unknown")
         check(Diagnostics.facts(nil, shared: false).isEmpty, "no reading, no facts")
+        // Suggestion: same profile first, most left, soonest reset; only fresh ready readings.
+        let soon = now.addingTimeInterval(3600), later = now.addingTimeInterval(7200)
+        func slot(_ p: String, _ v: String, _ s: SlotStatus, _ r: Date? = nil) -> Suggestion.Slot {
+            .init(profile: p, vendor: v, status: s, resets: r)
+        }
+        let fleet = [slot("A", "codex", .out(back: nil)), slot("A", "claude", .ready(left: 60), later),
+                     slot("A", "cursor", .ready(left: 60), soon), slot("A", "grok", .ready(left: 40)),
+                     slot("B", "claude", .ready(left: 100))]
+        let pick = Suggestion.pick(for: "A", vendor: "codex", among: fleet, nextBest: ("B", "claude"))
+        check(pick?.vendor == "cursor" && pick?.sameProfile == true, "same profile, most left, soonest reset breaks the tie")
+        let unfit = [slot("A", "codex", .out(back: nil)), slot("A", "opencode", .unmetered), slot("A", "muse", .checkFailed),
+                     slot("A", "grok", .signedOut), slot("A", "claude", .checking), slot("A", "cursor", .low(left: 5))]
+        check(Suggestion.pick(for: "A", vendor: "codex", among: unfit, nextBest: nil) == nil,
+              "never unmetered, failed, stale, checking, signed out or low; nil when nothing qualifies")
+        check(Suggestion.pick(for: "A", vendor: "codex", among: unfit + [slot("B", "claude", .ready(left: 90))],
+                              nextBest: ("B", "claude"))?.sameProfile == false, "falls back to the fleet's next best")
+        check(Suggestion.pick(for: "A", vendor: "codex", among: unfit + [slot("B", "opencode", .unmetered)],
+                              nextBest: ("B", "opencode")) == nil, "an unmetered next best is not a suggestion")
+        check(Suggestion.pick(for: "A", vendor: "claude", among: [slot("A", "claude", .ready(left: 90))], nextBest: ("A", "claude")) == nil,
+              "a slot is never its own suggestion")
+
+        // Switch navigates and nothing else: no session starts, no account binding changes.
+        let model = PanelModel()
+        let snapshot = Snapshot(vendors: [codex], profiles: [], active: "A", signedIn: ["A": ["codex": true]])
+        model.data = PanelData(snapshot: snapshot, profiles: [], sessions: [], terminals: [], desktops: [])
+        model.path = [.profile("A"), .provider(profile: "A", vendor: "codex")]
+        model.switchTo(Suggestion(profile: "A", vendor: "cursor", left: 60, resets: nil, sameProfile: true))
+        check(model.path == [.profile("A"), .provider(profile: "A", vendor: "cursor")], "Switch within a profile replaces the page")
+        model.switchTo(Suggestion(profile: "B", vendor: "claude", left: 90, resets: nil, sameProfile: false))
+        check(model.path == [.profile("B"), .provider(profile: "B", vendor: "claude")], "Switch across profiles goes through its profile")
+        check(model.data?.snapshot.active == "A" && model.data?.snapshot.signedIn["A"]?["codex"] == true,
+              "Switch leaves the active profile and every binding as they were")
         print("slot status tests passed")
     }
 }

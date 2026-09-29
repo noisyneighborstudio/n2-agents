@@ -14,20 +14,18 @@ import SwiftUI
 
 extension PanelModel {
     func push(_ route: PanelRoute) {
-        withAnimation(Motion.nav(reduce: Self.reduceMotion)) { path.append(route) }
+        withAnimation(Motion.nav(reduce: Motion.reduced)) { path.append(route) }
     }
 
     func pop() {
         guard !path.isEmpty else { return }
-        withAnimation(Motion.nav(reduce: Self.reduceMotion)) { _ = path.removeLast() }
+        withAnimation(Motion.nav(reduce: Motion.reduced)) { _ = path.removeLast() }
     }
-
-    static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 }
 
 /// Where a lab's tile sits on each page it appears on.
 enum GlyphRole: String {
-    case strip, row, hero
+    case strip, row, hero, suggestion
 }
 
 private struct TileFrames: PreferenceKey {
@@ -40,6 +38,9 @@ private struct TileFrames: PreferenceKey {
 extension EnvironmentValues {
     /// The tiles ("profile/vendor") in flight: their real copies stay hidden.
     @Entry var flyingGlyphs: Set<String> = []
+    /// Only the top page reports where its tiles are: the one beneath is
+    /// offset mid-move, and its frames would send a flight astray.
+    @Entry var pageIsTop = true
 }
 
 private let stackSpace = "page-stack"
@@ -58,13 +59,14 @@ private struct GlyphTile: ViewModifier {
     let role: GlyphRole
     let key: String
     @Environment(\.flyingGlyphs) private var flying
+    @Environment(\.pageIsTop) private var isTop
 
     func body(content: Content) -> some View {
         content
             .opacity(flying.contains(key) ? 0 : 1)
             .background(GeometryReader { g in
                 Color.clear.preference(key: TileFrames.self,
-                                       value: ["\(role.rawValue)|\(key)": g.frame(in: .named(stackSpace))])
+                                       value: isTop ? ["\(role.rawValue)|\(key)": g.frame(in: .named(stackSpace))] : [:])
             })
     }
 }
@@ -94,7 +96,18 @@ struct PageStack<Page: View>: View {
         [(0, nil)] + model.path.enumerated().map { ($0.offset + 1, $0.element) }
     }
 
-    private func id(_ depth: Int, _ route: PanelRoute?) -> String { "\(depth)-\(route.map { "\($0)" } ?? "fleet")" }
+    /// A page keeps its place while its subject changes (Switch to another
+    /// lab stays on the Provider page); a different kind of page is a new one.
+    private func id(_ depth: Int, _ route: PanelRoute?) -> String {
+        let kind: String
+        switch route {
+        case nil: kind = "fleet"
+        case .profile?: kind = "profile"
+        case .provider?: kind = "provider"
+        case .configure?: kind = "configure"
+        }
+        return "\(depth)-\(kind)"
+    }
 
     var body: some View {
         let all = stack
@@ -113,6 +126,7 @@ struct PageStack<Page: View>: View {
                     }
                     .offset(x: isTop || reduceMotion ? 0 : -0.3 * Metrics.width)
                     .opacity(isTop ? 1 : 0)
+                    .environment(\.pageIsTop, isTop)
                     .allowsHitTesting(isTop)
                     .accessibilityHidden(!isTop)
                     .zIndex(Double(item.depth))
@@ -124,7 +138,9 @@ struct PageStack<Page: View>: View {
         .clipped()
         .overlay(alignment: .topLeading) { ghosts }
         .coordinateSpace(name: stackSpace)
-        .onPreferenceChange(TileFrames.self) { frames = $0; land() }
+        // Merged, not replaced: a page that just went beneath stops reporting,
+        // but where its tiles were is where a flight from them starts.
+        .onPreferenceChange(TileFrames.self) { frames.merge($0) { $1 }; land() }
         .environment(\.flyingGlyphs, Set(flights.map(\.id)))
         .onChange(of: model.path) { new in
             fly(from: shown, to: new)
@@ -163,6 +179,9 @@ struct PageStack<Page: View>: View {
             (profile, source, destination, only) = (p, .row, .hero, v)
         } else if old.count == new.count + 1, case .provider(let p, let v)? = old.last {
             (profile, source, destination, only) = (p, .hero, .row, v)
+        } else if case .provider(let p, let v)? = new.last, case .provider? = old.last, new.last != old.last {
+            // Switch: the suggestion card's tile flies to the hero.
+            (profile, source, destination, only) = (p, .suggestion, .hero, v)
         } else {
             flights = []
             return

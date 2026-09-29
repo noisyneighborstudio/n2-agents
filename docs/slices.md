@@ -20,26 +20,19 @@ The menu bar redesign runs first, in the order of `docs/tray-redesign/08-slices.
 Every tray slice's proof includes `scripts/panel-snapshot.sh` renders in light
 and dark, and `tray/build.sh`.
 
-1. **Suggestion and Switch** (`suggestion-and-switch`).
-   Behavior: an out or low slot's page shows "{Provider} has room" per
-   `docs/tray-redesign/03-states.md`; Switch pushes the candidate's page with a glyph flight.
-   Proof: unit tests on the picker (same profile first; never unmetered, failed,
-   stale or signed out; nil when nothing qualifies); Switch never rebinds an account.
-   Scope: panel only; toasts come later.
-
-2. **Toast tier ladder** (`toast-tier-ladder`).
+1. **Toast tier ladder** (`toast-tier-ladder`).
    Behavior: usage toasts announce at 50 / 25 / 10 / out, once per tier
    entered, only the worst on a multi-tier jump, in the new card (one toast).
    Proof: unit tests for enter, repeat, recover, re-enter and jump; the pace
    sentence is omitted when the window duration or reset is missing.
    Scope: a single toast; stacking comes after.
 
-3. **Toast stack** (`toast-stack`).
+2. **Toast stack** (`toast-stack`).
    Behavior: several toasts share one window, fan out on hover with timers
    paused, arrive from the icon with a pulse and ring sweep, and leave into it.
    Proof: frames of a debug "Play the week" injecting the four tiers; Reduce Motion frames.
 
-4. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
+3. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
    Behavior: from the QA app, pair two disposable peers, sync (with a held
    profile shared from Fleet settings), send work, show its result and revoke.
    Proof: packaged acceptance driven through accessibility events with
