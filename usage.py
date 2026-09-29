@@ -109,8 +109,27 @@ def claude_account_identity(profile):
             'organizationHash': hashlib.sha256(organization.encode()).hexdigest()}
 
 
+def claude_renew(cfg):
+    """Have the provider renew its own expired access token on the literal route.
+
+    An idle profile's token expires within hours; the provider renews it on
+    next use. /usage is a local command: no model request, no saved session.
+    N2 never writes the credential store; the caller re-reads it.
+    """
+    with tempfile.TemporaryDirectory(prefix='n2-claude-renew-') as cwd:
+        try:
+            subprocess.run(['claude', '-p', '/usage', '--no-session-persistence', '--strict-mcp-config'],
+                           env=dict(os.environ, CLAUDE_CONFIG_DIR=cfg), cwd=cwd, stdin=subprocess.DEVNULL,
+                           capture_output=True, text=True, timeout=20)
+        except (OSError, subprocess.SubprocessError):
+            pass  # the re-read reports the token still expired
+
+
 def claude(name, cfg):
     c, status = claude_creds(cfg, name == 'Default')
+    if status == 'stale-token' and c and c.get('refreshToken'):
+        claude_renew(cfg)
+        c, status = claude_creds(cfg, name == 'Default')
     if status != 'ok':
         return status, None
     hint = claude_identity(cfg)
@@ -272,8 +291,10 @@ def details(vendor, data):
                 raise ValueError('invalid Claude limits')
             seen = set()
             for limit in limits:
+                # Severity grades the percentage (a live weekly limit at 92% was
+                # "critical"); it is not a different kind of limit.
                 if (not isinstance(limit, dict) or number(limit.get('percent')) is None
-                        or limit.get('severity') != 'normal' or type(limit.get('is_active')) is not bool):
+                        or not isinstance(limit.get('severity'), str) or type(limit.get('is_active')) is not bool):
                     raise ValueError('unrecognized Claude limit')
                 kind, group, scope = limit.get('kind'), limit.get('group'), limit.get('scope')
                 if kind == 'session' and group == 'session' and scope is None:
