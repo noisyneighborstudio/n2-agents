@@ -264,6 +264,52 @@ struct FleetTask: Identifiable, Equatable {
     }
 }
 
+extension FleetTask {
+    /// How a task reads everywhere it's shown: a symbol whose shape carries
+    /// the state on its own, and one word. An unreachable worker is waiting,
+    /// not failed.
+    enum Look: Equatable { case waiting, moving, running, done, doneWithExit, failed, notAnswering, unknown }
+
+    var look: Look {
+        switch state {
+        case .queued: return .waiting
+        case .preparing, .transferring: return .moving
+        case .running: return .running
+        case .done: return succeeded ? .done : .doneWithExit
+        case .failed: return .failed
+        case .disconnected: return .notAnswering
+        case .unknown: return .unknown
+        }
+    }
+
+    var symbol: String {
+        switch look {
+        case .waiting: return "circle.dotted"
+        case .moving: return "arrow.up.circle"
+        case .running: return "play.circle"
+        case .done: return "checkmark.circle.fill"
+        case .doneWithExit: return "exclamationmark.circle"
+        case .failed: return "xmark.circle.fill"
+        case .notAnswering: return "wifi.slash"
+        case .unknown: return "questionmark.circle"
+        }
+    }
+
+    var word: String {
+        switch look {
+        case .waiting: return String(localized: "Queued", comment: "Task state")
+        case .moving: return state == .preparing ? String(localized: "Preparing", comment: "Task state")
+                                                 : String(localized: "Sending workspace", comment: "Task state")
+        case .running: return String(localized: "Running", comment: "Task state")
+        case .done: return String(localized: "Finished", comment: "Task state")
+        case .doneWithExit: return String(localized: "Exited \(rc)", comment: "Task state: finished with a nonzero exit code")
+        case .failed: return String(localized: "Failed", comment: "Task state")
+        case .notAnswering: return String(localized: "Not answering", comment: "Task state: the worker stopped answering")
+        case .unknown: return String(localized: "Unknown state", comment: "Task state")
+        }
+    }
+}
+
 /// One row of `agents fleet task notices`:
 /// `epoch \t kind \t task \t machine \t text`. This feed is the durable half of
 /// a fleet event; the desktop banner is fired beside it and may be missed, so
@@ -382,6 +428,17 @@ struct FleetData: Equatable {
         return loading.contains(read) && !loaded.contains(read) ? "Loading \(read.label)…" : nil
     }
     var activeTasks: [FleetTask] { tasks.filter { !$0.isFinished } }
+    /// When a task last did something, from the activity feed.
+    func lastSeen(_ task: FleetTask) -> Date? { notices.filter { $0.task == task.id }.map(\.at).max() }
+    /// "1 running · 1 failed": what the Tasks header counts.
+    var taskSummary: [(look: FleetTask.Look, count: Int)] {
+        // Not answering has its own banner; an exit code is a finished task's detail.
+        let order: [FleetTask.Look] = [.running, .moving, .waiting, .failed]
+        return order.compactMap { look in
+            let n = tasks.filter { $0.look == look }.count
+            return n > 0 ? (look, n) : nil
+        }
+    }
     var needsAttention: Bool {
         !pending.isEmpty || sync.conflicts > 0 || tasks.contains(where: \.isStranded)
     }
@@ -533,5 +590,64 @@ struct FleetDispatchSpec {
             let fields = line.split(separator: "\t", omittingEmptySubsequences: false)
             return fields.count >= 6 && Int(fields[0]).map { $0 > 0 } == true
         }
+    }
+}
+
+/// `fleet task run --plan`: the ranked machine and agent pairs the dispatcher
+/// would choose between, and what it excluded and why. Shown before Send, so
+/// the estimate is the CLI's, not a second one made here.
+struct FleetPlan: Equatable {
+    struct Candidate: Equatable {
+        let rank: Int
+        let machine: String
+        let agent: String
+        let eta: String
+    }
+
+    let candidates: [Candidate]
+    let excluded: [String]
+
+    static func parse(_ text: String) -> FleetPlan {
+        var candidates: [Candidate] = []
+        var excluded: [String] = []
+        var inExcluded = false
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
+            if line == "excluded:" { inExcluded = true; continue }
+            if inExcluded {
+                if !line.isEmpty { excluded.append(line) }
+                continue
+            }
+            let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard f.count >= 6, let rank = Int(f[0]), rank > 0 else { continue }
+            candidates.append(Candidate(rank: rank, machine: f[2], agent: f[3], eta: f[4]))
+        }
+        return FleetPlan(candidates: candidates, excluded: excluded)
+    }
+}
+
+/// The Send Work page's form and where it got to. It lives on the model, so
+/// closing the panel mid-draft loses nothing.
+struct WorkDraft: Equatable {
+    enum State: Equatable { case editing, planning, planned(FleetPlan), sending, sent(String), failed(String) }
+
+    var shell = false
+    var task = ""
+    var workspace = ""
+    var contextFile = ""
+    var requirements = ""
+    var machine: String?
+    var agent: String?
+    var state: State = .editing
+
+    /// What the CLI would be asked; nil until there is work to describe.
+    var spec: FleetDispatchSpec? {
+        let text = task.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        func path(_ p: String) -> String {
+            let t = p.trimmingCharacters(in: .whitespaces)
+            return t.isEmpty ? "" : (t as NSString).expandingTildeInPath
+        }
+        return FleetDispatchSpec(task: text, prompt: !shell, workspace: path(workspace), contextFile: path(contextFile),
+                                 requirements: requirements.trimmingCharacters(in: .whitespaces), machine: machine, agent: agent)
     }
 }

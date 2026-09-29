@@ -286,13 +286,11 @@ struct SetupView: View {
     }
 }
 
-private struct Monogram: View {
+private struct SetupTile: View {
     let vendor: Vendor?
     var body: some View {
-        Group { if let vendor { LabMark(vendor: vendor) } }
+        Group { if let vendor { LogoTile(vendor: vendor) } }
             .frame(width: 18, height: 18)
-            .background(RoundedRectangle(cornerRadius: 4).fill(Color.primary.opacity(0.12)))
-            .foregroundStyle(Color.primary.opacity(0.82))
     }
 }
 
@@ -346,7 +344,7 @@ private struct PickStep: View {
                 .toggleStyle(.checkbox)
                 .labelsHidden()
                 .disabled(!enabled)
-            Monogram(vendor: v).opacity(v.installed ? 1 : 0.4)
+            SetupTile(vendor: v).opacity(v.installed ? 1 : 0.4)
             Text(v.label).font(.system(size: 12.5)).foregroundStyle(v.installed ? Color.primary : Ink.secondary)
             Spacer()
             Group {
@@ -430,7 +428,7 @@ private struct LabRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             StateIcon(state: state).padding(.top, 2)
-            Monogram(vendor: model.vendor(lab)).padding(.top, 0.5)
+            SetupTile(vendor: model.vendor(lab)).padding(.top, 0.5)
             VStack(alignment: .leading, spacing: 4) {
                 Text(verbatim: label).font(.system(size: 13, weight: .medium))
                 Text(detail).font(.system(size: 11)).foregroundStyle(Ink.secondary)
@@ -559,7 +557,7 @@ private struct ReadyStep: View {
             HStack(spacing: 5) {
                 ForEach(model.finishedLabs, id: \.self) { lab in
                     HStack(spacing: 4) {
-                        Monogram(vendor: model.vendor(lab)).scaleEffect(0.8)
+                        SetupTile(vendor: model.vendor(lab)).scaleEffect(0.8)
                         Text(verbatim: model.vendor(lab)?.label ?? lab).font(.system(size: 10.5))
                     }
                     .padding(.trailing, 6)

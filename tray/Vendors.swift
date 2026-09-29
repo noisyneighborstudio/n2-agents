@@ -162,6 +162,18 @@ struct SessionInfo: Identifiable {
         tokens.allSatisfy { searchKey.contains($0) }
     }
 
+    /// The sessions a page or window shows: one profile, one lab, or both,
+    /// then every search token; newest first, each session once.
+    static func filter(_ all: [SessionInfo], profile: String? = nil, vendor: String? = nil,
+                       query: String = "") -> [SessionInfo] {
+        let tokens = fold(query.trimmingCharacters(in: .whitespaces)).split(separator: " ")
+        var seen = Set<String>()
+        return all.sorted { $0.mtime > $1.mtime }.filter { s in
+            (profile == nil || s.profile == profile) && (vendor == nil || s.vendor == vendor)
+                && (tokens.isEmpty || s.matches(tokens)) && seen.insert(s.id).inserted
+        }
+    }
+
     static func parse(_ text: String) -> [SessionInfo] {
         text.split(separator: "\n").compactMap { line in
             let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
@@ -174,5 +186,28 @@ struct SessionInfo: Identifiable {
                                searchKey: fold([title, f[5], cwd, branch, f[0], f[1]]
                                    .compactMap { $0 }.joined(separator: "\n")))
         }
+    }
+}
+
+/// How the root's Recent is narrowed: one profile, one provider, a search,
+/// and which end of time comes first.
+struct RecentFilter: Equatable {
+    var profile: String?
+    var vendor: String?
+    var query = ""
+    var oldestFirst = false
+    /// The search field is open.
+    var searching = false
+
+    var narrowed: Bool { profile != nil || vendor != nil || !query.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    /// From a list already newest first and unique.
+    func apply(_ newestFirst: [SessionInfo], limit: Int) -> [SessionInfo] {
+        let tokens = SessionInfo.fold(query.trimmingCharacters(in: .whitespaces)).split(separator: " ")
+        let ordered: AnySequence<SessionInfo> = oldestFirst ? AnySequence(newestFirst.reversed()) : AnySequence(newestFirst)
+        return Array(ordered.lazy.filter { s in
+            (profile == nil || s.profile == profile) && (vendor == nil || s.vendor == vendor)
+                && (tokens.isEmpty || s.matches(tokens))
+        }.prefix(limit))
     }
 }

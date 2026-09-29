@@ -18,16 +18,18 @@ struct UsageDetailsView: View {
             }
             if usage.isFresh, usage.note == .restricted {
                 Text("Restricted for new work").foregroundStyle(.red)
+                // An unknown reset or recovery time is left out, never spelled "unknown".
                 ForEach(Array(usage.restrictionReasons.enumerated()), id: \.offset) { index, reason in
                     Text(reason).foregroundStyle(.secondary).lineLimit(2).help(reason)
-                    Text(usage.restrictionResets.indices.contains(index)
-                         ? usage.restrictionResets[index].map { "Restriction resets \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "Restriction reset unknown"
-                         : "Restriction reset unknown")
+                    if usage.restrictionResets.indices.contains(index), let reset = usage.restrictionResets[index] {
+                        Text("Restriction resets \(reset.formatted(date: .abbreviated, time: .shortened))")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if let back = usage.maxedUntil {
+                    Text("All current limits reset by \(back.formatted(date: .abbreviated, time: .shortened))")
                         .foregroundStyle(.secondary)
                 }
-                Text(usage.maxedUntil.map { "All current limits reset by \($0.formatted(date: .abbreviated, time: .shortened))" }
-                     ?? "Recovery time unknown")
-                    .foregroundStyle(.secondary)
             } else if usage.note != .ok && usage.note != .restricted {
                 Text(usage.statusLabel.prefix(1).uppercased() + String(usage.statusLabel.dropFirst())).foregroundStyle(.orange)
                 Text(usage.statusExplanation).foregroundStyle(.secondary)
@@ -44,9 +46,10 @@ struct UsageDetailsView: View {
                         }
                         ProgressView(value: window.percent, total: 100)
                             .tint(window.percent >= 95 ? .orange : .accentColor)
-                        Text(window.resets.map { "Resets \($0.formatted(date: .abbreviated, time: .shortened))" }
-                             ?? "Reset time unknown")
-                            .foregroundStyle(.secondary)
+                        if let resets = window.resets {
+                            Text("Resets \(resets.formatted(date: .abbreviated, time: .shortened))")
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
                 ForEach(Array(usage.creditNotes.enumerated()), id: \.offset) { _, note in
