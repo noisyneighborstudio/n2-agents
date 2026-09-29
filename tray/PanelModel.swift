@@ -376,16 +376,6 @@ struct PanelData {
     }
 }
 
-/// Something whose quota has run low: overall, a profile, or one lab in one.
-/// The id holds across refreshes, so each tier is announced once per dip.
-struct LowQuota: Equatable {
-    let id: String
-    let title: String
-    let left: Int
-
-    var tier: StatusIcon.Tier { StatusIcon.Tier(remaining: left) }
-}
-
 /// A page in the panel: Fleet → Profile → Provider → Configure.
 enum PanelRoute: Hashable {
     case profile(String)
@@ -520,20 +510,6 @@ final class PanelModel: ObservableObject {
         }
     }
 
-    /// Each profile's most constrained measured slot. Independent provider
-    /// allowances cannot be averaged into capacity usable by a single task.
-    private var profilesLeft: [(name: String, left: Int, slots: Int)] {
-        let byProfile = Dictionary(grouping: slotsLeft, by: \.profile)
-        return (data?.profiles ?? []).compactMap { p in
-            guard let measured = byProfile[p.name], let minimum = measured.map(\.left).min() else { return nil }
-            let expected = data?.quotaVendors.filter {
-                p.slots[$0.id] != nil && data?.snapshot.signedIn[p.name]?[$0.id] != false
-            }.count ?? 0
-            guard minimum == 0 || measured.count == expected else { return nil }
-            return (p.name, minimum, measured.count)
-        }
-    }
-
     /// The icon warns about the most constrained measured slot. The next-agent
     /// action separately identifies a slot with capacity. Unknown is not zero.
     var measurementCoverage: (known: Int, expected: Int) {
@@ -567,23 +543,6 @@ final class PanelModel: ObservableObject {
         }
         return remaining.map { "Lowest measured headroom: \($0)%. Open N2 for individual accounts." }
             ?? "Usage unknown. Open N2 for account readings."
-    }
-
-    /// Low is the icon's orange tier or worse: under 50% left.
-    static let lowFrom = StatusIcon.Tier.orange
-
-    /// Everything running low, broadest first: overall, each profile, each
-    /// lab in a profile. A mean over a single slot is that slot again, so
-    /// it's only listed once, as the slot.
-    var lowQuota: [LowQuota] {
-        let profiles = profilesLeft
-        var all: [LowQuota] = []
-        if profiles.count > 1, let overall = remaining {
-            all.append(LowQuota(id: "*", title: "Lowest measured headroom", left: overall))
-        }
-        all += profiles.filter { $0.slots > 1 }.map { LowQuota(id: $0.name, title: $0.name, left: $0.left) }
-        all += slotsLeft.map { LowQuota(id: "\($0.profile)/\($0.vendor.id)", title: "\($0.vendor.label) · \($0.profile)", left: $0.left) }
-        return all.filter { $0.tier >= Self.lowFrom }
     }
 
     /// The CLI's next_best, run over what's already read, so the button names

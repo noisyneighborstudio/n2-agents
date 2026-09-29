@@ -24,7 +24,7 @@ import Foundation
         if case .slot(let name, let vendor, let used) = model.nextBest {
             check(name == "Default" && vendor == "codex" && used == 30, "choose healthy sibling")
         } else { fatalError("healthy sibling must remain selectable") }
-        check(model.lowQuota.contains { $0.id == "Default/claude" && $0.left == 0 },
+        check(model.usageWarnings.warnings.contains { $0.id == "Default|claude" && $0.tier == .out },
               "blocked provider must appear in low-capacity notices")
         model.usage["codex"] = ["Default": restricted]
         check(model.reading(profile, data).state == .allOut(until: nil), "all restrictions mean all out")

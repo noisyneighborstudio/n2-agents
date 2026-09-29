@@ -121,6 +121,41 @@ import Foundation
         check(model.path == [.profile("B"), .provider(profile: "B", vendor: "claude")], "Switch across profiles goes through its profile")
         check(model.data?.snapshot.active == "A" && model.data?.snapshot.signedIn["A"]?["codex"] == true,
               "Switch leaves the active profile and every binding as they were")
+        // Toast ladder: once per tier entered, the worst on a jump, re-announced after recovery.
+        func warn(_ left: Int) -> UsageWarning {
+            let st: SlotStatus = left == 0 ? .out(back: nil) : left < 20 ? .low(left: left) : .ready(left: left)
+            return UsageWarning(profile: "A", vendor: "codex", status: st, tier: UsageTier(st)!, window: nil)
+        }
+        var ladder = ToastLadder()
+        let id: Set<String> = ["A|codex"]
+        check(UsageTier(.ready(left: 51)) == nil && UsageTier(.ready(left: 50)) == .half, "50 left is the first tier")
+        check(UsageTier(.ready(left: 25)) == .quarter && UsageTier(.low(left: 10)) == .low && UsageTier(.low(left: 11)) == .quarter, "tier edges")
+        check([UsageTier(.unmetered), UsageTier(.checkFailed), UsageTier(.signedOut), UsageTier(.checking)].allSatisfy { $0 == nil },
+              "unknown, failed, unmetered and signed-out never warn")
+        check(ladder.update([warn(48)], measured: id).map(\.tier) == [.half], "entering half announces")
+        check(ladder.update([warn(45)], measured: id).isEmpty, "the same tier again is quiet")
+        check(ladder.update([warn(8)], measured: id).map(\.tier) == [.low], "a jump past quarter announces only low")
+        check(ladder.update([warn(8)], measured: []).isEmpty && ladder.update([], measured: []).isEmpty,
+              "no fresh reading keeps the record: not knowing is not recovering")
+        check(ladder.update([warn(8)], measured: id).isEmpty, "back to a known reading at the same tier is quiet")
+        check(ladder.update([], measured: id).isEmpty, "recovering above 50 is quiet")
+        check(ladder.update([warn(40)], measured: id).map(\.tier) == [.half], "dipping again re-announces")
+        check(ladder.update([warn(0)], measured: id).map(\.tier) == [.out], "running out announces out")
+        check(ladder.update([warn(30)], measured: id).isEmpty && ladder.update([warn(20)], measured: id).map(\.tier) == [.quarter],
+              "recovering to a lesser tier lowers the record, so the next dip announces")
+
+        // Pace: needs the window's length and reset; never estimated without them.
+        let week = 7 * 86400.0
+        let midweek = Usage.Window(scope: "seven_day", percent: 75, resets: now.addingTimeInterval(week * 0.4), durationSeconds: week)
+        let pace = Pace(midweek, now: now)
+        check(pace != nil && abs(pace!.elapsed - 0.6) < 0.001 && pace!.used == 0.75, "elapsed and used from the window")
+        check(pace?.lastsToReset == false && pace!.sentence.hasPrefix("You’re ahead of pace"), "75% used at 60% gone is ahead of pace")
+        check(Pace(.init(scope: "seven_day", percent: 30, resets: now.addingTimeInterval(week * 0.4), durationSeconds: week), now: now)?.lastsToReset == true,
+              "30% used at 60% gone lasts to the reset")
+        check(Pace(.init(scope: "seven_day", percent: 75, resets: nil, durationSeconds: week), now: now) == nil, "no reset, no pace")
+        check(Pace(.init(scope: "seven_day", percent: 75, resets: now.addingTimeInterval(3600), durationSeconds: nil), now: now) == nil,
+              "no window length, no pace")
+        check(Pace(nil) == nil, "no window, no pace")
         print("slot status tests passed")
     }
 }

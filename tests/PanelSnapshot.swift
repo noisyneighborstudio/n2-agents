@@ -47,9 +47,15 @@ import SwiftUI
         }
         model.refreshedAt = Date().addingTimeInterval(-120)
         // Pinned top over the glass's tone, as GlassWindow holds it.
-        let root = PanelView(model: model, actions: Fixture.actions)
+        let root = Group {
+            if state.first == "toast", let card = Fixture.toast(state.count > 1 ? state[1] : "half", model) {
+                card.background(RoundedRectangle(cornerRadius: 18).fill(Ink.page)).padding(10)
+            } else {
+                PanelView(model: model, actions: Fixture.actions)
+            }
+        }
             .frame(maxHeight: .infinity, alignment: .top)
-            .background(Ink.page)
+            .background(state.first == "toast" ? Color.gray.opacity(0.25) : Ink.page)
             .environment(\.colorScheme, dark ? .dark : .light)
         let host = NSHostingView(rootView: root)
         host.appearance = app.appearance
@@ -94,6 +100,18 @@ import SwiftUI
 
 enum Fixture {
     static let actions = NoActions()
+
+    /// A toast for one tier, on Work's Claude (the fixture's low slot) at that tier's reading.
+    static func toast(_ tier: String, _ model: PanelModel) -> UsageToastCard? {
+        let used: Double = ["half": 50, "quarter": 75, "low": 90, "out": 100][tier] ?? 50
+        let week = 7 * 86400.0
+        var u = reading(used: used, resets: week * 0.4)
+        if used == 100 { u.windows = [.init(scope: "seven_day", percent: 100, resets: Date().addingTimeInterval(2 * 86400 + 20 * 3600), durationSeconds: week)] }
+        model.usage["claude"]?["Work"] = u
+        guard let v = model.data?.snapshot.vendor("claude"),
+              let w = model.usageWarnings.warnings.first(where: { $0.id == "Work|claude" }) else { return nil }
+        return UsageToastCard(warning: w, vendor: v, model: model, actions: actions, open: {}, close: {})
+    }
 
     static func vendor(_ id: String, _ label: String, usage: String = "oauth", long: String = "7d",
                        desktop: String = "") -> Vendor {

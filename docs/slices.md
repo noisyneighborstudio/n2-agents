@@ -20,19 +20,12 @@ The menu bar redesign runs first, in the order of `docs/tray-redesign/08-slices.
 Every tray slice's proof includes `scripts/panel-snapshot.sh` renders in light
 and dark, and `tray/build.sh`.
 
-1. **Toast tier ladder** (`toast-tier-ladder`).
-   Behavior: usage toasts announce at 50 / 25 / 10 / out, once per tier
-   entered, only the worst on a multi-tier jump, in the new card (one toast).
-   Proof: unit tests for enter, repeat, recover, re-enter and jump; the pace
-   sentence is omitted when the window duration or reset is missing.
-   Scope: a single toast; stacking comes after.
-
-2. **Toast stack** (`toast-stack`).
+1. **Toast stack** (`toast-stack`).
    Behavior: several toasts share one window, fan out on hover with timers
    paused, arrive from the icon with a pulse and ring sweep, and leave into it.
    Proof: frames of a debug "Play the week" injecting the four tiers; Reduce Motion frames.
 
-3. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
+2. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
    Behavior: from the QA app, pair two disposable peers, sync (with a held
    profile shared from Fleet settings), send work, show its result and revoke.
    Proof: packaged acceptance driven through accessibility events with
@@ -45,6 +38,9 @@ Blocked on authorization:
   (readiness: "provider-specific authentication lifecycle").
 
 ## Noticed
+
+- Toasts ship without "Notify when back" (open question Q7) and without a
+  "Recent warnings" list (Q5). Add them once answered.
 
 - Configure has no "Sign out of {Provider}": the CLI has no per-slot sign-out,
   and provider logout is deferred (below). Add the row with that verb.

@@ -77,7 +77,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     private var quotaWatch: AnyCancellable?
     private var menuBarAppearance: NSKeyValueObservation?
     private var drawnIcon: (remaining: Int?, dark: Bool, attention: Bool)?
-    private lazy var quotaToast = QuotaToast(anchor: statusItem.button!) { [weak self] in self?.togglePanel() }
+    // A click opens the panel on that lab's page.
+    private lazy var quotaToast = QuotaToast(anchor: statusItem.button!, model: model, actions: self) { [weak self] warning in
+        guard let self else { return }
+        self.model.path = [.profile(warning.profile), .provider(profile: warning.profile, vendor: warning.vendor)]
+        self.model.closedAt = nil
+        if !self.panel.isShowing { self.togglePanel() }
+    }
     // Built on first use (an open, or the first quota reading): it anchors to
     // the status item's button.
     private lazy var panel: GlassWindow = {
@@ -199,7 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     // The icon is a gauge of quota left, and anything newly low gets a toast.
     private func quotaChanged() {
         drawStatusIcon()
-        quotaToast.update(model.lowQuota, quiet: panel.isShowing)
+        quotaToast.update(quiet: panel.isShowing)
     }
 
     private func drawStatusIcon() {

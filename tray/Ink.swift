@@ -58,6 +58,8 @@ enum Ink {
     /// The glyph on a status badge, which sits on the status ink: dark on the
     /// bright dark-mode inks, white on the deep light-mode ones.
     static let badgeGlyph = Tone(.white, rgb(0x1C1C1E)).color
+    /// The pace bar's "now" tick.
+    static let tick = Tone(rgb(0x1C1C1E), .white).color
     /// A logo tile with nothing to report. Not text.
     static let tile = Tone(NSColor.black.withAlphaComponent(0.05), NSColor.white.withAlphaComponent(0.09)).color
     /// A logo on a neutral tile: a glyph, held to 3:1 (well over it at 85% / 92%).

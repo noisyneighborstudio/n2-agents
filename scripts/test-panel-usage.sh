@@ -6,5 +6,6 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 # Extract only the production profile type; the app delegate starts the real UI.
 awk '/^struct Profile \{/ {copy=1} copy {print} copy && /^}/ {exit}' tray/main.swift > "$work/Profile.swift"
 swiftc "$work/Profile.swift" tray/PanelModel.swift tray/Vendors.swift tray/StatusIcon.swift \
-    tray/FleetModel.swift tray/UpdateChannel.swift tests/PanelUsageTests.swift -o "$work/test-panel-usage"
+    tray/FleetModel.swift tray/UpdateChannel.swift tray/Ink.swift tray/StatusInk.swift tray/UsageTiers.swift \
+    tray/LabMark.swift tray/GlassWindow.swift tray/Motion.swift tests/PanelUsageTests.swift -o "$work/test-panel-usage"
 "$work/test-panel-usage"
