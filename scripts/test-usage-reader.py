@@ -248,6 +248,25 @@ class ReaderTests(unittest.TestCase):
              patch.object(u, 'claude_identity', return_value={'status': 'unavailable'}):
             self.assertEqual(u.claude('Default', '/fixture'), ('fetch-error', None))
 
+    def test_critical_claude_limit_is_a_measurement(self):
+        # Recorded from a signed-in account at 92% weekly use, then scrubbed.
+        data = json.loads((Path(__file__).resolve().parents[1] / 'tests/fixtures/claude-usage-critical.json').read_text())
+        data['_identity'] = {'status': 'verified', 'accountHash': 'a' * 64, 'organizationHash': 'b' * 64}
+        def read():
+            output = io.StringIO()
+            with patch.dict(os.environ, {'N2_USAGE_FORMAT': 'json'}, clear=True), \
+                 patch.object(u.sys, 'argv', ['usage.py', 'claude', 'ExpoIO=/fixture']), \
+                 patch.object(u, 'claude', return_value=('ok', lambda: data)), contextlib.redirect_stdout(output):
+                u.main()
+            return json.loads(output.getvalue())
+        result = read()
+        self.assertEqual(result['status'], 'ok')
+        self.assertEqual(result['identity']['status'], 'verified')
+        self.assertEqual({w['scope']: w['usedPercent'] for w in result['windows']},
+                         {'five_hour': 56, 'seven_day': 92, 'seven_day_fable': 74})
+        data['limits'][1]['severity'] = None
+        self.assertEqual(read()['status'], 'fetch-error')
+
     def test_claude_custom_base_does_not_measure_first_party_allowance(self):
         with patch.dict(os.environ, {'ANTHROPIC_BASE_URL': 'https://gateway.example.invalid'}, clear=True):
             self.assertEqual(u.claude_creds('/fixture', True), (None, 'credential-override'))

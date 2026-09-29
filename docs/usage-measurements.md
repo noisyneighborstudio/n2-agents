@@ -39,7 +39,8 @@ This routing change is covered by synthetic tests; it does not establish live
 Claude account identity on every machine.
 
 Claude's model-specific weekly windows and overage/spend information remain in
-the structured output. Disabled overage alone does not block included allowance.
+the structured output. A limit's `severity` grades its percentage ("critical"
+was seen at 92% weekly use); it is kept out of validation beyond its type. Disabled overage alone does not block included allowance.
 A model-specific window reaching N2's reserve is marked restricted for generic
 selection until a model-aware selector can choose an unaffected model.
 

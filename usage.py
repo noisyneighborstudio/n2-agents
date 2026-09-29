@@ -272,8 +272,10 @@ def details(vendor, data):
                 raise ValueError('invalid Claude limits')
             seen = set()
             for limit in limits:
+                # Severity grades the percentage (a live weekly limit at 92% was
+                # "critical"); it is not a different kind of limit.
                 if (not isinstance(limit, dict) or number(limit.get('percent')) is None
-                        or limit.get('severity') != 'normal' or type(limit.get('is_active')) is not bool):
+                        or not isinstance(limit.get('severity'), str) or type(limit.get('is_active')) is not bool):
                     raise ValueError('unrecognized Claude limit')
                 kind, group, scope = limit.get('kind'), limit.get('group'), limit.get('scope')
                 if kind == 'session' and group == 'session' and scope is None:
