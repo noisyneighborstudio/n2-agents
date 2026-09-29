@@ -16,17 +16,7 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
 
 ## Queue
 
-1. **Sync leaves tool-managed files alone** (`fleet-sync-managed-paths`).
-   Behavior: sync skips the skill trees each Mac's tools install themselves:
-   Claude's account skills (`skills/synced/`) and Codex's bundled
-   `skills/.system/`. Every other skill, `settings.local.json` and `rules/`
-   still sync.
-   Proof: a sync test whose peers hold differing copies of each path reports
-   no push, pull or conflict for them while a user skill still replicates; the
-   M5 to mini dry run lists none of them. Removing the rule turns the test red.
-   Scope: the path rule only; speed is the next slice.
-
-2. **Sync passes fast enough to run** (`fleet-sync-speed`).
+1. **Sync passes fast enough to run** (`fleet-sync-speed`).
    Behavior: a dry run between two Macs over 4,300 resources finishes in
    minutes, not 18 (measured M5 to mini, 2026-09-29). Starts by measuring where
    the time goes; the fix batches whatever is per-resource.
@@ -34,7 +24,7 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
    bounded number of ssh round trips; the M5 to mini dry run is timed again.
    Scope: speed only; results must be identical to the current pass.
 
-3. **Resolve a conflict with a merged file** (`fleet-sync-merged-resolution`).
+2. **Resolve a conflict with a merged file** (`fleet-sync-merged-resolution`).
    Behavior: `fleet sync resolve <id> --merged <file>` records a third outcome
    beside --local and --remote. The merged content supersedes both versions
    and reaches both Macs without conflicting again.
@@ -44,7 +34,7 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
    `unslop/SKILL.md`, grok `config.toml`) this way, content from both kept.
    Scope: operator-supplied merges only.
 
-4. **Merge a conflict with an agent, reviewed by another** (`fleet-sync-agent-merge`).
+3. **Merge a conflict with an agent, reviewed by another** (`fleet-sync-agent-merge`).
    Behavior: `fleet sync merge <id>` asks an agent with measured headroom for a
    merged version, then an agent from a different lab reviews it (Claude
    never reviews Claude's merge; a harness counts by its model's lab, and an
@@ -61,7 +51,7 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
    the fake agent's recorded input is empty.
    Scope: CLI only; the panel button is the next slice.
 
-5. **"Merge with Agent" in the panel** (`fleet-sync-agent-merge-ui`).
+4. **"Merge with Agent" in the panel** (`fleet-sync-agent-merge-ui`).
    Behavior: each text conflict row offers Merge with Agent beside the two
    existing choices; a sheet shows the diff, the review and Accept or Discard.
    Only that row's button disables while agents work; it is disabled with a
@@ -69,7 +59,7 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
    Proof: a Swift test holds the merge read while the rest of the panel renders
    (the AGENTS.md UI rule); accept and discard record the right outcome.
 
-6. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
+5. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
    Behavior: from the QA app, pair two disposable peers (Settings › Fleet),
    sync (with a held profile shared from Fleet settings), send work (the Send
    Work page), show its result (the Task page) and revoke (the Machine page).
@@ -78,7 +68,7 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
    per step fails.
    Scope: disposable peers only; no live installation or real machines.
 
-7. **Honor Claude usage rejections** (`usage-claude-backoff`).
+6. **Honor Claude usage rejections** (`usage-claude-backoff`).
    Behavior: after a 429 from Claude usage, no reader asks that account again
    until its `Retry-After` has passed; the row stays `rate-limited` with the
    last reading and its time. Evidence: `docs/audits/claude-usage-rate-limit-spike.md`.
@@ -87,7 +77,7 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
    a read after the window calls again. Break the gate once; the test fails.
    Scope: Claude only, one Mac. Codex and peer sharing excluded.
 
-8. **One Claude usage call per account at a time** (`usage-claude-single-flight`).
+7. **One Claude usage call per account at a time** (`usage-claude-single-flight`).
    Behavior: concurrent readers (tray, loop, dispatch) of one account share
    one provider call, and a reading under 60 s old is served from the journal.
    Proof: two concurrent `usage.py` runs against a held fake provider make one
@@ -96,7 +86,7 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
    Scope: Claude only, one Mac. The 60 s figure is policy, not a measured
    provider window.
 
-9. **Offer skill updates across the fleet** (`fleet-skill-updates`), later.
+8. **Offer skill updates across the fleet** (`fleet-skill-updates`), later.
    Behavior: N2 notices when an installed skill has a newer version at its
    source and offers one action that updates it on every enrolled Mac; the
    Fleet panel shows which Macs are behind.

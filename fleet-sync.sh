@@ -275,6 +275,10 @@ sync_classify() {  # sync_classify <vendor> <relpath>
   fi
   [ "$1" = codex ] && [ "$2" = .n2-owner.json ] && { echo settings; return 0; }
   sync_excluded_relpath "$2" && return 0
+  # Skill trees the vendor's own tool installs on every Mac: Codex restores its
+  # bundled skills for its build, and Claude fetches account skills with its
+  # own manifest. Replicating either fights that tool and conflicts on its state.
+  case $1:$2 in codex:skills/.system/*|claude:skills/synced/*) return 0 ;; esac
   case $2 in
     skills/*) echo skills; return 0 ;;
   esac
