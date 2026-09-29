@@ -340,6 +340,11 @@ private struct FleetFooter: View {
             icon("slider.horizontal.3", model.updateStatus == .available
                  ? String(localized: "Settings · update available", comment: "Footer: settings, with an update waiting")
                  : String(localized: "Settings", comment: "Footer: open settings")) { actions.showSettings() }
+                .contextMenu {
+                    if UpdateChannel.isQABuild {
+                        Button("Play the Week (Debug)") { actions.playUsageWeek() }
+                    }
+                }
                 .overlay(alignment: .topTrailing) {
                     // An update waiting: a dot on Settings, where it installs.
                     if model.updateStatus == .available {

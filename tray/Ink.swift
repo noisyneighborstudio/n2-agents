@@ -58,6 +58,16 @@ enum Ink {
     /// The glyph on a status badge, which sits on the status ink: dark on the
     /// bright dark-mode inks, white on the deep light-mode ones.
     static let badgeGlyph = Tone(.white, rgb(0x1C1C1E)).color
+    /// A toast card's edge and shadow.
+    static let toastEdge = Tone(NSColor.black.withAlphaComponent(0.10), NSColor.white.withAlphaComponent(0.16)).color
+    static let toastShadow = Tone(NSColor.black.withAlphaComponent(0.16), NSColor.black.withAlphaComponent(0.45)).color
+    /// The out toast's breathing edge, dim and bright: 1 pt in dark, and a
+    /// further 0.5 pt in light where there is no glow.
+    static let outEdge = (dim: Tone.amber.wash(dark: 0.35, light: 0.45), bright: Tone.amber.wash(dark: 0.6, light: 0.85))
+    static let outEdgeLight = (dim: Tone(Tone.amber.light, .clear).wash(dark: 0, light: 0.45),
+                               bright: Tone(Tone.amber.light, .clear).wash(dark: 0, light: 0.85))
+    static let outGlow = (dim: Tone(.clear, Tone.amber.dark).wash(dark: 0.10, light: 0),
+                          bright: Tone(.clear, Tone.amber.dark).wash(dark: 0.24, light: 0))
     /// The pace bar's "now" tick.
     static let tick = Tone(rgb(0x1C1C1E), .white).color
     /// A logo tile with nothing to report. Not text.

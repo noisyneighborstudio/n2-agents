@@ -16,16 +16,7 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
 
 ## Queue
 
-The menu bar redesign runs first, in the order of `docs/tray-redesign/08-slices.md`.
-Every tray slice's proof includes `scripts/panel-snapshot.sh` renders in light
-and dark, and `tray/build.sh`.
-
-1. **Toast stack** (`toast-stack`).
-   Behavior: several toasts share one window, fan out on hover with timers
-   paused, arrive from the icon with a pulse and ring sweep, and leave into it.
-   Proof: frames of a debug "Play the week" injecting the four tiers; Reduce Motion frames.
-
-2. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
+1. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
    Behavior: from the QA app, pair two disposable peers, sync (with a held
    profile shared from Fleet settings), send work, show its result and revoke.
    Proof: packaged acceptance driven through accessibility events with
@@ -33,11 +24,26 @@ and dark, and `tray/build.sh`.
    per step fails.
    Scope: disposable peers only; no live installation or real machines.
 
+Blocked on a decision:
+- `remote-machines` (docs/tray-redesign/08-slices.md S9): peer machines as Fleet
+  sections needs a CLI source for profiles held on peers (open question Q1).
+
 Blocked on authorization:
 - Per-provider sign-in lifecycle evidence needs live provider accounts
   (readiness: "provider-specific authentication lifecycle").
 
 ## Noticed
+
+- The menu bar icon still gauges the lowest measured slot across every
+  profile; the redesign wants the worst slot of the active profile in the
+  status inks (docs/tray-redesign/03-states.md). No slice owns it yet.
+
+- Arrow keys don't yet move between Fleet cards or Profile rows (Tab and
+  Return do). docs/tray-redesign/02-screens.md asks for it.
+
+- Open next best can still pick an unmetered slot when nothing metered has
+  room: it mirrors the CLI's rotation. The redesign's acceptance list says it
+  never should; that is a CLI policy change first.
 
 - Toasts ship without "Notify when back" (open question Q7) and without a
   "Recent warnings" list (Q5). Add them once answered.

@@ -19,6 +19,9 @@ enum Motion {
         .timingCurve(0.22, 1, 0.36, 1, duration: 0.42).delay(0.14 + Double(i) * 0.04)
     }
     static let press = Animation.easeOut(duration: 0.12)
+    /// A toast arriving overshoots a little; leaving, it takes the nav curve.
+    static func toastIn(reduce: Bool) -> Animation { reduce ? fade : .spring(response: 0.5, dampingFraction: 0.72) }
+    static func toastOut(reduce: Bool) -> Animation { reduce ? fade : .timingCurve(0.32, 0.72, 0, 1, duration: 0.42) }
     static let hover = Animation.easeOut(duration: 0.15)
     /// Reduce Motion's stand-in for every move: opacity only.
     static let fade = Animation.easeInOut(duration: 0.2)

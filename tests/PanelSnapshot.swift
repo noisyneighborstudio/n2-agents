@@ -47,15 +47,24 @@ import SwiftUI
         }
         model.refreshedAt = Date().addingTimeInterval(-120)
         // Pinned top over the glass's tone, as GlassWindow holds it.
+        let feed = ToastFeed()
+        if ["stack", "fan", "arrive"].contains(state.first ?? "") {
+            let tiers = Fixture.tiers(model)
+            for w in tiers.prefix(state.first == "arrive" ? 3 : 4) { feed.add(w, from: 100) }
+            if state.first == "fan" { feed.hover(true) }
+            if state.first == "arrive" { move = { feed.add(tiers[3], from: 10) } }
+        }
         let root = Group {
-            if state.first == "toast", let card = Fixture.toast(state.count > 1 ? state[1] : "half", model) {
+            if ["stack", "fan", "arrive"].contains(state.first ?? "") {
+                ToastStack(feed: feed, model: model, actions: Fixture.actions, open: { _ in }).padding(.top, 10)
+            } else if state.first == "toast", let card = Fixture.toast(state.count > 1 ? state[1] : "half", model) {
                 card.background(RoundedRectangle(cornerRadius: 18).fill(Ink.page)).padding(10)
             } else {
                 PanelView(model: model, actions: Fixture.actions)
             }
         }
             .frame(maxHeight: .infinity, alignment: .top)
-            .background(state.first == "toast" ? Color.gray.opacity(0.25) : Ink.page)
+            .background(["toast", "stack", "fan", "arrive"].contains(state.first ?? "") ? Color.gray.opacity(0.25) : Ink.page)
             .environment(\.colorScheme, dark ? .dark : .light)
         let host = NSHostingView(rootView: root)
         host.appearance = app.appearance
@@ -70,7 +79,7 @@ import SwiftUI
             host.layoutSubtreeIfNeeded()
         }
         func draw(_ path: String, height: CGFloat? = nil) {
-            let size = NSSize(width: 360, height: height ?? host.fittingSize.height)
+            let size = NSSize(width: max(360, host.fittingSize.width), height: height ?? host.fittingSize.height)
             window.setContentSize(size)
             host.frame = NSRect(origin: .zero, size: size)
             host.layoutSubtreeIfNeeded()
@@ -100,6 +109,16 @@ import SwiftUI
 
 enum Fixture {
     static let actions = NoActions()
+
+    /// Work's Claude through the four tiers, as Play the Week sends them.
+    static func tiers(_ model: PanelModel) -> [UsageWarning] {
+        let week = 7 * 86400.0
+        return [50.0, 75, 90, 100].map { used in
+            let window = Usage.Window(scope: "seven_day", percent: used, resets: Date().addingTimeInterval(week * 0.4), durationSeconds: week)
+            let status: SlotStatus = used >= 100 ? .out(back: window.resets) : used > 80 ? .low(left: Int(100 - used)) : .ready(left: Int(100 - used))
+            return UsageWarning(profile: "Work", vendor: "claude", status: status, tier: UsageTier(status)!, window: window)
+        }
+    }
 
     /// A toast for one tier, on Work's Claude (the fixture's low slot) at that tier's reading.
     static func toast(_ tier: String, _ model: PanelModel) -> UsageToastCard? {
@@ -202,6 +221,7 @@ final class NoActions: PanelActions {
     func deleteProfile(_ name: String) {}
     func newProfile() {}
     func retryUsage() {}
+    func playUsageWeek() {}
     func setPreferredTerminal(_ name: String) {}
     func setUpdateChannel(_ channel: UpdateChannel) {}
     var panelShortcut: String? { nil }

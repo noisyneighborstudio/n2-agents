@@ -76,14 +76,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     private var statusIcon: StatusIcon?
     private var quotaWatch: AnyCancellable?
     private var menuBarAppearance: NSKeyValueObservation?
-    private var drawnIcon: (remaining: Int?, dark: Bool, attention: Bool)?
+    private var drawnIcon: (remaining: Int?, dark: Bool, attention: Bool, dot: UsageTier?)?
+    /// The worst toast dismissed since the panel was last opened, from the quarter tier.
+    private var iconDot: UsageTier?
     // A click opens the panel on that lab's page.
-    private lazy var quotaToast = QuotaToast(anchor: statusItem.button!, model: model, actions: self) { [weak self] warning in
+    private lazy var quotaToast = QuotaToast(anchor: statusItem.button!, model: model, actions: self, open: { [weak self] warning in
         guard let self else { return }
         self.model.path = [.profile(warning.profile), .provider(profile: warning.profile, vendor: warning.vendor)]
         self.model.closedAt = nil
         if !self.panel.isShowing { self.togglePanel() }
-    }
+    }, dismissed: { [weak self] warning in
+        guard let self, warning.tier >= .quarter, !self.panel.isShowing else { return }
+        self.iconDot = max(self.iconDot ?? warning.tier, warning.tier)
+        self.drawStatusIcon()
+    })
     // Built on first use (an open, or the first quota reading): it anchors to
     // the status item's button.
     private lazy var panel: GlassWindow = {
@@ -212,14 +218,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         guard let icon = statusIcon, let button = statusItem.button else { return }
         let match = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua, .vibrantLight, .vibrantDark])
         let drawn = (remaining: model.remaining, dark: match == .darkAqua || match == .vibrantDark,
-                     attention: model.needsAttention)
+                     attention: model.needsAttention, dot: iconDot)
         // Setting the image re-resolves the button's appearance, which fires
         // the observer that calls this: redraw only on a real change, or the
         // two feed each other forever.
         statusItem.button?.toolTip = model.capacitySummary
         if let last = drawnIcon, last == drawn { return }
         drawnIcon = drawn
-        let image = icon.image(remaining: drawn.remaining, dark: drawn.dark, attention: drawn.attention)
+        let image = icon.image(remaining: drawn.remaining, dark: drawn.dark, attention: drawn.attention,
+                               dot: drawn.dot.map { drawn.dark ? $0.tone.dark : $0.tone.light })
         button.image = UpdateChannel.isQABuild ? StatusIcon.taggedQA(image) : image
     }
 
@@ -231,6 +238,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
             return
         }
         quotaToast.dismiss()
+        iconDot = nil
+        drawStatusIcon()
         var still = Transaction()
         still.disablesAnimations = true
         withTransaction(still) {
@@ -412,6 +421,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
             }
             loginsChanged()
         }
+    }
+
+    func playUsageWeek() {
+        dismissPanel()
+        quotaToast.playWeek()
     }
 
     func retryUsage() {

@@ -8,18 +8,28 @@ import SwiftUI
 final class QuotaToast {
     private let anchor: NSStatusBarButton
     private let model: PanelModel
-    private weak var actions: PanelActions?
-    private let open: (UsageWarning) -> Void
-    private var window: GlassWindow?
+    private let feed = ToastFeed()
     private var ladder = ToastLadder()
-    private var expiry: DispatchWorkItem?
+    private var window: GlassWindow?
+    /// The remaining allowance last announced per slot: the next ring sweeps from it.
+    private var lastLeft: [String: Int] = [:]
 
     init(anchor: NSStatusBarButton, model: PanelModel, actions: PanelActions,
-         open: @escaping (UsageWarning) -> Void) {
+         open: @escaping (UsageWarning) -> Void, dismissed: @escaping (UsageWarning) -> Void) {
         self.anchor = anchor
         self.model = model
-        self.actions = actions
-        self.open = open
+        let stack = ToastStack(feed: feed, model: model, actions: actions, open: open)
+        let window = GlassWindow(rootView: stack, behavior: .toast(anchor: anchor), clear: true)
+        self.window = window
+        feed.onDismiss = { [weak self, weak window] item in
+            dismissed(item.warning)
+            if self?.feed.items.isEmpty == true {
+                // The last card leaves into the icon before the window goes.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                    if self?.feed.items.isEmpty == true { window?.dismiss() }
+                }
+            }
+        }
     }
 
     /// Takes every slot at a tier now and announces what has gone a tier
@@ -28,36 +38,99 @@ final class QuotaToast {
     func update(quiet: Bool) {
         let (warnings, measured) = model.usageWarnings
         let fresh = ladder.update(warnings, measured: measured)
-        guard !quiet, let worst = fresh.max(by: { $0.tier < $1.tier }) else { return }
-        show(worst)
+        for w in fresh {
+            if !quiet { show(w) }
+            lastLeft[w.id] = w.left
+        }
     }
 
     func dismiss() {
-        expiry?.cancel()
-        window?.dismiss()
+        feed.dismissAll()
+    }
+
+    /// Debug (QA builds): one slot through the four tiers, 2.4 s apart.
+    func playWeek() {
+        guard let data = model.data, let p = data.profiles.first(where: { $0.name == data.snapshot.active }) ?? data.profiles.first,
+              let v = data.slotted(p).first(where: \.hasUsageAPI) else { return }
+        let week = 7 * 86400.0
+        for (i, used) in [50.0, 75, 90, 100].enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3 + Double(i) * 2.4) { [weak self] in
+                let window = Usage.Window(scope: "seven_day", percent: used, resets: Date().addingTimeInterval(week * 0.4),
+                                          durationSeconds: week)
+                let status: SlotStatus = used >= 100 ? .out(back: window.resets) : used > 80 ? .low(left: Int(100 - used)) : .ready(left: Int(100 - used))
+                guard let tier = UsageTier(status) else { return }
+                self?.show(UsageWarning(profile: p.name, vendor: v.id, status: status, tier: tier, window: window))
+            }
+        }
     }
 
     private func show(_ warning: UsageWarning) {
-        guard let actions, let data = model.data, let vendor = data.snapshot.vendor(warning.vendor) else { return }
-        expiry?.cancel()
-        window?.orderOut(nil)
-        let card = UsageToastCard(warning: warning, vendor: vendor, model: model, actions: actions,
-                                  open: { [weak self] in
-                                      self?.dismiss()
-                                      self?.open(warning)
-                                  },
-                                  close: { [weak self] in self?.dismiss() })
-        let window = GlassWindow(rootView: card, behavior: .toast(anchor: anchor), cornerRadius: 18)
-        self.window = window
-        window.present()
+        guard let window else { return }
+        feed.add(warning, from: lastLeft[warning.id] ?? 100)
+        lastLeft[warning.id] = warning.left
+        if !window.isShowing { window.present() }
+        IconPulse.fire(on: anchor, tone: warning.tier.tone, twice: warning.tier == .out)
+        let label = model.data?.snapshot.vendor(warning.vendor)?.label ?? warning.vendor
         NSAccessibility.post(element: window, notification: .announcementRequested, userInfo: [
-            .announcement: card.announcement,
+            .announcement: model.toastCopy(warning, label: label).announcement,
             .priority: NSAccessibilityPriorityLevel.high.rawValue,
         ])
-        if let seconds = warning.tier.autoDismiss {
-            let expiry = DispatchWorkItem { [weak self] in self?.dismiss() }
-            self.expiry = expiry
-            DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: expiry)
+    }
+}
+
+/// A toast's words: the title, with the profile when more than one holds the
+/// lab, and one sentence or none — the pace needs the window's length and
+/// reset, and a return time needs to be known.
+struct ToastCopy {
+    let title: String
+    let sub: String?
+
+    var announcement: String { [title, sub].compactMap { $0 }.joined(separator: ". ") }
+
+    init(_ warning: UsageWarning, label: String, shared: Bool, now: Date = Date()) {
+        let lab = shared ? String(localized: "\(label) in \(warning.profile)", comment: "Toast: a lab in a named profile") : label
+        switch warning.tier {
+        case .half: title = String(localized: "\(lab) · half left", comment: "Toast title: 50% tier")
+        case .quarter: title = String(localized: "\(lab) · 25% left", comment: "Toast title: 25% tier")
+        case .low: title = String(localized: "\(lab) · 10% left", comment: "Toast title: 10% tier")
+        case .out: title = String(localized: "\(lab) is out", comment: "Toast title: out of allowance")
+        }
+        let pace = Pace(warning.window, now: now)
+        let resets = warning.window?.resets.map {
+            String(localized: "Resets \(clockTime($0))", comment: "Toast: when the window resets")
+        }
+        switch warning.tier {
+        case .half, .quarter:
+            sub = pace?.sentence ?? resets
+        case .low:
+            sub = pace?.workLeft(now: now) ?? resets
+        case .out:
+            if case .out(let back?) = warning.status {
+                let countdown = Duration.seconds(max(0, back.timeIntervalSince(now)))
+                    .formatted(.units(allowed: [.days, .hours, .minutes], width: .narrow, maximumUnitCount: 2))
+                sub = String(localized: "Back \(SlotStatus.day(back)) at \(back.formatted(.dateTime.hour().minute())) · in \(countdown)",
+                             comment: "Toast: the day and time allowance returns, and how long until then")
+            } else {
+                sub = nil
+            }
+        }
+    }
+}
+
+extension PanelModel {
+    func toastCopy(_ warning: UsageWarning, label: String) -> ToastCopy {
+        let holders = data?.profiles.filter { $0.slots[warning.vendor] != nil }.count ?? 0
+        return ToastCopy(warning, label: label, shared: holders > 1)
+    }
+}
+
+extension UsageTier {
+    /// The tier's accent, as a tone for surfaces outside SwiftUI (the icon pulse).
+    var tone: Ink.Tone {
+        switch self {
+        case .half: return .info
+        case .quarter: return .yellow
+        case .low, .out: return .amber
         }
     }
 }
@@ -67,10 +140,15 @@ struct UsageToastCard: View {
     let vendor: Vendor
     @ObservedObject var model: PanelModel
     let actions: PanelActions
+    /// The remaining allowance announced before this: the ring sweeps from it.
+    var from: Int = 100
+    /// A toast that leaves on its own drains a bar over its time.
+    var drain: DrainClock? = nil
     let open: () -> Void
     let close: () -> Void
     @State private var hovering = false
-    @State private var drained = false
+    @State private var swept: CGFloat?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var accent: Color {
         switch warning.tier {
@@ -80,42 +158,9 @@ struct UsageToastCard: View {
         }
     }
 
-    /// "Codex · 25% left", with the profile when more than one holds the lab.
-    var title: String {
-        let shared = (model.data?.profiles.filter { $0.slots[warning.vendor] != nil }.count ?? 0) > 1
-        let lab = shared ? String(localized: "\(vendor.label) in \(warning.profile)", comment: "Toast: a lab in a named profile")
-                         : vendor.label
-        switch warning.tier {
-        case .half: return String(localized: "\(lab) · half left", comment: "Toast title: 50% tier")
-        case .quarter: return String(localized: "\(lab) · 25% left", comment: "Toast title: 25% tier")
-        case .low: return String(localized: "\(lab) · 10% left", comment: "Toast title: 10% tier")
-        case .out: return String(localized: "\(lab) is out", comment: "Toast title: out of allowance")
-        }
-    }
-
-    /// One sentence, or none: the pace needs the window's length and reset,
-    /// and a return time needs to be known.
-    var sub: String? {
-        let pace = Pace(warning.window)
-        switch warning.tier {
-        case .half, .quarter:
-            return pace?.sentence ?? warning.window?.resets.map {
-                String(localized: "Resets \(clockTime($0))", comment: "Toast: when the window resets")
-            }
-        case .low:
-            return pace?.workLeft() ?? warning.window?.resets.map {
-                String(localized: "Resets \(clockTime($0))", comment: "Toast: when the window resets")
-            }
-        case .out:
-            guard case .out(let back?) = warning.status else { return nil }
-            let countdown = Duration.seconds(max(0, back.timeIntervalSinceNow))
-                .formatted(.units(allowed: [.days, .hours, .minutes], width: .narrow, maximumUnitCount: 2))
-            return String(localized: "Back \(SlotStatus.day(back)) at \(back.formatted(.dateTime.hour().minute())) · in \(countdown)",
-                          comment: "Toast: the day and time allowance returns, and how long until then")
-        }
-    }
-
-    var announcement: String { [title, sub].compactMap { $0 }.joined(separator: ". ") }
+    private var copy: ToastCopy { model.toastCopy(warning, label: vendor.label) }
+    private var title: String { copy.title }
+    private var sub: String? { copy.sub }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -123,12 +168,18 @@ struct UsageToastCard: View {
                 ZStack {
                     StatusRing(status: warning.status, diameter: 44, stroke: 4, glyph: false)
                         .overlay {
-                            // The tier's accent, over the status arc.
-                            if warning.left > 0 {
-                                Circle().inset(by: 2).trim(from: 0, to: CGFloat(warning.left) / 100)
+                            // The tier's accent, swept from what was left last time to now.
+                            let to = swept ?? CGFloat(warning.left) / 100
+                            if to > 0 {
+                                Circle().inset(by: 2).trim(from: 0, to: to)
                                     .stroke(accent, style: StrokeStyle(lineWidth: 4, lineCap: .round))
                                     .rotationEffect(.degrees(-90))
                             }
+                        }
+                        .onAppear {
+                            guard !reduceMotion, from != warning.left else { return }
+                            swept = CGFloat(from) / 100
+                            withAnimation(Motion.reveal.delay(-0.02)) { swept = CGFloat(warning.left) / 100 }
                         }
                     LogoTile(vendor: vendor).frame(width: 22, height: 22)
                 }
@@ -170,16 +221,12 @@ struct UsageToastCard: View {
         .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 12)
         .frame(width: 360, alignment: .leading)
         .overlay(alignment: .bottom) {
-            // Half leaves on its own: a 2 pt bar drains over its time.
-            if let seconds = warning.tier.autoDismiss, warning.tier == .half {
-                Rectangle().fill(accent.opacity(0.75)).frame(height: 2)
-                    .scaleEffect(x: drained ? 0 : 1, anchor: .leading)
-                    .onAppear { withAnimation(.linear(duration: seconds)) { drained = true } }
-            }
-        }
-        .overlay {
-            if warning.tier == .out {
-                RoundedRectangle(cornerRadius: 18).strokeBorder(Ink.Tone.amber.wash(dark: 0.45, light: 0.65), lineWidth: 1)
+            // Half leaves on its own: a 2 pt bar drains over its time, held while hovered.
+            if let drain, warning.tier == .half {
+                TimelineView(.animation) { context in
+                    Rectangle().fill(accent.opacity(0.75)).frame(height: 2)
+                        .scaleEffect(x: drain.fraction(at: context.date), anchor: .leading)
+                }
             }
         }
         .overlay(alignment: .topLeading) {
@@ -199,7 +246,7 @@ struct UsageToastCard: View {
         .onTapGesture(perform: open)
         .onHover { hovering = $0 }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(announcement)
+        .accessibilityLabel(copy.announcement)
     }
 
     private func suggestionRow(_ s: Suggestion) -> some View {
@@ -239,6 +286,8 @@ struct UsageToastCard: View {
 private struct PaceBar: View {
     let pace: Pace
     let accent: Color
+    @State private var filled = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 2) {
@@ -246,6 +295,7 @@ private struct PaceBar: View {
                 ZStack(alignment: .leading) {
                     Capsule().fill(Ink.track).frame(height: 6)
                     Capsule().fill(accent).frame(width: g.size.width * pace.used, height: 6)
+                        .scaleEffect(x: filled ? 1 : 0, anchor: .leading)
                     RoundedRectangle(cornerRadius: 1).fill(Ink.tick).frame(width: 2, height: 12)
                         .padding(1.5).background(RoundedRectangle(cornerRadius: 2.5).fill(Ink.page))
                         .offset(x: g.size.width * pace.elapsed - 2.5)
@@ -253,6 +303,7 @@ private struct PaceBar: View {
                 .frame(height: 15)
             }
             .frame(height: 15)
+            .onAppear { if reduceMotion { filled = true } else { withAnimation(Motion.reveal) { filled = true } } }
             HStack {
                 Text("\(SlotStatus.percent(Int((pace.used * 100).rounded()))) used", comment: "Toast pace: allowance used")
                 Spacer()

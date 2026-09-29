@@ -43,7 +43,9 @@ struct StatusIcon {
 
     /// Rendered once into flat 1x and 2x bitmaps: a lazily drawn image
     /// re-runs its handler on every menu bar repaint, and this one is costly.
-    func image(remaining: Int?, dark: Bool, attention: Bool = false) -> NSImage {
+    /// `dot`: a toast at the quarter tier or worse was dismissed; its ink
+    /// stays at the icon's top right until the panel is opened.
+    func image(remaining: Int?, dark: Bool, attention: Bool = false, dot: NSColor? = nil) -> NSImage {
         let image = NSImage(size: Self.size)
         for scale in [1, 2] {
             let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(Self.size.width) * scale,
@@ -56,6 +58,10 @@ struct StatusIcon {
             NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
             draw(remaining: remaining, dark: dark, in: NSRect(origin: .zero, size: Self.size))
             if attention { Self.drawWarning(in: NSRect(origin: .zero, size: Self.size)) }
+            if let dot {
+                dot.setFill()
+                NSBezierPath(ovalIn: NSRect(x: Self.size.width - 6, y: Self.size.height - 6, width: 6, height: 6)).fill()
+            }
             NSGraphicsContext.restoreGraphicsState()
             image.addRepresentation(rep)
         }

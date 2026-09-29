@@ -618,6 +618,8 @@ protocol PanelActions: AnyObject {
     func deleteProfile(_ name: String)
     func newProfile()
     func retryUsage()
+    /// Debug, QA builds only: the four warning tiers, one after another.
+    func playUsageWeek()
     func setPreferredTerminal(_ name: String)
     func setUpdateChannel(_ channel: UpdateChannel)
     var panelShortcut: String? { get }
