@@ -37,7 +37,7 @@ if '--allow-shell-recovery' in sys.argv:
 source = root/'repo/fleet-exec.sh'
 for anchor, extra in [
     ('  exec_set_state "$erl_id" preparing\n', '  /usr/bin/python3 "$N2_SHELL_FIXTURE/barrier.py" "$erl_id"\n'),
-    ('  exec_run_local "$hts_id" </dev/null >"$hts_d/worker.log" 2>&1 &\n', '  printf "%s\\n" "$!" > "$N2_SHELL_FIXTURE/ready/$hts_id.worker"\n')]:
+    ('    exec_run_local "$1" </dev/null >"$esw_d/worker.log" 2>&1 &\n', '    printf "%s\\n" "$!" > "$N2_SHELL_FIXTURE/ready/$1.worker"\n')]:
     assert source.read_text().count(anchor) == 1
     source.write_text(source.read_text().replace(anchor, anchor+extra))
 (root/'barrier.py').write_text('''import os,select,sys

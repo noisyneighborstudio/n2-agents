@@ -2051,6 +2051,28 @@ returns, reconcile reads the worker's own record and adopts its outcome. Only
 its own id cross-linked to the original in both directions — the original keeps
 its own outcome.
 
+### Where a worker runs
+
+A worker runs in the operator's login session. A request that arrives over
+ssh is handled in a background security session where the login keychain is
+locked (`security` answers "User interaction is not allowed"), and Claude Code
+keeps its sign-in there: on 2026-09-29 a one-word `claude -p` for a signed-in
+profile answered "Not logged in" over ssh on the M5 and "ok" when the same
+command ran as a `gui/<uid>` launchd job. Codex keeps its sign-in in a file.
+
+`exec_start_worker` asks `launchctl managername`. In the `Aqua` session the
+worker starts directly. Otherwise the task becomes a one-shot job in
+`gui/<uid>` (`com.n2agents.fleet-task.<id>`, plist in the task directory) that
+re-enters through `agents fleet task _run <id>`, which runs only an accepted
+task. The plist carries `HOME`, `PATH`, `TMPDIR` and every `N2_*` variable of
+the handler, because launchd starts a job with only what its plist declares.
+Finished tasks' jobs are booted out before the next start. If the job cannot
+be bootstrapped, normally because nobody is logged in, the worker records the
+task as failed and replies `ERR no-login-session`; the dispatcher marks it
+failed with that reason instead of uncertain. There is no fallback to running
+in the request's session. `scripts/test-exec-session.sh` covers all three
+paths with a launchctl fixture.
+
 ### Managed updates and active work
 
 `sync`'s deferral asks `exec_tasks_active` whether this machine is running a
@@ -2129,9 +2151,10 @@ and a single-field bandwidth value.
 The execution assignment is not complete. Dispatch now persists the selected
 worker before sending a request and attempts delivery to that worker only.
 A failed transport call or malformed acknowledgment leaves an `unreachable`
-task with the original ID and destination for reconciliation. Even an explicit
-refusal is conservatively treated as uncertain until inspected; the operator
-can request a new retry. No fallback worker starts automatically. Completion
+task with the original ID and destination for reconciliation. An explicit
+refusal is conservatively treated as uncertain until inspected, except
+`no-login-session`, which the worker records as failed before replying; the
+operator can request a new retry. No fallback worker starts automatically. Completion
 received before acknowledgment is preserved.
 
 `scripts/test-exec-delivery.sh` injects a lost acknowledgment after acceptance,

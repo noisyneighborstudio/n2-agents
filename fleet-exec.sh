@@ -433,10 +433,72 @@ fleet_handle_task_start() {  # <from> <payload> <dir>
   exec_meta_set "$hts_id" label "$hts_lab"
   exec_meta_set "$hts_id" created "$(fleet_now)"
   exec_set_state "$hts_id" accepted
-  # A detached task must not retain the request transport descriptors.
-  exec_run_local "$hts_id" </dev/null >"$hts_d/worker.log" 2>&1 &
+  if ! exec_start_worker "$hts_id"; then
+    exec_meta_set "$hts_id" rc 125
+    exec_meta_set "$hts_id" ended "$(fleet_now)"
+    exec_set_state "$hts_id" failed "no one is logged in on this Mac"
+    echo "ERR no-login-session"; return 1
+  fi
   printf 'accepted %s\n' "$hts_id" > "$3/out"
   fleet_ok "$3/out"
+}
+
+# Work runs in the operator's login session. A request that arrives over ssh
+# is handled in a background security session where the login keychain is
+# locked, so an agent that keeps its sign-in there (Claude Code) answers "Not
+# logged in". Such a task is handed to launchd's gui domain instead, and
+# refused when nobody is logged in: never started where it cannot sign in.
+exec_start_worker() {  # <id>
+  esw_d=$(exec_task_dir "$1")
+  exec_reap_workers
+  if [ "$("$(sync_launchctl)" managername 2>/dev/null)" = Aqua ]; then
+    # A detached task must not retain the request transport descriptors.
+    exec_run_local "$1" </dev/null >"$esw_d/worker.log" 2>&1 &
+    return 0
+  fi
+  exec_worker_plist "$1" > "$esw_d/worker.plist" &&
+    "$(sync_launchctl)" bootstrap "$(sync_service_domain)" "$esw_d/worker.plist" >/dev/null 2>&1
+}
+
+exec_worker_label() { echo "com.n2agents.fleet-task.$1"; }
+
+# launchd starts a job with only the environment its plist declares: the
+# handler's HOME, PATH and N2_* settings travel so the job resolves the same
+# fleet, profiles and tools the request was accepted against.
+exec_worker_plist() {  # <id>
+  [ -n "${self:-}" ] && [ -f "$self" ] || return 1
+  echo '<?xml version="1.0" encoding="UTF-8"?>'
+  echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+  echo '<plist version="1.0">'
+  echo '<dict>'
+  printf '  <key>Label</key><string>%s</string>\n' "$(exec_worker_label "$1")"
+  echo '  <key>ProgramArguments</key>'
+  printf '  <array><string>/bin/sh</string><string>%s</string>' "$(sync_xml "$self")"
+  printf '<string>fleet</string><string>task</string><string>_run</string><string>%s</string></array>\n' "$1"
+  echo '  <key>EnvironmentVariables</key>'
+  echo '  <dict>'
+  for ewp_n in HOME PATH TMPDIR $(env | sed -n 's/^\(N2_[A-Za-z0-9_]*\)=.*/\1/p'); do
+    eval "ewp_v=\${$ewp_n-}"
+    [ -n "$ewp_v" ] && printf '    <key>%s</key><string>%s</string>\n' "$ewp_n" "$(sync_xml "$ewp_v")"
+  done
+  echo '  </dict>'
+  echo '  <key>RunAtLoad</key><true/>'
+  printf '  <key>StandardOutPath</key><string>%s</string>\n' "$(sync_xml "$(exec_task_dir "$1")/worker.log")"
+  printf '  <key>StandardErrorPath</key><string>%s</string>\n' "$(sync_xml "$(exec_task_dir "$1")/worker.log")"
+  echo '</dict>'
+  echo '</plist>'
+}
+
+# A finished job stays loaded in launchd until booted out; unload the jobs of
+# finished tasks before starting another so they never accumulate.
+exec_reap_workers() {
+  for erw_p in "$(exec_db)"/*/worker.plist; do
+    [ -f "$erw_p" ] || continue
+    erw_id=$(basename "$(dirname "$erw_p")")
+    case $(exec_meta "$erw_id" state) in completed|failed) ;; *) continue ;; esac
+    "$(sync_launchctl)" bootout "$(sync_service_domain)/$(exec_worker_label "$erw_id")" >/dev/null 2>&1 || true
+    rm -f "$erw_p"
+  done
 }
 
 # Recheck on the receiving machine: capabilities can change after planning.
@@ -749,20 +811,25 @@ exec_dispatch() {  # <command> <context-file|""> <workspace|""> <pin-machine> <p
     { printf 'task=%s\n' "$ed_id"; printf 'vendor=%s\n' "$ed_v"
       printf 'label=%s\n' "$ed_lab"; printf -- '--\n'
       base64 < "$ed_t/bundle"; } > "$ed_t/req"
-    if fleet_call "$ed_p" task-start "$ed_t/req" > "$ed_t/rep" 2>/dev/null &&
+    ed_rc=0
+    if fleet_call "$ed_p" task-start "$ed_t/req" > "$ed_t/rep" 2>"$ed_t/err" &&
        awk -v id="$ed_id" '$1=="accepted" && $2==id {ok=1} END {exit !ok}' "$ed_t/rep"; then
       # Completion events can arrive before the acknowledgment. Do not move
       # a running or completed task backwards to dispatched.
       if [ "$(exec_meta "$ed_id" state)" = dispatching ]; then
         exec_set_state "$ed_id" dispatched "peer=$ed_p vendor=$ed_v eta=${ed_eta}s assumed=$ed_as"
       fi
+    elif grep -qx 'ERR no-login-session' "$ed_t/err"; then
+      exec_set_state "$ed_id" failed "no one is logged in on $ed_mach"
+      echo "agents: $ed_mach refused $ed_id: no one is logged in there, so its agents cannot reach their sign-in" >&2
+      ed_rc=1
     else
       exec_set_state "$ed_id" unreachable "delivery uncertain peer=$ed_p; reconcile before retry"
       exec_fanout disconnected "$ed_id" "Delivery to $ed_mach is uncertain; waiting for reconciliation"
       echo "agents: delivery uncertain for $ed_id on $ed_mach; no other worker was started" >&2
     fi
     printf '%s\t%s\t%s\t%ss\tassumed=%s\n' "$ed_id" "$ed_mach" "$ed_v" "$ed_eta" "$ed_as"
-    ed_rc=0; break
+    break
   done < "$ed_t/plan"
   rm -rf "$ed_t"; return $ed_rc
 }
@@ -965,6 +1032,9 @@ cmd_fleet_task() {
   tverb=${1:-list}; [ $# -ge 1 ] && shift
   case $tverb in
     preferences) exec_preferences "$@" ;;
+    _run)  # launchd's entry for a worker handed to the login session
+      exec_valid_id "${1:-}" && [ "$(exec_meta "$1" state)" = accepted ] || fleet_die "no accepted task: ${1:-}"
+      exec_run_local "$1" ;;
     run)
       tmode=shell tcmd= tws= tctx= tpm= tpv= tlab= tplan= tau= treq=$(mktemp "${TMPDIR:-/tmp}/n2req.XXXXXX")
       : > "$treq"
