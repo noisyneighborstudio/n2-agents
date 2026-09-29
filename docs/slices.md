@@ -17,9 +17,10 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
 ## Queue
 
 1. **Sync leaves tool-managed files alone** (`fleet-sync-managed-paths`).
-   Behavior: sync skips files each Mac's tools manage themselves: Claude's
-   account skills (`skills/synced/`) and `settings.local.json`, Codex's bundled
-   `skills/.system/` and `rules/`. Every other skill still syncs.
+   Behavior: sync skips the skill trees each Mac's tools install themselves:
+   Claude's account skills (`skills/synced/`) and Codex's bundled
+   `skills/.system/`. Every other skill, `settings.local.json` and `rules/`
+   still sync.
    Proof: a sync test whose peers hold differing copies of each path reports
    no push, pull or conflict for them while a user skill still replicates; the
    M5 to mini dry run lists none of them. Removing the rule turns the test red.
@@ -45,15 +46,18 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
 
 4. **Merge a conflict with an agent, reviewed by another** (`fleet-sync-agent-merge`).
    Behavior: `fleet sync merge <id>` asks an agent with measured headroom for a
-   merged version, then a different agent (another vendor or account where
-   available) reviews it: nothing lost without a stated reason, no
+   merged version, then an agent from a different lab reviews it (Claude
+   never reviews Claude's merge; a harness counts by its model's lab, and an
+   unknown lab never qualifies): nothing lost without a stated reason, no
    contradictions or duplicates. Disagreement shows the proposal and the
-   concerns; with no second agent the proposal is marked unreviewed. Nothing
+   concerns; with no other-lab agent available the proposal is marked
+   unreviewed. Nothing
    applies until the operator accepts (`--apply`, via slice 3). Credential
    files, credential-bearing settings, MCP configuration and binaries are
    refused before anything reaches a model.
    Proof: fake merger and reviewer agents; agree, disagree and no-reviewer
-   cases each produce the stated outcome; a credential file is refused and
+   cases each produce the stated outcome; with only same-lab agents available
+   the proposal is unreviewed; a credential file is refused and
    the fake agent's recorded input is empty.
    Scope: CLI only; the panel button is the next slice.
 
