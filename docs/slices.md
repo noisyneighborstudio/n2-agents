@@ -16,17 +16,7 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
 
 ## Queue
 
-1. **Resolve a conflict with a merged file** (`fleet-sync-merged-resolution`).
-   Behavior: `fleet sync resolve <id> --merged <file>` records a third outcome
-   beside --local and --remote. The merged content supersedes both versions
-   and reaches both Macs without conflicting again.
-   Proof: two disposable peers conflict; resolving with a merged file leaves
-   both holding it, and the next pass reports no conflict. Then the M5 to mini
-   full sync resolves its four real conflicts (Default `CLAUDE.md`, both
-   `unslop/SKILL.md`, grok `config.toml`) this way, content from both kept.
-   Scope: operator-supplied merges only.
-
-2. **Merge a conflict with an agent, reviewed by another** (`fleet-sync-agent-merge`).
+1. **Merge a conflict with an agent, reviewed by another** (`fleet-sync-agent-merge`).
    Behavior: `fleet sync merge <id>` asks an agent with measured headroom for a
    merged version, then an agent from a different lab reviews it (Claude
    never reviews Claude's merge; a harness counts by its model's lab, and an
@@ -34,7 +24,7 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
    contradictions or duplicates. Disagreement shows the proposal and the
    concerns; with no other-lab agent available the proposal is marked
    unreviewed. Nothing
-   applies until the operator accepts (`--apply`, via slice 3). Credential
+   applies until the operator accepts (`--apply`, via the merged resolution). Credential
    files, credential-bearing settings, MCP configuration and binaries are
    refused before anything reaches a model.
    Proof: fake merger and reviewer agents; agree, disagree and no-reviewer
@@ -43,7 +33,7 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
    the fake agent's recorded input is empty.
    Scope: CLI only; the panel button is the next slice.
 
-3. **"Merge with Agent" in the panel** (`fleet-sync-agent-merge-ui`).
+2. **"Merge with Agent" in the panel** (`fleet-sync-agent-merge-ui`).
    Behavior: each text conflict row offers Merge with Agent beside the two
    existing choices; a sheet shows the diff, the review and Accept or Discard.
    Only that row's button disables while agents work; it is disabled with a
@@ -51,7 +41,7 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
    Proof: a Swift test holds the merge read while the rest of the panel renders
    (the AGENTS.md UI rule); accept and discard record the right outcome.
 
-4. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
+3. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
    Behavior: from the QA app, pair two disposable peers (Settings › Fleet),
    sync (with a held profile shared from Fleet settings), send work (the Send
    Work page), show its result (the Task page) and revoke (the Machine page).
@@ -60,7 +50,7 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
    per step fails.
    Scope: disposable peers only; no live installation or real machines.
 
-5. **Honor Claude usage rejections** (`usage-claude-backoff`).
+4. **Honor Claude usage rejections** (`usage-claude-backoff`).
    Behavior: after a 429 from Claude usage, no reader asks that account again
    until its `Retry-After` has passed; the row stays `rate-limited` with the
    last reading and its time. Evidence: `docs/audits/claude-usage-rate-limit-spike.md`.
@@ -69,7 +59,7 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
    a read after the window calls again. Break the gate once; the test fails.
    Scope: Claude only, one Mac. Codex and peer sharing excluded.
 
-6. **One Claude usage call per account at a time** (`usage-claude-single-flight`).
+5. **One Claude usage call per account at a time** (`usage-claude-single-flight`).
    Behavior: concurrent readers (tray, loop, dispatch) of one account share
    one provider call, and a reading under 60 s old is served from the journal.
    Proof: two concurrent `usage.py` runs against a held fake provider make one
@@ -78,7 +68,7 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
    Scope: Claude only, one Mac. The 60 s figure is policy, not a measured
    provider window.
 
-7. **Offer skill updates across the fleet** (`fleet-skill-updates`), later.
+6. **Offer skill updates across the fleet** (`fleet-skill-updates`), later.
    Behavior: N2 notices when an installed skill has a newer version at its
    source and offers one action that updates it on every enrolled Mac; the
    Fleet panel shows which Macs are behind.

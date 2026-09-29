@@ -3372,6 +3372,43 @@ mf=$(env HOME="$base/mfail" sh -c '
 check "manifest failure: the pass reports it" "failed	manifest" "$mf"
 check "manifest failure: and fails" "rc=1" "$mf"
 
+# --- 77. a merged file resolves a conflict on both machines -----------------
+mark "77. a merged resolution replaces both versions everywhere"
+mk="$(slot alpha Work claude)/skills/mrg/SKILL.md"; mkb="$(slot beta Work claude)/skills/mrg/SKILL.md"
+put alpha "$mk" 'ORIGIN'
+peer alpha fleet sync now --peer "$B" >/dev/null 2>&1
+put alpha "$mk" 'ALPHA LINE'; put beta "$mkb" 'BETA LINE'
+peer alpha fleet sync now --peer "$B" >/dev/null 2>&1
+cid=$(peer alpha fleet sync conflicts | awk -F'\t' '$2 ~ /mrg/ {print $1; exit}')
+printf 'ALPHA LINE\nBETA LINE\n' > "$base/merged77"
+out=$(peer alpha fleet sync resolve "$cid" --merged --local 2>&1); rc=$?
+denied "merged: a flag is never taken as the merged file" "$out" "$rc"
+out=$(peer alpha fleet sync resolve "$cid" --merged "$base/no-such-file" 2>&1); rc=$?
+denied "merged: a missing file resolves nothing" "$out" "$rc"
+check "merged: and the conflict is still pinned" "$cid" "$(peer alpha fleet sync conflicts)"
+out=$(peer alpha fleet sync resolve "$cid" --merged "$base/merged77" 2>&1)
+check "merged: the choice is recorded" "resolved	$cid	merged" "$out"
+same "merged: alpha holds the merge" "$(printf 'ALPHA LINE\nBETA LINE')" "$(cat "$mk")"
+out=$(peer alpha fleet sync now --peer "$B" 2>&1)
+check "merged: the merge is pushed, not re-conflicted" "pushed	skills|Work|claude|skills/mrg/SKILL.md" "$out"
+same "merged: beta holds the merge" "$(printf 'ALPHA LINE\nBETA LINE')" "$(cat "$mkb" 2>/dev/null)"
+refute "merged: alpha has no conflict left" "mrg" "$(peer alpha fleet sync conflicts)"
+refute "merged: beta has no mirror-image conflict" "mrg" "$(peer beta fleet sync conflicts)"
+out=$(peer alpha fleet sync now --peer "$B" 2>&1)
+check "merged: a repeated pass is quiet" "noop	skills|Work|claude|skills/mrg/SKILL.md" "$out"
+# A merge is written through the same credential gate as any incoming bytes.
+sk="$(slot alpha Merge claude)/CLAUDE.md"; skb="$(slot beta Merge claude)/CLAUDE.md"
+put alpha "$sk" 'guidance'
+peer alpha fleet sync now --peer "$B" >/dev/null 2>&1
+put alpha "$sk" 'alpha guidance'; put beta "$skb" 'beta guidance'
+peer alpha fleet sync now --peer "$B" >/dev/null 2>&1
+cid=$(peer alpha fleet sync conflicts | awk -F'\t' '$2 ~ /Merge/ {print $1; exit}')
+printf 'guidance\nANTHROPIC_API_KEY: sk-synthetic\n' > "$base/merged77s"
+out=$(peer alpha fleet sync resolve "$cid" --merged "$base/merged77s" 2>&1); rc=$?
+denied "merged: a merge carrying a credential is refused" "$out" "$rc"
+refute "merged: and it is not written" "sk-synthetic" "$(cat "$sk")"
+check "merged: the pin stays for another choice" "$cid" "$(peer alpha fleet sync conflicts)"
+
 # The suite ends here. The tally must be the last thing that runs: it is both
 # the report and the exit status. It used to sit after section 55, so sections
 # 56-58 ran *after* the totals were printed and the script exited with the
