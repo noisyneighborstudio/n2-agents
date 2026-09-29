@@ -1976,7 +1976,7 @@ sync_service_status() {
 # The operator picks a side. Code never does. Resolving records the chosen
 # bytes as the new agreed base, so the next pass propagates the choice instead
 # of re-detecting the same conflict.
-sync_resolve() {  # sync_resolve <id> local|remote
+sync_resolve() {  # sync_resolve <id> local|remote|merged [merged-file]
   sync_conflict_id_ok "${1:-}" || {
     echo "agents: not a conflict id: ${1:-}" >&2
     echo "agents: an id is the 12-character value in 'agents fleet sync conflicts'" >&2
@@ -2020,21 +2020,29 @@ sync_resolve() {  # sync_resolve <id> local|remote
       [ -n "$sr_live" ] || sr_live=$SYNC_TOMBSTONE
       [ -n "$sr_snap" ] || sr_snap=$SYNC_TOMBSTONE
       [ "$sr_live" = "$sr_snap" ] || sr_note=live ;;
-    remote)
+    remote|merged)
       # An address that has left this machine's scope since the pin was made
       # (an exception was added, or an auth opt-in was withdrawn) must not be
-      # overwritten with the peer's bytes: the exception *is* the operator's
-      # statement that this machine keeps its own copy. Refuse loudly, keep the
-      # pin, and point at the escape hatch -- `--local` writes nothing, so it
-      # clears the pin without contradicting the exception.
+      # overwritten, with the peer's bytes or a merge: the exception *is* the
+      # operator's statement that this machine keeps its own copy. Refuse
+      # loudly, keep the pin, and point at the escape hatch -- `--local` writes
+      # nothing, so it clears the pin without contradicting the exception.
       if ! sync_scope_ok "$sr_a"; then
-        echo "agents: $sr_a is no longer in this machine's sync scope (an exception or auth opt-out covers it); taking the peer's version would override that decision" >&2
+        echo "agents: $sr_a is no longer in this machine's sync scope (an exception or auth opt-out covers it); replacing this machine's copy would override that decision" >&2
         echo "agents: resolve it with --local to keep this machine's copy, or remove the exception first" >&2
         printf 'out-of-scope\t%s\t%s\n' "$1" "$sr_a"
         sync_conflict_unstage "$sr_stage" "$sr_d"
         sync_res_unlock "$sr_a"; return 1
       fi
-      if [ -f "$sr_stage/remote" ]; then sync_write "$sr_a" "$sr_stage/remote" || { sync_conflict_unstage "$sr_stage" "$sr_d"; sync_res_unlock "$sr_a"; return 1; }
+      if [ "$2" = merged ]; then
+        # The operator's combination of both versions replaces this machine's
+        # copy, then travels exactly as --local does. sync_write applies the
+        # same credential gate as any incoming bytes.
+        if [ ! -f "${3:-}" ] || ! sync_write "$sr_a" "$3"; then
+          echo "agents: the merged file could not be applied; the pin stays" >&2
+          sync_conflict_unstage "$sr_stage" "$sr_d"; sync_res_unlock "$sr_a"; return 1
+        fi
+      elif [ -f "$sr_stage/remote" ]; then sync_write "$sr_a" "$sr_stage/remote" || { sync_conflict_unstage "$sr_stage" "$sr_d"; sync_res_unlock "$sr_a"; return 1; }
       elif [ -f "$sr_stage/remote.deleted" ]; then
         # `--remote` on a blocked profile deletion is the operator saying yes to
         # exactly the removal the conflict listing described, so this is the one
@@ -2050,13 +2058,14 @@ sync_resolve() {  # sync_resolve <id> local|remote
         sync_conflict_unstage "$sr_stage" "$sr_d"
         sync_res_unlock "$sr_a"; return 1
       fi ;;
-    *) echo "agents: choose --local or --remote" >&2
+    *) echo "agents: choose --local, --remote or --merged <file>" >&2
        sync_conflict_unstage "$sr_stage" "$sr_d"
        sync_res_unlock "$sr_a"; return 1 ;;
   esac
   # The base becomes what the peer had when the conflict was detected. Choosing
-  # "remote" therefore reads as converged next pass; choosing "local" reads as
-  # a push, so the operator's choice travels instead of re-conflicting.
+  # "remote" therefore reads as converged next pass; choosing "local" or a
+  # merge reads as a push, so the operator's choice travels instead of
+  # re-conflicting.
   [ -n "$sr_p" ] && [ -n "$sr_r" ] && sync_base_set "$sr_p" "$sr_a" "$sr_r"
   sync_res_unlock "$sr_a"
   rm -rf "$sr_stage"
@@ -2334,7 +2343,9 @@ agents fleet sync <verb>
                                       (scope:out = an exception now covers it,
                                        so only --local can resolve it)
   show <id>                           one conflict: address, peer, both digests
-  resolve <id> --local|--remote       record the operator's choice
+  resolve <id> --local|--remote|--merged <file>
+                                      record the operator's choice; a merged file
+                                      replaces both versions everywhere
   review                              profiles held since this machine joined
   share <profile>                     let a held profile sync with the fleet
   except add <class> <profile> <vendor> [glob]   keep this machine different
@@ -2453,13 +2464,15 @@ cmd_fleet_sync() {
       fi
       return 0 ;;
     resolve)
-      sync_need; [ -n "${1:-}" ] || fleet_die "usage: agents fleet sync resolve <id> --local|--remote"
-      rid=$1; shift; choice=
+      sync_need; [ -n "${1:-}" ] || fleet_die "usage: agents fleet sync resolve <id> --local|--remote|--merged <file>"
+      rid=$1; shift; choice= mfile=
       while [ $# -gt 0 ]; do case $1 in
         --local) choice=local; shift ;; --remote) choice=remote; shift ;;
+        --merged) case ${2:-} in ''|-*) fleet_die "--merged needs a file" ;; esac
+                  choice=merged mfile=$2; shift 2 ;;
         *) fleet_die "unknown option: $1" ;; esac; done
-      [ -n "$choice" ] || fleet_die "resolve requires --local or --remote"
-      sync_resolve "$rid" "$choice" || return 1 ;;
+      [ -n "$choice" ] || fleet_die "resolve requires --local, --remote or --merged <file>"
+      sync_resolve "$rid" "$choice" "$mfile" || return 1 ;;
     review)
       sync_need; f=$(sync_review_file)
       if [ -s "$f" ]; then cat "$f"; else echo "nothing to review"; fi ;;

@@ -1683,6 +1683,17 @@ section fails exactly two assertions — the false `managed` line and its exit
 status — while the nine surrounding controls pass, so the test is pinned to the
 defect rather than to the shape of the fix.
 
+### Resolving with a merged file
+
+`sync resolve <id> --merged <file>` is the third choice beside `--local` and
+`--remote`: the operator's combination of both versions. It is refused, with
+the pin kept, when the file is missing, when the address has left this
+machine's scope, or when `sync_write`'s credential gate rejects the bytes. The
+merge replaces this machine's copy and the base becomes the peer's recorded
+digest, so the next pass pushes it exactly as it pushes a `--local` choice and
+the peer, still holding the bytes the push declares, accepts it without a
+mirror-image conflict. Proof: `scripts/test-sync.sh` section 77.
+
 ### A conflict that could not be cleared is not a resolution
 
 `rm -rf` on a directory the process cannot unlink is not a no-op. It deletes
