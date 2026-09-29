@@ -383,12 +383,16 @@ enum PanelRoute: Hashable {
     case configure(profile: String, vendor: String)
     /// Send one saved session to another Mac, by SessionInfo.id.
     case sendSession(String)
+    /// Another Mac in the fleet, by FleetPeer.id.
+    case machine(String)
+    /// Sync conflicts waiting on this Mac.
+    case conflicts
 
     /// The profile the page belongs to; nil for a page that belongs to none.
     var profile: String? {
         switch self {
         case .profile(let p), .provider(let p, _), .configure(let p, _): return p
-        case .sendSession: return nil
+        case .sendSession, .machine, .conflicts: return nil
         }
     }
 }

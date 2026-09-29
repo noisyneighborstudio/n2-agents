@@ -61,6 +61,12 @@ struct PanelView: View {
             if let session = model.session(id) {
                 SendSessionPage(model: model, actions: actions, session: session)
             }
+        case .machine(let id)?:
+            if let fleetActions = actions as? FleetActions, let peer = model.fleet?.peers.first(where: { $0.id == id }) {
+                MachinePage(model: model, actions: fleetActions, peer: peer)
+            }
+        case .conflicts?:
+            if let fleetActions = actions as? FleetActions { ConflictsPage(model: model, actions: fleetActions) }
         case .configure(let name, let id)?:
             if let profile = data.profiles.first(where: { $0.name == name }), let vendor = data.snapshot.vendor(id) {
                 ConfigurePage(model: model, actions: actions, data: data, profile: profile, vendor: vendor)
@@ -85,7 +91,8 @@ struct FittingScroll<Content: View>: View {
         })
         Group {
             if contentHeight > maxHeight {
-                ScrollView(.vertical) { measured }.frame(height: maxHeight)
+                // No scroller gutter: legacy scrollers would narrow every card.
+                ScrollView(.vertical) { measured }.frame(height: maxHeight).scrollIndicators(.never)
             } else {
                 measured
             }

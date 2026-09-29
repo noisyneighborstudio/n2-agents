@@ -16,6 +16,10 @@ struct FleetPage: View {
             Rectangle().fill(Ink.hairline).frame(height: 1).padding(.horizontal, 14)
             FittingScroll(maxHeight: PanelView.bodyLimit) {
                 VStack(spacing: 0) {
+                    if let fleetActions = actions as? FleetActions {
+                        FleetBanners(model: model, actions: fleetActions)
+                            .padding(.horizontal, 12).padding(.top, 10)
+                    }
                     NextBestButton(pick: model.nextBest, model: model, data: data, actions: actions)
                         .padding(.horizontal, 12)
                         .padding(.top, 10).padding(.bottom, 2)
@@ -33,6 +37,8 @@ struct FleetPage: View {
                         RecentSection(model: model, actions: actions)
                             .padding(.horizontal, 12).padding(.top, 10)
                     }
+                    OtherMacsSection(model: model)
+                        .padding(.horizontal, 12).padding(.top, 8)
                     // Peers, sync and tasks: the rest of the fleet, below this Mac.
                     if let fleetActions = actions as? FleetActions {
                         Rectangle().fill(Ink.hairline).frame(height: 1).padding(.horizontal, 14).padding(.top, 12)
@@ -277,7 +283,7 @@ struct SyncWord {
         if fleet.unavailable.contains(.sync) {
             (text, ink) = (String(localized: "sync unknown", comment: "Sync word: the sync read failed"), Ink.secondary)
         } else if s.conflicts > 0 {
-            (text, ink) = (String(localized: "^[\(s.conflicts) conflict](inflect: true)", comment: "Sync word: conflicts to answer"), Ink.amber)
+            (text, ink) = (inflected("^[\(s.conflicts) conflict](inflect: true)", comment: "Sync word: conflicts to answer"), Ink.amber)
         } else if s.resources == 0 {
             (text, ink) = (String(localized: "not sharing", comment: "Sync word: nothing shared yet"), Ink.secondary)
         } else if s.settled {

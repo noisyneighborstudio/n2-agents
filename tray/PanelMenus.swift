@@ -1,5 +1,12 @@
 import Foundation
 
+/// A localized string with automatic grammar agreement ("^[3 profile](inflect:
+/// true)" → "3 profiles"). String(localized:) leaves that markup as text; only
+/// an attributed string resolves it.
+func inflected(_ value: String.LocalizationValue, comment: StaticString) -> String {
+    String(AttributedString(localized: value, comment: comment).characters)
+}
+
 /// The Active switch's menu, as data: every profile (checked when it's active
 /// for every lab it holds), then one submenu per lab listing the profiles that
 /// hold it (checked where that lab is active). Choosing a profile makes it

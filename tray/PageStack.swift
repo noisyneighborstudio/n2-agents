@@ -25,6 +25,8 @@ extension PanelModel {
         case .provider(_, let v)?: return data?.snapshot.vendor(v)?.label ?? v
         case .configure?: return String(localized: "Configure", comment: "Configure page title")
         case .sendSession?: return String(localized: "Send Session", comment: "Send Session page title")
+        case .machine(let id)?: return fleet?.peers.first { $0.id == id }?.machine ?? "Mac"
+        case .conflicts?: return String(localized: "Conflicts", comment: "Conflicts page title")
         }
     }
 
@@ -117,6 +119,8 @@ struct PageStack<Page: View>: View {
         case .provider?: kind = "provider"
         case .configure?: kind = "configure"
         case .sendSession?: kind = "send-session"
+        case .machine?: kind = "machine"
+        case .conflicts?: kind = "conflicts"
         }
         return "\(depth)-\(kind)"
     }

@@ -69,7 +69,12 @@ struct FleetSection: View {
                 .fixedSize(horizontal: false, vertical: true)
             }
             if let fleet, fleet.initialized {
-                MachinesBlock(fleet: fleet, model: model, actions: actions)
+                HStack(spacing: 6) {
+                    Button("Enroll over Tailscale") { actions.fleetEnroll(transport: "tailscale") }
+                        .buttonStyle(FleetPill())
+                    Button("Pair over SSH") { actions.fleetEnroll(transport: "ssh") }
+                        .buttonStyle(FleetPill())
+                }
                 SyncBlock(fleet: fleet, actions: actions)
                 ToolsBlock(fleet: fleet, actions: actions)
                 TasksBlock(fleet: fleet, actions: actions)
@@ -131,134 +136,6 @@ private struct FleetReadState: View {
     }
 }
 
-// MARK: - Machines
-
-private struct MachinesBlock: View {
-    let fleet: FleetData
-    @ObservedObject var model: PanelModel
-    let actions: FleetActions
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Pending first and separately: a machine that reached us is a
-            // question, and putting it in the roster would answer it.
-            if !fleet.pending.isEmpty {
-                FleetLabel(title: "Waiting for approval", detail: "\(fleet.pending.count)")
-                ForEach(fleet.pending) { p in
-                    PendingRow(pending: p, actions: actions)
-                }
-            }
-            FleetReadState(fleet: fleet, read: .machines)
-            ForEach(fleet.peers) { peer in
-                PeerRow(peer: peer, actions: actions)
-            }
-            HStack(spacing: 6) {
-                Button("Enroll over Tailscale") { actions.fleetEnroll(transport: "tailscale") }
-                    .buttonStyle(FleetPill())
-                Button("Pair over SSH") { actions.fleetEnroll(transport: "ssh") }
-                    .buttonStyle(FleetPill())
-            }
-        }
-    }
-}
-
-private struct PendingRow: View {
-    let pending: FleetPending
-    let actions: FleetActions
-
-    var body: some View {
-        FleetCard(tint: Color(nsColor: .systemOrange)) {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 6) {
-                    Text(verbatim: pending.machine.isEmpty ? "unnamed machine" : pending.machine)
-                        .font(.system(size: 12, weight: .medium))
-                    if !pending.transport.isEmpty {
-                        FleetChip(text: pending.transport)
-                    }
-                    Spacer()
-                }
-                // The fingerprint is the identity being approved. It is shown
-                // in full so the user can compare it with the other machine —
-                // approving a truncated prefix is approving a guess.
-                Text(verbatim: pending.id)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.secondary).textSelection(.enabled)
-                Text("Approving sends this machine shared profiles and credentials.")
-                    .font(.system(size: 10)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 6) {
-                    Button("Approve") { actions.fleetApprove(peer: pending.id) }
-                        .buttonStyle(FleetPill(prominent: true))
-                    Button("Deny") { actions.fleetDeny(peer: pending.id) }
-                        .buttonStyle(FleetPill())
-                }
-            }
-        }
-    }
-}
-
-private struct PeerRow: View {
-    let peer: FleetPeer
-    let actions: FleetActions
-    @State private var expanded = false
-
-    var body: some View {
-        FleetCard {
-            VStack(alignment: .leading, spacing: expanded ? 5 : 0) {
-                Button { expanded.toggle() } label: {
-                    HStack(spacing: 6) {
-                        ReachDot(peer: peer)
-                        Text(verbatim: peer.machine)
-                            .font(.system(size: 12, weight: peer.isSelf ? .semibold : .regular))
-                        if peer.isSelf { FleetChip(text: "this Mac") }
-                        Spacer()
-                        Text(verbatim: statusWord)
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-
-                if expanded {
-                    Text(verbatim: peer.id)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(.secondary).textSelection(.enabled)
-                    Text(verbatim: "transport: \(peer.transport)")
-                        .font(.system(size: 10)).foregroundStyle(.secondary)
-                    if !peer.isSelf && peer.state == .approved {
-                        Button("Revoke Access") { actions.fleetRevoke(peer: peer.id) }
-                            .buttonStyle(FleetPill(destructive: true))
-                    }
-                }
-            }
-        }
-    }
-
-    /// Enrollment state and reachability are different facts and the row says
-    /// both: a revoked machine that still answers pings is still revoked.
-    private var statusWord: String {
-        switch peer.state {
-        case .approved: return peer.reach == .`self` ? "" : (peer.isOnline ? "online" : "offline")
-        case .pending:  return "awaiting approval"
-        case .denied:   return "denied"
-        case .revoked:  return "revoked"
-        }
-    }
-}
-
-private struct ReachDot: View {
-    let peer: FleetPeer
-
-    var body: some View {
-        Circle().fill(color).frame(width: 7, height: 7)
-    }
-
-    private var color: Color {
-        guard peer.state == .approved else { return Color(nsColor: .systemGray) }
-        return peer.isOnline ? Color(nsColor: .systemGreen) : Color(nsColor: .systemGray)
-    }
-}
-
 // MARK: - Sync
 
 private struct SyncBlock: View {
@@ -270,13 +147,6 @@ private struct SyncBlock: View {
         VStack(alignment: .leading, spacing: 6) {
             FleetLabel(title: "Shared profile", detail: summary)
             FleetReadState(fleet: fleet, read: .sync)
-
-            // Conflicts are the only thing in this panel that blocks: they are
-            // shown before anything else and cannot be dismissed, only answered.
-            FleetReadState(fleet: fleet, read: .conflicts)
-            ForEach(fleet.conflicts) { c in
-                ConflictRow(conflict: c, actions: actions)
-            }
 
             FleetReadState(fleet: fleet, read: .exceptions)
             if !fleet.exceptions.isEmpty {
@@ -337,7 +207,7 @@ private struct SyncBlock: View {
     }
 }
 
-private struct ConflictRow: View {
+struct ConflictRow: View {
     let conflict: FleetConflict
     let actions: FleetActions
 
@@ -563,6 +433,282 @@ enum FleetNoticeTime {
     }()
 
     static func string(_ date: Date) -> String { clock.string(from: date) }
+}
+
+// MARK: - Root: banners and Other Macs
+
+// Only what another Mac is waiting on: one asking to join, a sync conflict.
+// Each is answered from the banner or the page it opens, never dismissed.
+struct FleetBanners: View {
+    @ObservedObject var model: PanelModel
+    let actions: FleetActions
+
+    var body: some View {
+        if let fleet = model.fleet, fleet.initialized {
+            VStack(spacing: 8) {
+                ForEach(fleet.pending) { p in
+                    Banner(symbol: "desktopcomputer.and.arrow.down", ink: Ink.link,
+                           title: String(localized: "\(p.machine.isEmpty ? "A Mac" : p.machine) wants to join", comment: "Banner: a Mac asks to join the fleet"),
+                           detail: String(localized: "Approving sends it shared profiles and credentials. Approve only if this fingerprint matches the one on that Mac.",
+                                          comment: "Banner: what approving does"),
+                           code: p.id) {
+                        Button(String(localized: "Deny", comment: "Banner: refuse the Mac")) { actions.fleetDeny(peer: p.id) }
+                            .buttonStyle(BannerButton())
+                        Button(String(localized: "Approve…", comment: "Banner: approve the Mac, after confirming")) { actions.fleetApprove(peer: p.id) }
+                            .buttonStyle(BannerButton(prominent: true))
+                    }
+                }
+                if !fleet.conflicts.isEmpty {
+                    Banner(symbol: "arrow.triangle.2.circlepath", ink: Ink.amber,
+                           title: inflected("^[\(fleet.conflicts.count) sync conflict](inflect: true) to answer", comment: "Banner: sync conflicts"),
+                           detail: String(localized: "This Mac and another changed the same thing while apart. Nothing is applied until you choose.",
+                                          comment: "Banner: what a conflict is")) {
+                        Button(String(localized: "Review", comment: "Banner: open the conflicts")) { model.push(.conflicts) }
+                            .buttonStyle(BannerButton(prominent: true))
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct Banner<Actions: View>: View {
+    let symbol: String
+    let ink: Color
+    let title: String
+    let detail: String
+    /// An identity to compare, in full: approving a truncated one is approving a guess.
+    var code: String? = nil
+    @ViewBuilder let actions: Actions
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: symbol).font(.system(size: 14, weight: .semibold)).foregroundStyle(ink).frame(width: 20)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: title).font(.system(size: 13, weight: .semibold))
+                    Text(verbatim: detail).font(.system(size: 11.5)).foregroundStyle(Ink.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let code {
+                        Text(verbatim: code).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(Ink.secondary)
+                            .fixedSize(horizontal: false, vertical: true).textSelection(.enabled).padding(.top, 2)
+                    }
+                }
+            }
+            HStack(spacing: 8) { Spacer(); actions }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Ink.surface))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(ink.opacity(0.45), lineWidth: 0.5))
+        .accessibilityElement(children: .contain)
+    }
+}
+
+struct BannerButton: ButtonStyle {
+    var prominent = false
+    var destructive = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(prominent ? .white : destructive ? Ink.red : .primary)
+            .padding(.horizontal, 12).frame(height: 26)
+            .background(Capsule().fill(prominent ? Ink.chip : Ink.raised))
+            .overlay(Capsule().strokeBorder(prominent ? .clear : Ink.raisedEdge, lineWidth: 0.5))
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(Motion.press, value: configuration.isPressed)
+    }
+}
+
+/// A machine's one line: whether it answers, and what it's doing.
+enum MachineWord {
+    static func of(_ peer: FleetPeer, tasks: [FleetTask]) -> (text: String, ink: Color) {
+        switch peer.state {
+        case .pending: return (String(localized: "awaiting approval", comment: "Machine status"), Ink.secondary)
+        case .denied: return (String(localized: "denied", comment: "Machine status"), Ink.secondary)
+        case .revoked: return (String(localized: "removed", comment: "Machine status"), Ink.secondary)
+        case .approved: break
+        }
+        guard peer.isOnline else { return (String(localized: "offline", comment: "Machine status"), Ink.secondary) }
+        let running = tasks.filter { $0.machine == peer.machine && !$0.isFinished }.count
+        return running > 0
+            ? (inflected("^[\(running) task](inflect: true) running", comment: "Machine status: tasks running there"), Ink.secondary)
+            : (String(localized: "online", comment: "Machine status"), Ink.secondary)
+    }
+}
+
+// The rest of the fleet, one row per Mac; a row opens its Machine page.
+struct OtherMacsSection: View {
+    @ObservedObject var model: PanelModel
+
+    var body: some View {
+        if let fleet = model.fleet, fleet.initialized || fleet.readError != nil {
+            VStack(spacing: 4) {
+                HStack(spacing: 7) {
+                    Image(systemName: "desktopcomputer").font(.system(size: 12))
+                    Text("Other Macs", comment: "Root: the section for the fleet's other Macs")
+                        .font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.primary.opacity(0.8))
+                    Spacer(minLength: 6)
+                    Text(verbatim: summary(fleet)).monospacedDigit()
+                }
+                .font(.system(size: 11.5)).foregroundStyle(Ink.secondary)
+                .padding(.horizontal, 4).frame(height: 30)
+                if let error = fleet.readError {
+                    Text(verbatim: error).font(.system(size: 11.5)).foregroundStyle(Ink.amber)
+                        .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 4)
+                }
+                if let state = fleet.state(.machines) {
+                    Text(verbatim: state).font(.system(size: 11.5)).foregroundStyle(Ink.secondary).padding(.horizontal, 4)
+                }
+                ForEach(fleet.others.filter { $0.state == .approved || $0.state == .revoked }) { peer in
+                    let word = MachineWord.of(peer, tasks: fleet.tasks)
+                    Button { model.push(.machine(peer.id)) } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "desktopcomputer").font(.system(size: 14)).foregroundStyle(Ink.secondary).frame(width: 20)
+                            Text(verbatim: peer.machine).font(.system(size: 13.5, weight: .medium)).lineLimit(1)
+                            Circle().fill(peer.isOnline && peer.state == .approved ? Ink.green : Ink.tertiary).frame(width: 6, height: 6)
+                            Text(verbatim: word.text).font(.system(size: 12)).foregroundStyle(word.ink).lineLimit(1)
+                            Spacer(minLength: 6)
+                            Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(Ink.tertiary)
+                        }
+                        .padding(.horizontal, 10).frame(height: 40).contentShape(Rectangle())
+                    }
+                    .buttonStyle(PressableStyle(radius: 8))
+                    .accessibilityLabel("\(peer.machine), \(word.text)")
+                }
+                if fleet.initialized, fleet.others.isEmpty, fleet.readError == nil {
+                    Text("No other Macs yet. Add one from the + menu.", comment: "Other Macs: empty")
+                        .font(.system(size: 11.5)).foregroundStyle(Ink.tertiary).padding(.horizontal, 4)
+                }
+            }
+        }
+    }
+
+    private func summary(_ fleet: FleetData) -> String {
+        guard fleet.readError == nil else { return String(localized: "unavailable", comment: "Other Macs: the fleet read failed") }
+        let approved = fleet.others.filter { $0.state == .approved }
+        return String(localized: "\(approved.filter(\.isOnline).count) of \(approved.count) online", comment: "Other Macs: how many answer")
+    }
+}
+
+// One Mac: whether it answers and how, its identity, the work on it, what
+// it did lately. Check In asks every unfinished task what it's doing.
+struct MachinePage: View {
+    @ObservedObject var model: PanelModel
+    let actions: FleetActions
+    let peer: FleetPeer
+
+    var body: some View {
+        let fleet = model.fleet ?? FleetData()
+        let word = MachineWord.of(peer, tasks: fleet.tasks)
+        let tasks = fleet.tasks.filter { $0.machine == peer.machine }
+        let activity = fleet.notices.filter { $0.machine == peer.machine }.prefix(5)
+        VStack(alignment: .leading, spacing: 0) {
+            NavBar(title: peer.machine, back: { model.pop() }) {
+                Text(verbatim: model.parentTitle).font(.system(size: 13)).foregroundStyle(Ink.link).lineLimit(1)
+            } trailing: { EmptyView() }
+            FittingScroll(maxHeight: PanelView.bodyLimit) {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "desktopcomputer").font(.system(size: 22)).foregroundStyle(Ink.logo)
+                            .frame(width: 48, height: 48)
+                            .background(RoundedRectangle(cornerRadius: 12).fill(Ink.tile))
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(verbatim: peer.machine).font(.system(size: 17, weight: .semibold))
+                            HStack(spacing: 6) {
+                                Circle().fill(peer.isOnline && peer.state == .approved ? Ink.green : Ink.tertiary).frame(width: 6, height: 6)
+                                Text(verbatim: word.text)
+                                Text(verbatim: "·")
+                                Text(verbatim: peer.transport)
+                            }
+                            .font(.system(size: 12.5)).foregroundStyle(Ink.secondary)
+                        }
+                    }
+                    group(String(localized: "Identity", comment: "Machine page section")) {
+                        Text(verbatim: peer.id).font(.system(size: 11, design: .monospaced)).foregroundStyle(Ink.secondary)
+                            .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                            .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if !tasks.isEmpty {
+                        group(String(localized: "Tasks", comment: "Machine page section")) {
+                            ForEach(tasks.prefix(5)) { t in
+                                HStack {
+                                    Text(verbatim: t.label.isEmpty ? t.id : t.label).font(.system(size: 13)).lineLimit(1)
+                                    Spacer()
+                                    Text(verbatim: t.state.rawValue).font(.system(size: 12)).foregroundStyle(Ink.secondary)
+                                }
+                                .padding(.horizontal, 12).frame(height: 36)
+                            }
+                        }
+                    }
+                    group(String(localized: "Recent activity", comment: "Machine page section")) {
+                        if activity.isEmpty {
+                            Text("Nothing lately.", comment: "Machine page: no activity").font(.system(size: 12)).foregroundStyle(Ink.tertiary)
+                                .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        ForEach(Array(activity)) { n in
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(verbatim: n.title).font(.system(size: 12.5)).lineLimit(1)
+                                Spacer()
+                                Text(verbatim: FleetNoticeTime.string(n.at)).font(.system(size: 11.5)).foregroundStyle(Ink.tertiary)
+                            }
+                            .padding(.horizontal, 12).frame(height: 32)
+                        }
+                    }
+                    HStack(spacing: 8) {
+                        // Re-probes unfinished tasks; it can add activity, and never clears any.
+                        Button(String(localized: "Check In", comment: "Machine page: ask unfinished tasks for their state")) {
+                            actions.fleetReconcileTasks()
+                        }
+                        .buttonStyle(BannerButton())
+                        Spacer()
+                        if peer.state == .approved {
+                            Button(String(localized: "Remove from Fleet…", comment: "Machine page: revoke this Mac")) {
+                                actions.fleetRevoke(peer: peer.id)
+                            }
+                            .buttonStyle(BannerButton(destructive: true))
+                        }
+                    }
+                }
+                .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 16)
+            }
+        }
+    }
+
+    private func group<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(verbatim: title).textCase(.uppercase).font(.system(size: 11, weight: .semibold)).foregroundStyle(Ink.tertiary)
+            VStack(spacing: 0) { content() }
+                .background(RoundedRectangle(cornerRadius: 10).fill(Ink.surface))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+    }
+}
+
+// Every sync conflict, each answered on its own; nothing is applied until chosen.
+struct ConflictsPage: View {
+    @ObservedObject var model: PanelModel
+    let actions: FleetActions
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            NavBar(title: String(localized: "Conflicts", comment: "Conflicts page title"), back: { model.pop() }) {
+                Text(verbatim: model.parentTitle).font(.system(size: 13)).foregroundStyle(Ink.link).lineLimit(1)
+            } trailing: { EmptyView() }
+            FittingScroll(maxHeight: PanelView.bodyLimit) {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let fleet = model.fleet {
+                        FleetReadState(fleet: fleet, read: .conflicts)
+                        if fleet.conflicts.isEmpty {
+                            Text("Nothing to answer.", comment: "Conflicts page: empty").font(.system(size: 12.5)).foregroundStyle(Ink.secondary)
+                        }
+                        ForEach(fleet.conflicts) { c in ConflictRow(conflict: c, actions: actions) }
+                    }
+                }
+                .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 16)
+            }
+        }
+    }
 }
 
 // MARK: - Controls

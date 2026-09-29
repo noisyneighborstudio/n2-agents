@@ -25,6 +25,13 @@ import SwiftUI
             model.path = [.profile(profile)]
         case "provider"?:
             model.path = [.profile(profile), .provider(profile: profile, vendor: vendor)]
+        case "banners"?:
+            model.fleet?.pending = [FleetPending(id: "SHA256:" + String(repeating: "c", count: 43), machine: "studio",
+                                                 transport: "ssh", requestedAt: Date())]
+            model.fleet?.conflicts = [FleetConflict(id: "c1", address: "profile|Work|claude|settings", digest: "", remote: "present", inScope: true)]
+            model.fleet?.sync.conflicts = 1
+        case "machine"?:
+            model.path = [.machine("SHA256:" + String(repeating: "b", count: 43))]
         case "send"?:
             let id = "codex/7c1e4b8a-0000-4000-8000-000000000001"
             model.sendDrafts[id] = SendDraft(cwd: "/Users/seth/Development/n2-agents")
@@ -231,7 +238,23 @@ enum Fixture {
     }
 }
 
-final class NoActions: PanelActions {
+final class NoActions: PanelActions, FleetActions {
+    func fleetInit() {}
+    func fleetEnroll(transport: String) {}
+    func fleetApprove(peer: String) {}
+    func fleetDeny(peer: String) {}
+    func fleetRevoke(peer: String) {}
+    func fleetSyncNow() {}
+    func fleetResolve(conflict: String, keepLocal: Bool) {}
+    func fleetExcept(address: String, add: Bool) {}
+    func fleetToolApply(_ name: String?) {}
+    func fleetDispatch() {}
+    func fleetShowTask(_ id: String) {}
+    func fleetRetry(task: String) {}
+    func fleetDistribute(task: String, machine: String?) {}
+    func fleetReconcileTasks() {}
+    func fleetOpenTerminal(_ argv: [String]) {}
+
     func openSession(profile: String, vendor: String, terminal: String?) {}
     func setActive(profile: String, vendor: String?) {}
     func copyCommand(profile: String, vendor: String) {}
