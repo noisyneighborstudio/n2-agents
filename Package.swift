@@ -19,7 +19,7 @@ let package = Package(
             path: "tray",
             exclude: ["build"],
             sources: ["main.swift", "NativeAuth.swift", "UpdateChannel.swift", "ShellPath.swift", "Vendors.swift", "ProfileColor.swift", "StatusIcon.swift", "QuotaToast.swift", "UsageTiers.swift", "ToastStack.swift", "Ink.swift", "StatusInk.swift", "Motion.swift", "LabMark.swift", "ProfileSetup.swift", "GlassWindow.swift",
-                      "PanelModel.swift", "UsageDetailsView.swift", "AccountOwnership.swift", "NativeSignIn.swift", "NativeSessionTransfer.swift", "PanelView.swift", "PageStack.swift", "FleetPage.swift", "ProfilePage.swift", "ProviderPage.swift", "ConfigurePage.swift", "Clipboard.swift", "SessionsWindow.swift", "SettingsWindowView.swift", "FleetSyncSettings.swift", "FleetSettingsLoader.swift", "Hotkey.swift", "FleetModel.swift", "FleetView.swift", "FleetControl.swift"],
+                      "PanelModel.swift", "UsageDetailsView.swift", "AccountOwnership.swift", "NativeSignIn.swift", "NativeSessionTransfer.swift", "PanelView.swift", "PageStack.swift", "FleetPage.swift", "ProfilePage.swift", "ProviderPage.swift", "ConfigurePage.swift", "Clipboard.swift", "PanelMenus.swift", "SessionsWindow.swift", "SettingsWindowView.swift", "FleetSyncSettings.swift", "FleetSettingsLoader.swift", "Hotkey.swift", "FleetModel.swift", "FleetView.swift", "FleetControl.swift"],
             // Sparkle.framework ships in Contents/Frameworks; without this rpath
             // dyld cannot find it and the app dies before main().
             linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]

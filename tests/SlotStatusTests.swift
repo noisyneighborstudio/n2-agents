@@ -73,9 +73,9 @@ import Foundation
         // Profile note: first match wins, and failed checks are never "All ready".
         let back = Date()
         check(ProfileNote.of([.ready(left: 50), .signedOut, .out(back: back)]).text.hasPrefix("1 signed out"), "sign-outs lead")
-        check(ProfileNote.of([.out(back: back), .checkFailed]).text == "1 out · 1 unchecked", "out names unchecked beside it")
+        check(ProfileNote.of([.out(back: back), .checkFailed]).text == "1 out · 1 check failed", "out names unchecked beside it")
         check(ProfileNote.of([.low(left: 5), .ready(left: 80)]).tone == .amber, "low is amber")
-        check(ProfileNote.of([.checkFailed, .ready(left: 80)]).text == "1 unchecked", "a failed check alone is not all ready")
+        check(ProfileNote.of([.checkFailed, .ready(left: 80)]).text == "1 check failed", "a failed check alone is not all ready")
         check(ProfileNote.of([.ready(left: 80), .unmetered]).text == "All ready", "ready and unmetered are all ready")
         check(ProfileNote.of([.ready(left: 80)], pending: 1).tone == .red, "unfinished setup counts as signed out")
         // Tally: every slot lands in at most one count, and checking in none.
@@ -156,6 +156,22 @@ import Foundation
         check(Pace(.init(scope: "seven_day", percent: 75, resets: now.addingTimeInterval(3600), durationSeconds: nil), now: now) == nil,
               "no window length, no pace")
         check(Pace(nil) == nil, "no window, no pace")
+        // Active menu: every profile, then a submenu per lab two or more profiles hold.
+        func lab(_ id: String) -> Vendor {
+            Vendor(id: id, installed: true, desktop: "none", usage: "oauth", label: id.capitalized,
+                   sessions: "none", monogram: "", desktopName: "", desktopBundle: "", longWindow: "7d")
+        }
+        let work = Profile(name: "Work", running: false, slots: ["claude": "active", "codex": "ok"])
+        let home = Profile(name: "Home", running: false, slots: ["claude": "ok", "codex": "active", "grok": "active"])
+        let menu = ActiveMenu(snapshot: Snapshot(vendors: [lab("claude"), lab("codex"), lab("grok")], profiles: [], active: "mixed"),
+                              profiles: [work, home])
+        check(menu.profiles.map(\.profile) == ["Work", "Home"] && menu.profiles.allSatisfy { !$0.checked },
+              "mixed: every profile listed, none checked")
+        check(menu.labs.map(\.vendor) == ["claude", "codex"], "a lab only one profile holds has no submenu")
+        check(menu.labs[0].choices == [.init(profile: "Work", vendor: "claude", checked: true),
+                                       .init(profile: "Home", vendor: "claude", checked: false)], "each lab checks its active profile")
+        check(ActiveMenu.title(Snapshot(vendors: [], profiles: [], active: "mixed")) == nil
+              && ActiveMenu.title(Snapshot(vendors: [], profiles: [], active: "Work")) == "Work", "the header names one profile or none")
         print("slot status tests passed")
     }
 }

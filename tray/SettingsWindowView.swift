@@ -142,20 +142,7 @@ struct SettingsWindowView: View {
                                 Button("Check Now…") { actions.checkForUpdates() }
                             }
                             .padding(.horizontal, 13).frame(height: 46)
-                            Divider().padding(.leading, 13)
-                            HStack {
-                                Label("Report a bug", systemImage: "ladybug")
-                                Spacer()
-                                Button("Report…") { actions.reportBug() }
-                            }
-                            .padding(.horizontal, 13).frame(height: 46)
-                            Divider().padding(.leading, 13)
-                            HStack {
-                                Label("Quit N2 Agents", systemImage: "power")
-                                Spacer()
-                                Button("Quit") { actions.quit() }
-                            }
-                            .padding(.horizontal, 13).frame(height: 46)
+
                         }
                         .background(Ink.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }

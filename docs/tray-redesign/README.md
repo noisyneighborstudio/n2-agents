@@ -9,10 +9,8 @@ Decisions the handoff left open, as built:
   is pure white in light mode (white cards vanish on it), so `Ink.page` is the
   glass's measured tone: `#ECECF0` light, `#252932` dark.
 - **Features the Fleet page has no place for.** Peers, sync and tasks
-  (`FleetSection`) sit below This Machine. Recent sessions open from a footer
-  icon (`clock.arrow.circlepath`). Version, update status, Report a bug and
-  Quit live in Settings → About; an update waiting puts a dot on the footer's
-  Settings icon.
+  (`FleetSection`) sit below This Machine until `12-whole-popover.md` gives
+  each its home.
 - **Strip bars** of out, failed and signed-out slots are a tinted track with no
   fill: a full bar would read as full capacity in grayscale.
 - **Out with no known return**: the hero reads "Out of allowance" and drops
@@ -20,8 +18,8 @@ Decisions the handoff left open, as built:
 - **Move session** lists this slot's recent sessions; each offers the other
   profiles holding the lab and, for Codex, Send to Machine. **Switch account**
   is sign-in with confirmation.
-- **Profile note** adds "{n} unchecked" when checks failed and nothing is out,
-  rather than "All ready".
+- **Profile note** adds "{n} check failed" when checks failed and nothing is
+  out, rather than "All ready".
 
 **Read this file first, all the way through, before writing any code.**
 
@@ -71,6 +69,7 @@ Machine        section header on the Fleet page ("This Machine", then peers)
 | `08-slices.md` | The build order as vertical slices, each with its proof (per `AGENTS.md`) | To plan the work |
 | `09-acceptance.md` | A pass/fail checklist the reviewer runs | Before you say "done" |
 | `10-open-questions.md` | Decisions not yet made. Do not guess; ask. | Before starting |
+| `12-whole-popover.md` | Every section of the old panel given a home: app header, Recent, Other Macs, Tasks, banners, and the Machine, Task, Send Work and Send Session pages | Supersedes the Fleet page's title and footer in `02-screens.md` |
 | `11-appearance.md` | **Light and dark mode**: surfaces, buttons, toasts, menu bar appearance, Increase Contrast / Reduce Transparency | Before styling anything. The prototype is dark only |
 
 ## Non-negotiables (a violation fails review)

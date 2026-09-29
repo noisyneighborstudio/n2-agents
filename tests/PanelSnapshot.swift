@@ -193,7 +193,31 @@ enum Fixture {
                        "Work": reading(used: 36, resets: 15 * day, scope: "mo", duration: 30 * day)],
             "muse": ["Default": failed],
         ]
+        model.fleet = fleet()
         return model
+    }
+
+    /// This Mac in sync with one other: mac-mini, running a task; one failed.
+    static func fleet() -> FleetData {
+        var f = FleetData()
+        f.initialized = true
+        f.machine = "macbook-pro"
+        f.selfID = "SHA256:" + String(repeating: "a", count: 43)
+        f.observedAt = Date()
+        f.peers = [FleetPeer(id: f.selfID, machine: "macbook-pro", transport: "self", state: .approved, reach: .`self`),
+                   FleetPeer(id: "SHA256:" + String(repeating: "b", count: 43), machine: "mac-mini", transport: "tailscale",
+                             state: .approved, reach: .online)]
+        f.sync = FleetSync(machine: "macbook-pro", selfID: f.selfID, resources: 12, agreed: 12)
+        f.tasks = [FleetTask(id: "t-7f3a", state: .running, vendor: "claude", rc: "", label: "migrate settings store",
+                             machine: "mac-mini", role: "dispatcher"),
+                   FleetTask(id: "t-kc01", state: .failed, vendor: "codex", rc: "1", label: "kc-before",
+                             machine: "macbook-pro", role: "dispatcher")]
+        f.notices = [FleetNotice(at: Date().addingTimeInterval(-1500), kind: .started, task: "t-7f3a", machine: "mac-mini",
+                                 text: "migrate settings store"),
+                     FleetNotice(at: Date().addingTimeInterval(-3000), kind: .failed, task: "t-kc01", machine: "macbook-pro",
+                                 text: "kc-before")]
+        f.loaded = Set(FleetRead.allCases)
+        return f
     }
 }
 

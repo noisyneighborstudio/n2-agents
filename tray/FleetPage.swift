@@ -12,7 +12,7 @@ struct FleetPage: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            FleetHeader(model: model, data: data)
+            AppHeader(model: model, actions: actions, data: data)
             Rectangle().fill(Ink.hairline).frame(height: 1).padding(.horizontal, 14)
             FittingScroll(maxHeight: PanelView.bodyLimit) {
                 VStack(spacing: 0) {
@@ -22,7 +22,7 @@ struct FleetPage: View {
                     if data.profiles.count <= 1 {
                         FirstRun(actions: actions)
                     } else {
-                        MachineHeader(profiles: data.profiles.count)
+                        MachineHeader(model: model, actions: actions, profiles: data.profiles.count)
                             .padding(.top, 8)
                         VStack(spacing: 8) {
                             ForEach(data.profiles, id: \.name) { p in
@@ -44,18 +44,35 @@ struct FleetPage: View {
     }
 }
 
-private struct FleetHeader: View {
+// The app, then where new sessions go: the Active profile on a second line,
+// a menu to change it for every lab or one lab. Trailing: the tally across
+// this Mac's slots, and Settings.
+private struct AppHeader: View {
     @ObservedObject var model: PanelModel
+    let actions: PanelActions
     let data: PanelData
 
     var body: some View {
         let tally = model.tally
         HStack(spacing: 0) {
-            HStack(alignment: .firstTextBaseline, spacing: 7) {
-                Text("Fleet", comment: "Panel title").font(.system(size: 15, weight: .semibold)).tracking(-0.15)
-                Text("^[\(1) machine](inflect: true) · ^[\(data.profiles.count) profile](inflect: true)",
-                     comment: "Fleet header: machine and profile counts")
-                    .font(.system(size: 12)).monospacedDigit().foregroundStyle(Ink.tertiary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(verbatim: "N2 Agents").font(.system(size: 15, weight: .semibold)).tracking(-0.15)
+                Button(action: popUpActive) {
+                    HStack(spacing: 5) {
+                        Text("Active", comment: "App header: the profile new sessions use").foregroundStyle(Ink.tertiary)
+                        if let active = ActiveMenu.title(data.snapshot) {
+                            Circle().fill(profileColor(active)).frame(width: 6, height: 6)
+                            Text(verbatim: active).foregroundStyle(Ink.secondary)
+                        } else {
+                            Text("Mixed", comment: "App header: labs use different profiles").foregroundStyle(Ink.secondary)
+                        }
+                        Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(Ink.tertiary)
+                    }
+                    .font(.system(size: 12)).lineLimit(1)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(String(localized: "Choose the profile new sessions use", comment: "App header: Active switch help"))
             }
             Spacer(minLength: 8)
             HStack(spacing: 10) {
@@ -70,9 +87,37 @@ private struct FleetHeader: View {
                          String(localized: "\(tally.attention) need attention", comment: "Fleet tally: failed checks and sign-outs"))
                 }
             }
+            IconButton(symbol: "gearshape", label: String(localized: "Settings", comment: "App header: open settings")) {
+                actions.showSettings()
+            }
+            .contextMenu {
+                if UpdateChannel.isQABuild {
+                    Button("Play the Week (Debug)") { actions.playUsageWeek() }
+                }
+            }
+            .padding(.leading, 6)
         }
-        .padding(.leading, 16).padding(.trailing, 14)
-        .frame(height: 52)
+        .padding(.leading, 16).padding(.trailing, 10)
+        .frame(height: 56)
+    }
+
+    /// Per profile, then a submenu per lab; the native menu, popped at the pointer.
+    private func popUpActive() {
+        let menu = ActiveMenu(snapshot: data.snapshot, profiles: data.profiles)
+        var items: [NSMenuItem] = menu.profiles.map { c in
+            ClosureItem(c.profile, symbol: "person.crop.circle", checked: c.checked) {
+                actions.setActive(profile: c.profile, vendor: nil)
+            }
+        }
+        if !menu.labs.isEmpty {
+            items.append(.separator())
+            items += menu.labs.map { lab in
+                submenu(lab.label, symbol: "square.stack.3d.up", lab.choices.map { c in
+                    ClosureItem(c.profile, checked: c.checked) { actions.setActive(profile: c.profile, vendor: lab.vendor) }
+                })
+            }
+        }
+        popUp(items)
     }
 
     private func pair(_ symbol: String, _ count: Int, _ ink: Color, _ label: String) -> some View {
@@ -180,23 +225,64 @@ private struct NextBestButton: View {
     }
 }
 
+// This Mac: its sync word when it's in a fleet, its profile count, and `+`
+// for a new profile or another Mac.
 private struct MachineHeader: View {
+    @ObservedObject var model: PanelModel
+    let actions: PanelActions
     let profiles: Int
 
     var body: some View {
         HStack(spacing: 7) {
             Image(systemName: "laptopcomputer").font(.system(size: 12))
-            Text("This Machine", comment: "Fleet page: the section for this Mac's profiles")
+            Text("This Machine", comment: "Root: the section for this Mac's profiles")
                 .font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.primary.opacity(0.8))
-            Circle().fill(Ink.green).frame(width: 6, height: 6).accessibilityHidden(true)
-            Text("online", comment: "Machine status")
+            if let word = SyncWord(model.fleet) {
+                Circle().fill(word.ink).frame(width: 6, height: 6).accessibilityHidden(true)
+                Text(verbatim: word.text)
+            }
             Spacer(minLength: 6)
             Text("^[\(profiles) profile](inflect: true)", comment: "Machine section: its profile count").monospacedDigit()
+            Button {
+                popUp([ClosureItem(String(localized: "New Profile…", comment: "Add menu"), symbol: "person.badge.plus") { actions.newProfile() },
+                       ClosureItem(String(localized: "Add a Mac…", comment: "Add menu: pair another Mac, in Settings"), symbol: "desktopcomputer") {
+                           actions.showSettings()
+                       }])
+            } label: {
+                Image(systemName: "plus").font(.system(size: 12, weight: .semibold))
+                    .frame(width: 22, height: 22).contentShape(Rectangle())
+            }
+            .buttonStyle(PressableStyle(radius: 6))
+            .help(String(localized: "New profile or another Mac", comment: "Machine header: add menu"))
+            .accessibilityLabel(String(localized: "Add", comment: "Machine header: add menu"))
         }
         .font(.system(size: 11.5))
         .foregroundStyle(Ink.secondary)
-        .padding(.horizontal, 16)
+        .padding(.leading, 16).padding(.trailing, 10)
         .frame(height: 30)
+    }
+}
+
+/// This Mac's one word about sync, with its dot; nil outside a fleet or
+/// before the sync state has been read.
+struct SyncWord {
+    let text: String
+    let ink: Color
+
+    init?(_ fleet: FleetData?) {
+        guard let fleet, fleet.initialized, fleet.loaded.contains(.sync) else { return nil }
+        let s = fleet.sync
+        if fleet.unavailable.contains(.sync) {
+            (text, ink) = (String(localized: "sync unknown", comment: "Sync word: the sync read failed"), Ink.secondary)
+        } else if s.conflicts > 0 {
+            (text, ink) = (String(localized: "^[\(s.conflicts) conflict](inflect: true)", comment: "Sync word: conflicts to answer"), Ink.amber)
+        } else if s.resources == 0 {
+            (text, ink) = (String(localized: "not sharing", comment: "Sync word: nothing shared yet"), Ink.secondary)
+        } else if s.settled {
+            (text, ink) = (String(localized: "in sync", comment: "Sync word: every shared item agrees"), Ink.green)
+        } else {
+            (text, ink) = (String(localized: "syncing", comment: "Sync word: shared items still settling"), Ink.secondary)
+        }
     }
 }
 
@@ -314,12 +400,23 @@ private struct CapacitySegment: View {
     }
 }
 
+// Refresh and when it last read; the version and its channel, speaking up
+// only for an update or a failed check; Report a bug and Quit.
 private struct FleetFooter: View {
     @ObservedObject var model: PanelModel
     let actions: PanelActions
 
+    private var version: String {
+        let short = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0").prefix { $0 != "-" }
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
+        return "\(short) (\(build))"
+    }
+
     var body: some View {
         HStack(spacing: 2) {
+            icon("arrow.clockwise", String(localized: "Refresh", comment: "Footer: re-read usage"), turning: model.usageLoading) {
+                actions.retryUsage()
+            }
             TimelineView(.periodic(from: .now, by: 30)) { _ in
                 if let at = model.refreshedAt {
                     Text("Updated \(at, format: .relative(presentation: .numeric, unitsStyle: .wide))",
@@ -330,31 +427,54 @@ private struct FleetFooter: View {
             }
             .font(.system(size: 11.5)).foregroundStyle(Ink.tertiary).lineLimit(1)
             Spacer(minLength: 6)
-            icon("arrow.clockwise", String(localized: "Refresh", comment: "Footer: re-read usage"), turning: model.usageLoading) {
-                actions.retryUsage()
+            Button { actions.checkForUpdates() } label: {
+                HStack(spacing: 4) {
+                    Text(verbatim: version).monospacedDigit()
+                    if UpdateChannel.isQABuild {
+                        Text("QA", comment: "Footer: a local QA build").fontWeight(.semibold)
+                    } else {
+                        Image(systemName: UpdateChannel.selected().symbol).fontWeight(.light)
+                    }
+                    status
+                }
+                .font(.system(size: 11.5)).foregroundStyle(Ink.tertiary)
+                .padding(.horizontal, 4).frame(height: 28).contentShape(Rectangle())
             }
+            .buttonStyle(PressableStyle(radius: 7))
+            .help(updateHelp)
             icon("clock.arrow.circlepath", String(localized: "Recent sessions", comment: "Footer: open the sessions window")) {
                 actions.showAllSessions()
             }
-            icon("plus", String(localized: "New profile", comment: "Footer: create a profile")) { actions.newProfile() }
-            icon("slider.horizontal.3", model.updateStatus == .available
-                 ? String(localized: "Settings · update available", comment: "Footer: settings, with an update waiting")
-                 : String(localized: "Settings", comment: "Footer: open settings")) { actions.showSettings() }
-                .contextMenu {
-                    if UpdateChannel.isQABuild {
-                        Button("Play the Week (Debug)") { actions.playUsageWeek() }
-                    }
-                }
-                .overlay(alignment: .topTrailing) {
-                    // An update waiting: a dot on Settings, where it installs.
-                    if model.updateStatus == .available {
-                        Circle().fill(Ink.link).frame(width: 6, height: 6).offset(x: -5, y: 5)
-                    }
-                }
+            icon("ladybug", String(localized: "Report a bug", comment: "Footer: file an issue")) { actions.reportBug() }
+            icon("power", String(localized: "Quit N2 Agents", comment: "Footer: quit the app")) { actions.quit() }
         }
-        .padding(.leading, 16).padding(.trailing, 8)
+        .padding(.leading, 8).padding(.trailing, 8)
         .frame(height: 40)
         .overlay(alignment: .top) { Rectangle().fill(Ink.hairline).frame(height: 1) }
+    }
+
+    /// Up to date says nothing; an update is a capsule, a failed check a warning.
+    @ViewBuilder private var status: some View {
+        switch model.updateStatus {
+        case .available?:
+            Text("Update Available", comment: "Footer: an update is ready to install")
+                .font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.white)
+                .padding(.horizontal, 7).frame(height: 18)
+                .background(Capsule().fill(Ink.chip))
+        case .failed?:
+            Image(systemName: "exclamationmark.triangle").foregroundStyle(Ink.yellow)
+        case .upToDate?, nil:
+            EmptyView()
+        }
+    }
+
+    private var updateHelp: String {
+        if UpdateChannel.isQABuild { return String(localized: "Local QA build — never updates itself", comment: "Footer version help") }
+        switch model.updateStatus {
+        case .available?: return String(localized: "Update available — click to install", comment: "Footer version help")
+        case .failed(let reason)?: return String(localized: "Update check failed: \(reason) Click to retry.", comment: "Footer version help")
+        case .upToDate?, nil: return String(localized: "Check for updates", comment: "Footer version help")
+        }
     }
 
     private func icon(_ symbol: String, _ label: String, turning: Bool = false,

@@ -372,14 +372,14 @@ struct ProfileNote: Equatable {
         }
         if out > 0 {
             return .init(text: unchecked > 0
-                         ? String(localized: "\(out) out · \(unchecked) unchecked", comment: "Profile note: labs out of allowance, labs whose check failed")
+                         ? String(localized: "\(out) out · \(unchecked) check failed", comment: "Profile note: labs out of allowance, labs whose check failed")
                          : String(localized: "\(out) out", comment: "Profile note: labs out of allowance"), tone: .amber)
         }
         if low > 0 {
             return .init(text: String(localized: "\(low) running low", comment: "Profile note: labs under 20% left"), tone: .amber)
         }
         if unchecked > 0 {
-            return .init(text: String(localized: "\(unchecked) unchecked", comment: "Profile note: labs whose usage check failed"), tone: .amber)
+            return .init(text: String(localized: "\(unchecked) check failed", comment: "Profile note: labs whose usage check failed"), tone: .amber)
         }
         if statuses.contains(.checking) {
             return .init(text: String(localized: "Checking…", comment: "Profile note: usage checks running"), tone: .plain)

@@ -51,7 +51,7 @@ struct ConfigurePage: View {
                         if !profile.isActive(for: vendor.id) {
                             divider
                             Button { actions.setActive(profile: profile.name, vendor: vendor.id) } label: {
-                                row("checkmark.circle", String(localized: "Use for new sessions", comment: "Configure: make this profile the lab's active one")) {
+                                row("checkmark.circle", String(localized: "Use on This Mac", comment: "Configure: make this profile the lab's active one on this Mac")) {
                                     EmptyView()
                                 }
                                 .foregroundStyle(Ink.link)
