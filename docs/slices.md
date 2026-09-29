@@ -24,11 +24,33 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
    per step fails.
    Scope: disposable peers only; no live installation or real machines.
 
+2. **Honor Claude usage rejections** (`usage-claude-backoff`).
+   Behavior: after a 429 from Claude usage, no reader asks that account again
+   until its `Retry-After` has passed; the row stays `rate-limited` with the
+   last reading and its time. Evidence: `docs/audits/claude-usage-rate-limit-spike.md`.
+   Proof: reader test with the recorded 429 (`Retry-After: 300`): a second
+   read inside the window makes no network call and reports `rate-limited`;
+   a read after the window calls again. Break the gate once; the test fails.
+   Scope: Claude only, one Mac. Codex and peer sharing excluded.
+
+3. **One Claude usage call per account at a time** (`usage-claude-single-flight`).
+   Behavior: concurrent readers (tray, loop, dispatch) of one account share
+   one provider call, and a reading under 60 s old is served from the journal.
+   Proof: two concurrent `usage.py` runs against a held fake provider make one
+   call and both print its reading; with the reading aged past 60 s (injected
+   clock, no sleeps) the next run calls again.
+   Scope: Claude only, one Mac. The 60 s figure is policy, not a measured
+   provider window.
+
 Blocked on authorization:
 - Per-provider sign-in lifecycle evidence needs live provider accounts
   (readiness: "provider-specific authentication lifecycle").
 
 ## Noticed
+
+- Macs polling the same Claude account share its usage budget. Serving a
+  peer's fresh verified reading instead of polling needs an identity-match slice.
+  The window behind the ~5-read budget is also unmeasured.
 
 - Default's Claude login lives in two Keychain entries: `agents run` uses the
   path-hashed one, plain `claude` (via ~/.claude -> Default slot) the unscoped

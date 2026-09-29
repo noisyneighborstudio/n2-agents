@@ -1,0 +1,24 @@
+{
+  "observedAt": "2026-09-29T12:50:45Z",
+  "endpoint": "GET https://api.anthropic.com/api/oauth/usage",
+  "note": "Recorded on one Mac with five signed-in Claude profiles. Account, organization and request identifiers removed.",
+  "successHeaders": ["anthropic-organization-id", "anthropic-workspace-id", "cf-cache-status", "cf-ray", "connection", "content-security-policy", "content-type", "date", "request-id", "server", "server-timing", "strict-transport-security", "transfer-encoding", "vary", "x-robots-tag"],
+  "burst": {"account": "idle-team", "intervalSeconds": 0.25, "succeeded": 4, "rejectedAtRequest": 5, "elapsedSeconds": 2.0},
+  "rejection": {
+    "status": 429,
+    "headers": {"content-type": "application/json", "retry-after": "300", "server": "cloudflare",
+                "cache-control": "private, max-age=0, no-store, no-cache, must-revalidate, post-check=0, pre-check=0"},
+    "body": {"error": {"type": "rate_limit_error", "message": "Rate limited. Please try again later."}}
+  },
+  "duringRejection": [
+    {"request": "usage, other account, same Mac", "status": 200},
+    {"request": "profile, same token", "status": 200},
+    {"request": "usage, same token", "status": 429, "retryAfter": "299"},
+    {"request": "claude -p /usage, same route", "result": "printed current figures, exit 0"}
+  ],
+  "recovery": {
+    "pollIntervalSeconds": 20,
+    "retryAfterSequence": [278, 258, 238, 218, 198, 178, 158, 138, 117, 97, 77, 57, 37, 17],
+    "firstSuccessSecondsAfterRejection": 303
+  }
+}
