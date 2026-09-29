@@ -30,6 +30,11 @@ Blocked on authorization:
 
 ## Noticed
 
+- test-fleet.sh's two lock-race loops (section 39, about 45s) did not catch
+  their bugs when reintroduced on the Mac mini: 0 of 25 trials with the steal
+  marker replaced by delete-on-sight, 0 of 8 with the grace reset removed.
+  Replace them with deterministic interleavings, or delete them.
+
 - The panel's Fleet section draws only after all ten of its reads finish, and
   those reads have no timeout: a hang stacks one process per poll. Apply the UI
   rule in AGENTS.md: per-section states as reads arrive, and a bounded read.

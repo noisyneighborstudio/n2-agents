@@ -973,6 +973,11 @@ fleet_ak_lock() {
   # lock could never be taken and every grant would time out.
   mkdir -p "$(dirname "$faklk")" 2>/dev/null || true
   until mkdir "$faklk" 2>/dev/null; do
+    # No lock to wait for and no way to make one: the directory refuses
+    # writes, so waiting out the ceiling would only delay the same failure.
+    if [ ! -e "$faklk" ] && [ ! -w "$(dirname "$faklk")" ]; then
+      fleet_ak_err="cannot write $(dirname "$faklk")"; return 1
+    fi
     # A holder that died mid-rewrite must not wedge every later revocation:
     # adopt the lock once its recorded pid is gone. An empty pid file is
     # normally a live acquire that has not reached its printf yet -- but a
@@ -1023,14 +1028,14 @@ fleet_ak_lock() {
         fi
       fi
       faklt=$((faklt + 1))
-      [ "$faklt" -gt 300 ] && return 1
+      [ "$faklt" -gt 300 ] && { fleet_ak_err="timed out waiting for another grant change to finish"; return 1; }
       sleep 0.05 2>/dev/null || sleep 1
       continue
     fi
     faklt=$((faklt + 1))
     # ~15s ceiling. Timing out is reported as a failure by the caller rather
     # than proceeding unserialized, which is the bug this lock exists to fix.
-    [ "$faklt" -gt 300 ] && return 1
+    [ "$faklt" -gt 300 ] && { fleet_ak_err="timed out waiting for another grant change to finish"; return 1; }
     sleep 0.05 2>/dev/null || sleep 1
   done
   printf '%s\n' "$$" > "$faklk/pid" 2>/dev/null || true
@@ -1049,14 +1054,14 @@ fleet_ak_unlock() {
 # The exported names take the lock; the _locked bodies do the work. Both
 # preserve the inner status so callers still see a named failure.
 fleet_authorize() {  # <peerid> <peerdir>
-  fleet_ak_lock || { fleet_authorize_failed "$1" "timed out waiting for another grant change to finish"; return 1; }
+  fleet_ak_lock || { fleet_authorize_failed "$1" "$fleet_ak_err"; return 1; }
   fleet_authorize_locked "$@"; fawrc=$?
   fleet_ak_unlock
   return $fawrc
 }
 
 fleet_deauthorize() {  # <peerid>
-  fleet_ak_lock || { fleet_deauthorize_failed "$1" "timed out waiting for another grant change to finish"; return 1; }
+  fleet_ak_lock || { fleet_deauthorize_failed "$1" "$fleet_ak_err"; return 1; }
   fleet_deauthorize_locked "$@"; fdwrc=$?
   fleet_ak_unlock
   return $fdwrc
