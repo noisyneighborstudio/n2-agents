@@ -1298,7 +1298,8 @@ sessions_porcelain_legacy() {  # profiles, vendors, limit ("" = all)
       sp_dir=$(session_root "$sp_n" "$sp_v")
       [ -n "$sp_dir" ] && [ -d "$sp_dir" ] || continue
       # One stat per batch of files, not per file: profiles hold thousands.
-      find "$sp_dir" -type f -name '*.jsonl' -exec stat -f "%m%t$sp_n%t$sp_v%t%N" {} + 2>/dev/null
+      # -H: a sessions folder moved to another disk is often a symlink.
+      find -H "$sp_dir" -type f -name '*.jsonl' -exec stat -f "%m%t$sp_n%t$sp_v%t%N" {} + 2>/dev/null
     done
   done | sort -rn > "$sp_list"
   # Rows already read come out finished (H), background ones not at all, and

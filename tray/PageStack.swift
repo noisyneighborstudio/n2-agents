@@ -151,8 +151,11 @@ struct PageStack<Page: View>: View {
                     .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { h in
                         withAnimation(heights[key] == nil ? nil : Motion.nav(reduce: reduceMotion)) { heights[key] = h }
                     }
-                    .offset(x: isTop || reduceMotion ? 0 : -0.3 * Metrics.width)
+                    // Opacity on its own quick curve (the page beneath fades out before
+                    // the new one covers it); the drift keeps the navigation curve.
                     .opacity(isTop ? 1 : 0)
+                    .animation(reduceMotion ? Motion.fade : Motion.pageFade, value: isTop)
+                    .offset(x: isTop || reduceMotion ? 0 : -0.3 * Metrics.width)
                     .environment(\.pageIsTop, isTop)
                     .allowsHitTesting(isTop)
                     .accessibilityHidden(!isTop)

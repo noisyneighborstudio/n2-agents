@@ -30,11 +30,12 @@ enum Ink {
     /// Cards and rows sit on this, not on the bare glass, so their text has a
     /// ground that doesn't depend on the wallpaper.
     static let surface = Tone(NSColor.white.withAlphaComponent(0.85), NSColor.white.withAlphaComponent(0.06)).color
-    /// Behind every page of the panel. Opaque, so a pushed page covers the
-    /// one beneath it. The glass tone can't be sampled from a live glass view,
-    /// and windowBackgroundColor is pure white in light (white cards vanish on
-    /// it), so this is the glass's measured tone in each appearance.
-    static let page = Tone(rgb(0xECECF0), rgb(0x252932)).color
+    /// Behind every page of the panel: the glass's own tone, laid over it
+    /// translucently so the glass still shows (opaque read as a dark slab on a
+    /// dark desktop). A page moving off fades before the next covers it, so
+    /// the two don't show through each other. Not text; text sits on cards
+    /// (Ink.surface) or is measured against the greyest glass.
+    static let page = Tone(rgb(0xECECF0).withAlphaComponent(0.6), rgb(0x252932).withAlphaComponent(0.5)).color
     /// Dividers; stronger under Increase Contrast. Not text.
     static let hairline = Color(nsColor: NSColor(name: nil) { a in
         let alpha: CGFloat = Ink.highContrast(a) ? 0.2 : Ink.isDark(a) ? 0.07 : 0.08

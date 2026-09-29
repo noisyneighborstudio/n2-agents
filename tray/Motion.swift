@@ -23,6 +23,8 @@ enum Motion {
     static func toastIn(reduce: Bool) -> Animation { reduce ? fade : .spring(response: 0.5, dampingFraction: 0.72) }
     static func toastOut(reduce: Bool) -> Animation { reduce ? fade : .timingCurve(0.32, 0.72, 0, 1, duration: 0.42) }
     static let hover = Animation.easeOut(duration: 0.15)
+    /// A page leaving fades well before the next one has slid over it.
+    static let pageFade = Animation.easeOut(duration: 0.2)
     /// Reduce Motion's stand-in for every move: opacity only.
     static let fade = Animation.easeInOut(duration: 0.2)
 
