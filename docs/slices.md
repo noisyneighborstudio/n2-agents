@@ -42,6 +42,17 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
    Scope: Claude only, one Mac. The 60 s figure is policy, not a measured
    provider window.
 
+4. **Offer skill updates across the fleet** (`fleet-skill-updates`), later.
+   Behavior: N2 notices when an installed skill has a newer version at its
+   source and offers one action that updates it on every enrolled Mac; the
+   Fleet panel shows which Macs are behind.
+   Proof: a fixture skill source at v1 on two disposable peers; publish v2;
+   the check lists it outdated on both; the update brings both to v2; a peer
+   that was offline gets it on reconnect; a declined update stays at v1.
+   Scope: skills whose source N2 can identify (starts with a spike on which
+   sources carry version data). Claude's account skills (`skills/synced/`)
+   and Codex's bundled `skills/.system/` are excluded: their tools update them.
+
 Blocked on authorization:
 - Per-provider sign-in lifecycle evidence needs live provider accounts
   (readiness: "provider-specific authentication lifecycle").
