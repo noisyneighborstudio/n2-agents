@@ -8,7 +8,7 @@ import Combine
 
 /// One structured allowance observation from `agents best --json`.
 struct Usage {
-    enum Note: String {
+    enum Note: String, CaseIterable {
         case ok
         case noToken = "no-token"
         case staleToken = "stale-token"

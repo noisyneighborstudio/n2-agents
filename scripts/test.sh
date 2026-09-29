@@ -87,9 +87,11 @@ fi
 
 # --- native (Swift) --------------------------------------------------------
 if in_group swift; then
-swiftc -typecheck tray/main.swift tray/NativeAuth.swift tray/UpdateChannel.swift tray/Vendors.swift tray/ProfileColor.swift tray/StatusIcon.swift tray/QuotaToast.swift tray/Ink.swift tray/LabMark.swift \
+swiftc -typecheck tray/main.swift tray/NativeAuth.swift tray/UpdateChannel.swift tray/Vendors.swift tray/ProfileColor.swift tray/StatusIcon.swift tray/QuotaToast.swift tray/Ink.swift tray/StatusInk.swift tray/Motion.swift tray/LabMark.swift \
   tray/PanelModel.swift tray/UsageDetailsView.swift tray/AccountOwnership.swift tray/NativeSignIn.swift tray/NativeSessionTransfer.swift tray/PanelView.swift tray/SettingsWindowView.swift tray/FleetSyncSettings.swift tray/FleetSettingsLoader.swift tray/ProfileSetup.swift tray/GlassWindow.swift tray/ShellPath.swift tray/Hotkey.swift tray/FleetModel.swift tray/FleetView.swift tray/FleetControl.swift
 sh scripts/test-panel-usage.sh
+sh scripts/test-slot-status.sh
+zsh scripts/panel-snapshot.sh "$TMPDIR/panel-snapshot"
 sh scripts/test-account-ownership.sh
 sh scripts/test-native-signin.sh
 sh scripts/test-native-session-transfer.sh

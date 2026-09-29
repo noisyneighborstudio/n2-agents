@@ -18,7 +18,7 @@ let package = Package(
             dependencies: ["Sparkle", "SwiftTerm"],
             path: "tray",
             exclude: ["build"],
-            sources: ["main.swift", "NativeAuth.swift", "UpdateChannel.swift", "ShellPath.swift", "Vendors.swift", "ProfileColor.swift", "StatusIcon.swift", "QuotaToast.swift", "Ink.swift", "LabMark.swift", "ProfileSetup.swift", "GlassWindow.swift",
+            sources: ["main.swift", "NativeAuth.swift", "UpdateChannel.swift", "ShellPath.swift", "Vendors.swift", "ProfileColor.swift", "StatusIcon.swift", "QuotaToast.swift", "Ink.swift", "StatusInk.swift", "Motion.swift", "LabMark.swift", "ProfileSetup.swift", "GlassWindow.swift",
                       "PanelModel.swift", "UsageDetailsView.swift", "AccountOwnership.swift", "NativeSignIn.swift", "NativeSessionTransfer.swift", "PanelView.swift", "SettingsWindowView.swift", "FleetSyncSettings.swift", "FleetSettingsLoader.swift", "Hotkey.swift", "FleetModel.swift", "FleetView.swift", "FleetControl.swift"],
             // Sparkle.framework ships in Contents/Frameworks; without this rpath
             // dyld cannot find it and the app dies before main().

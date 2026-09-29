@@ -16,7 +16,30 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
 
 ## Queue
 
-1. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
+The menu bar redesign runs first, in the order of `docs/tray-redesign/08-slices.md`.
+Every tray slice's proof includes `scripts/panel-snapshot.sh` renders in light
+and dark, and `tray/build.sh`.
+
+1. **Real logos in status tiles** (`real-logos-everywhere`).
+   Behavior: every provider glyph is `LabMark` inside a tile whose corner is
+   25% of its side, filled and tinted per `SlotStatus`.
+   Proof: grep finds no monogram drawn outside `LabMark`'s fallback; snapshots.
+   Scope: tiles only.
+
+2. **Fleet and Profile pages** (`page-stack-fleet-profile`).
+   Behavior: the panel opens on Fleet (This Machine plus profile cards with
+   capacity strips); a card pushes its Profile page, the strip logos fly into
+   the rows, and Back, Esc or ⌘[ pops. The accordion is gone.
+   Proof: snapshots of both pages; a recording of push/pop, and with Reduce Motion.
+   Scope: a row still opens the old slot actions until `provider-page`.
+
+3. **Provider page** (`provider-page`).
+   Behavior: a row pushes the hero, chips, primary split button, tiles and the
+   Configure/Diagnostics rows; the glyph flies to the hero, the ring draws in.
+   Proof: snapshots of each status's page; Diagnostics shows a restricted slot's raw note.
+   Scope: Configure may push a placeholder until `configure-page`.
+
+4. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
    Behavior: from the QA app, pair two disposable peers, sync (with a held
    profile shared from Fleet settings), send work, show its result and revoke.
    Proof: packaged acceptance driven through accessibility events with

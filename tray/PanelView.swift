@@ -14,14 +14,6 @@ private enum Metrics {
 
 private func profileColor(_ name: String) -> Color { Color(nsColor: ProfileColor.of(name)) }
 
-// Used: under 50 plenty, 50–79 working on it, 80+ nearly gone. Colour only
-// reinforces — the length of the fill is the reading.
-private func meterColor(_ percent: Int) -> Color {
-    percent < 50 ? Ink.green : percent < 80 ? Ink.amber : Ink.red
-}
-
-private let maxedRed = Ink.red
-
 /// "3:20 PM" today, "Fri 3:20 PM" further out — a weekly window resets days away.
 // A weekday names a day only within the week: a monthly reset gets its date.
 private func clockTime(_ date: Date) -> String {
@@ -338,8 +330,8 @@ private struct NextBestButton: View {
                     }
                 })
             } label: {
-                row(icon: "clock", iconColor: maxedRed, title: "Everything is maxed") {
-                    if let firstBack { Text("first back \(clockTime(firstBack))").foregroundStyle(maxedRed) }
+                row(icon: "clock", iconColor: Ink.red, title: "Everything is maxed") {
+                    if let firstBack { Text("first back \(clockTime(firstBack))").foregroundStyle(Ink.red) }
                 }
             }
             .buttonStyle(RowButtonStyle(radius: 8, border: true))
@@ -443,9 +435,9 @@ private struct ProfileCard: View {
         .padding(.horizontal, 9)
         .background(RoundedRectangle(cornerRadius: Metrics.cardRadius).fill(Ink.surface)
             .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius)
-                .fill(allOut ? maxedRed.opacity(0.13) : isActive ? Color.accentColor.opacity(0.16) : Color.clear)))
+                .fill(allOut ? Ink.red.opacity(0.13) : isActive ? Color.accentColor.opacity(0.16) : Color.clear)))
         .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius)
-            .strokeBorder(allOut ? maxedRed.opacity(0.5)
+            .strokeBorder(allOut ? Ink.red.opacity(0.5)
                           : isActive ? Color.accentColor.opacity(0.55) : Color.primary.opacity(0.08)))
         .contextMenu {
             if !isActive {
@@ -517,7 +509,7 @@ private struct ProfileCard: View {
         case .ready:             return (nil, "Ready", Ink.secondary)
         case .checking:          return (nil, "Checking…", Ink.secondary)
         case .usageUnknown:      return ("questionmark.circle", "Usage unknown", Ink.amber)
-        case .allOut:            return ("clock", "All out", maxedRed)
+        case .allOut:            return ("clock", "All out", Ink.red)
         case .labsOut(let out, let of, _):
             return ("clock", "\(out) of \(of) out", Ink.amber)
         case .needsSignIn(let n):
@@ -550,9 +542,9 @@ private struct ProfileCard: View {
 
 // MARK: - Depth 2: one row per lab
 
-// The lab, its binding window, and when that window comes back. The mark and
-// the gauge arrive from the strip rather than fading in, so the row reads as
-// the same segment resolved.
+// The lab, its status ring, and what that status means for starting work:
+// how much is left and until when, or why nothing is known. The mark arrives
+// from the strip rather than fading in, so the row reads as the segment resolved.
 private struct SlotRow: View {
     let profile: Profile
     let vendor: Vendor
@@ -562,33 +554,49 @@ private struct SlotRow: View {
     let namespace: Namespace.ID
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var usage: Usage? { model.usage[vendor.id]?[profile.name] }
-    private var signedOut: Bool { data.snapshot.signedIn[profile.name]?[vendor.id] == false }
     private var open: Bool { model.selection == Selection(profile: profile.name, vendor: vendor.id) }
 
     var body: some View {
+        let (status, resets) = model.status(profile.name, vendor)
         VStack(alignment: .leading, spacing: 0) {
-            Button { toggle() } label: {
-                HStack(spacing: 7) {
-                    LabMark(vendor: vendor)
-                        .foregroundStyle(Color.primary.opacity(0.82))
-                        .frame(width: 18, height: 18)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.primary.opacity(0.12)))
-                        .matchedGeometryEffect(id: SlotID.mono(profile.name, vendor.id), in: namespace)
-                    Text(vendor.label)
-                        .font(.system(size: 11.5)).lineLimit(1).truncationMode(.tail)
-                        .frame(width: 74, alignment: .leading)
-                    detail
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(Ink.secondary)
-                        .rotationEffect(.degrees(open ? 90 : 0))
+            HStack(spacing: 4) {
+                Button { toggle() } label: {
+                    HStack(spacing: 10) {
+                        LabMark(vendor: vendor, size: 16)
+                            .foregroundStyle(Color.primary.opacity(0.82))
+                            .frame(width: 28, height: 28)
+                            .matchedGeometryEffect(id: SlotID.mono(profile.name, vendor.id), in: namespace)
+                        Text(verbatim: vendor.label)
+                            .font(.system(size: 14, weight: .medium)).lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        StatusRing(status: status)
+                        HStack(spacing: 6) {
+                            Text(verbatim: status.label)
+                                .foregroundStyle(status.left != nil || status == .unmetered ? Ink.secondary : status.ink)
+                            if let resets { Text(verbatim: SlotStatus.day(resets)).foregroundStyle(Ink.tertiary) }
+                        }
+                        .font(.system(size: 12.5)).monospacedDigit().lineLimit(1)
+                        .frame(minWidth: 88, alignment: .leading)
+                        .fixedSize()
+                        if status != .checkFailed {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(Ink.tertiary)
+                                .rotationEffect(.degrees(open ? 90 : 0))
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .frame(height: 40)
+                    .contentShape(Rectangle())
                 }
-                .padding(.horizontal, 3)
-                .frame(height: 24)
-                .contentShape(Rectangle())
+                .buttonStyle(RowButtonStyle(radius: 8, resting: open ? 0.07 : 0))
+                .accessibilityLabel("\(vendor.label), \(status.label)")
+                if status == .checkFailed {
+                    CheckAgainButton(checking: model.usageLoading) { actions.retryUsage() }
+                        .padding(.trailing, 6)
+                }
             }
-            .buttonStyle(RowButtonStyle(radius: 5, resting: open ? 0.07 : 0))
+            .frame(height: 44)
             if open {
                 SlotActions(profile: profile, vendor: vendor, data: data, model: model, actions: actions)
             }
@@ -600,67 +608,29 @@ private struct SlotRow: View {
             model.selection = open ? nil : Selection(profile: profile.name, vendor: vendor.id)
         }
     }
+}
 
-    @ViewBuilder private var detail: some View {
-        if !vendor.hasUsageAPI {
-            flat("minus.circle", "no quota API", Ink.secondary)
-        } else if signedOut {
-            flat("exclamationmark.triangle", "not signed in", Ink.amber)
-        } else if let u = usage, let b = u.binding {
-            Gauge(percent: b.percent)
-                .frame(height: 4)
-                .matchedGeometryEffect(id: SlotID.gauge(profile.name, vendor.id), in: namespace)
-            Text(verbatim: "\(b.percent)% used")
-                .font(.system(size: 10.5)).monospacedDigit()
-                .foregroundStyle(u.maxed ? maxedRed : .primary)
-                .frame(width: 56, alignment: .trailing)
-            meta(u, b)
-        } else if let u = usage, u.note == .ok || u.note == .expired {
-            flat("clock", u.unavailableLabel, Ink.amber)
-        } else if let note = usage?.note {
-            if note == .sharedLogin {
-                flat("link", usage?.statusLabel ?? "no reading", Ink.secondary)
-            } else {
-                flat(note == .staleToken ? "exclamationmark.triangle" : "arrow.clockwise", usage?.statusLabel ?? "no reading", Ink.amber)
-            }
-        } else if model.usageSweeping {
-            Sweep().clipShape(Capsule())
-                .frame(height: 4)
-                .matchedGeometryEffect(id: SlotID.gauge(profile.name, vendor.id), in: namespace)
-            Text(verbatim: "").frame(width: 30)
-            Text(verbatim: "").frame(width: 88)
-        } else {
-            flat(nil, model.usageLoading ? "checking…" : "no reading", Ink.secondary)
+// A failed check's retry: a round yellow button beside the row, whose arrow
+// turns until the check resolves.
+private struct CheckAgainButton: View {
+    let checking: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "arrow.clockwise")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Ink.yellow)
+                .turning(checking)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(Ink.Tone.yellow.wash(0.14)))
+                .contentShape(Circle())
         }
+        .buttonStyle(.plain)
+        .disabled(checking)
+        .help(String(localized: "Check again", comment: "Retry a failed usage check"))
+        .accessibilityLabel(String(localized: "Check again", comment: "Retry a failed usage check"))
     }
-
-    // The window tag rides with the time: depth 2 has one bar, so a separate
-    // column for "5h" was spending width the gauge needed.
-    private func meta(_ u: Usage, _ b: (tag: String, percent: Int, resets: Date?)) -> some View {
-        HStack(spacing: 3) {
-            if u.maxed { Image(systemName: "clock").font(.system(size: 8)) }
-            Text(u.maxed ? (u.maxedUntil.map(clockTime) ?? "out")
-                         : b.resets.map { "\(b.tag) · \(clockTime($0))" } ?? b.tag)
-        }
-        .font(.system(size: 10))
-        .foregroundStyle(u.maxed ? maxedRed : Ink.secondary)
-        .lineLimit(1)
-        .frame(width: 88, alignment: .trailing)
-        .help("Usage checked at \(u.fetchedAt.formatted(date: .abbreviated, time: .standard))")
-    }
-
-    private func flat(_ icon: String?, _ text: String, _ tint: Color) -> some View {
-        HStack(spacing: 4) {
-            Spacer(minLength: 0)
-            if let icon { Image(systemName: icon).font(.system(size: 8)) }
-            Text(text)
-        }
-        .font(.system(size: 10.5))
-        .foregroundStyle(tint)
-        .lineLimit(1)
-    }
-
-
 }
 
 // MARK: - Depth 3: everything for one slot
@@ -810,49 +780,6 @@ private struct ActionRow: View {
     }
 }
 
-// label · bar · percent · meta. A nil percent is a reading still on its way:
-// the bar sweeps and the number stays blank, in the same frame it will fill.
-private struct MeterRow: View {
-    let label: String
-    let percent: Int?
-    let meta: String
-    let delay: Double
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var filled = false
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Text(label).foregroundStyle(Ink.secondary).frame(width: 18, alignment: .leading)
-            GeometryReader { g in
-                ZStack(alignment: .leading) {
-                    if let p = percent {
-                        Capsule().fill(Color.primary.opacity(0.16))
-                        Capsule().fill(p >= Usage.maxedAt ? maxedRed : meterColor(p))
-                            .frame(width: g.size.width * CGFloat(min(max(p, 0), 100)) / 100)
-                            .scaleEffect(x: filled ? 1 : 0, anchor: .leading)
-                    } else {
-                        Sweep().clipShape(Capsule())
-                    }
-                }
-            }
-            .frame(height: 4)
-            Text(percent.map { "\($0)%" } ?? "").monospacedDigit().frame(width: 30, alignment: .trailing)
-            Text(meta).foregroundStyle(Ink.secondary).lineLimit(1).frame(width: 84, alignment: .trailing)
-        }
-        .font(.system(size: 10.5))
-        .frame(height: 11)
-        .animation(.easeOut(duration: 0.3), value: percent)
-        .onAppear {
-            guard percent != nil else { return }
-            if reduceMotion {
-                filled = true
-            } else {
-                withAnimation(.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.42).delay(delay)) { filled = true }
-            }
-        }
-    }
-}
-
 // Indeterminate progress: a 40%-wide highlight crossing its track every
 // 1.4 s. Under Reduce Motion the track just sits at a static 30% tint.
 private struct Sweep: View {
@@ -950,91 +877,43 @@ private struct InlineStatus: View {
 
 // MARK: - Depth 1: the capacity strip
 
-// The lab's two-letter mark, as ProfileSetup already draws it. Fixed width is
-// the whole point: seven labs fit one row with no overflow control, where word
-// chips wrapped and needed a +N to hide the rest.
-// One lab at depth 1: its mark over its headroom. Four pictures that never look
-// alike — a reading, no quota API at all (dashed), signed out (amber), and a
-// reading on its way (sweep, only while a fetch is running).
+// One lab at depth 1: its logo, the value that says where it stands (what's
+// left, the day it's back, or why nothing is known) and a bar of what's left.
+// Unknown, failed and signed-out slots never show a percentage or a full bar.
 private struct CapacitySegment: View {
     let profile: String
     let vendor: Vendor
-    let usage: Usage?
-    let signedOut: Bool
-    let sweeping: Bool
+    let status: SlotStatus
     let namespace: Namespace.ID
 
-    private var used: Int? { usage?.used }
-    private var maxed: Bool { usage?.maxed ?? false }
-
     var body: some View {
-        VStack(spacing: 3) {
-            LabMark(vendor: vendor)
-                .foregroundStyle(maxed ? maxedRed : signedOut ? Ink.amber : Ink.secondary)
-                .opacity(vendor.hasUsageAPI ? 1 : 0.5)
-                .matchedGeometryEffect(id: SlotID.mono(profile, vendor.id), in: namespace)
-            track
-                .frame(height: 4)
-                .matchedGeometryEffect(id: SlotID.gauge(profile, vendor.id), in: namespace)
-        }
-        .help(helpText)
-    }
-
-    private var helpText: String {
-        var parts = [vendor.label]
-        if !vendor.hasUsageAPI { parts.append("no quota API") }
-        else if signedOut { parts.append("not signed in") }
-        else if maxed { parts.append(usage?.note == .restricted ? "provider restriction" : "at N2 scheduling reserve") }
-        else if let u = used { parts.append("\(u)% used") }
-        else { parts.append(usage?.statusLabel ?? "usage unavailable") }
-        return parts.joined(separator: " · ")
-    }
-
-    @ViewBuilder private var track: some View {
-        if !vendor.hasUsageAPI {
-            Capsule().strokeBorder(Color.primary.opacity(0.22),
-                                   style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
-        } else if signedOut {
-            Capsule().fill(Ink.amber.opacity(0.18))
-                .overlay(Capsule().strokeBorder(Ink.amber.opacity(0.45)))
-        } else if maxed, usage?.note == .restricted {
-            Capsule().fill(maxedRed.opacity(0.18))
-                .overlay(Capsule().strokeBorder(maxedRed))
-        } else if let u = used {
-            Gauge(percent: u)
-        } else if sweeping {
-            Sweep().clipShape(Capsule())
-        } else {
-            Capsule().fill(Color.primary.opacity(0.16))
-        }
-    }
-}
-
-// Track plus fill. The length is the reading; colour only reinforces it.
-private struct Gauge: View {
-    let percent: Int
-
-    var body: some View {
-        GeometryReader { g in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.primary.opacity(0.16))
-                Capsule().fill(percent >= Usage.maxedAt ? maxedRed : meterColor(percent))
-                    .frame(width: g.size.width * CGFloat(min(max(percent, 0), 100)) / 100)
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 5) {
+                LabMark(vendor: vendor, size: 12.5)
+                    .foregroundStyle(status.left != nil ? Color.primary.opacity(0.82) : status.ink)
+                    .frame(width: 22, height: 22)
+                    .matchedGeometryEffect(id: SlotID.mono(profile, vendor.id), in: namespace)
+                Text(verbatim: status.stripValue)
+                    .font(.system(size: 11, weight: .semibold)).monospacedDigit()
+                    .foregroundStyle(status.left != nil ? Color.primary.opacity(0.75) : status.ink)
+                    .lineLimit(1).minimumScaleFactor(0.75)
             }
+            StatusBar(status: status)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(vendor.label), \(status.label)")
+        .help("\(vendor.label) · \(status.label)")
     }
 }
 
-// Shared geometry ids, so a lab's mark and gauge travel between depth 1 and
-// depth 2 rather than one view dissolving into another.
+// Shared geometry ids, so a lab's mark travels between depth 1 and depth 2
+// rather than one view dissolving into another.
 private enum SlotID {
     static func mono(_ profile: String, _ vendor: String) -> String { "mono-\(profile)-\(vendor)" }
-    static func gauge(_ profile: String, _ vendor: String) -> String { "gauge-\(profile)-\(vendor)" }
 }
 
-// Every lab the profile holds, in one fixed-height row. Segments share the
-// width but never stretch past 52 pt, so a profile with two labs doesn't draw
-// two bars across half the panel.
+// Every lab the profile holds, in one row: 54 pt per segment, 8 apart, and
+// tighter only when a profile holds more labs than the card's width fits.
 private struct CapacityStrip: View {
     let profile: Profile
     let data: PanelData
@@ -1042,13 +921,12 @@ private struct CapacityStrip: View {
     let namespace: Namespace.ID
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 3) {
-            ForEach(data.slotted(profile), id: \.id) { v in
-                CapacitySegment(profile: profile.name, vendor: v,
-                                usage: model.usage[v.id]?[profile.name],
-                                signedOut: data.snapshot.signedIn[profile.name]?[v.id] == false,
-                                sweeping: model.usageSweeping, namespace: namespace)
-                    .frame(maxWidth: 52)
+        let labs = data.slotted(profile)
+        HStack(spacing: labs.count > 5 ? 4 : 8) {
+            ForEach(labs, id: \.id) { v in
+                CapacitySegment(profile: profile.name, vendor: v, status: model.status(profile.name, v).status,
+                                namespace: namespace)
+                    .frame(maxWidth: 54)
             }
             Spacer(minLength: 0)
         }
