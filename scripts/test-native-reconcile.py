@@ -18,7 +18,7 @@ def method(path, start, end):
 with tempfile.TemporaryDirectory(prefix='n2-native-reconcile-') as temporary:
     base = Path(temporary)
     methods = method('tray/FleetControl.swift', '    func fleetReconcileTasks()',
-                     '    func fleetOpenTerminal')
+                     '    // MARK: - Small helpers')
     methods += '\n' + method('tray/main.swift', '    @discardableResult\n    func runCLI',
                              '    func setActive')
     fixture = (ROOT / 'tests/FleetReconcileTests.swift').read_text()

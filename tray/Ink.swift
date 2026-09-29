@@ -3,25 +3,131 @@ import SwiftUI
 
 // Colour that must read at 4.5:1 in both appearances. Apple's system hues are
 // tuned for dark surfaces (amber on a light panel is 1.6:1, green 2.0:1), so
-// each has its own light value, measured against white through #E6E6EA — the
-// greyest the glass gets. Secondary text is darker than .secondary, which is
-// 50% black: 3.9:1 on white.
+// each has its own light value, measured against #E6E6EA — the greyest the
+// glass gets — and its dark value against the dark page fill #252932 and a
+// card on it (white 6%, #2F333B). Secondary text is darker than .secondary,
+// which is 50% black: 3.9:1 on white.
 enum Ink {
-    static let secondary = adaptive(NSColor.black.withAlphaComponent(0.62), NSColor.white.withAlphaComponent(0.62))
-    static let amber = adaptive(rgb(0x9A5500), rgb(0xFFB340))
-    static let green = adaptive(rgb(0x1A7431), rgb(0x30D158))
-    static let red = adaptive(rgb(0xB8261C), rgb(0xFF6961))
-    static let link = adaptive(rgb(0x0A4FC2), rgb(0x6AAEFF))
+    /// 5.8:1 light; 6.5:1 dark (5.8:1 on a card).
+    static let secondary = Tone(NSColor.black.withAlphaComponent(0.62), NSColor.white.withAlphaComponent(0.62)).color
+    /// Timestamps, "when", keys. The design's 48% / 40% measured 3.5:1 / 3.3:1,
+    /// so both are darkened to pass: 4.5:1 light; 4.6:1 dark on a card.
+    static let tertiary = Tone(NSColor.black.withAlphaComponent(0.55), NSColor.white.withAlphaComponent(0.52)).color
+    /// 4.6:1 light; 8.2:1 dark (6.8:1 on a card).
+    static let amber = Tone.amber.color
+    /// 4.7:1 light; 7.2:1 dark (6.0:1 on a card).
+    static let green = Tone.green.color
+    /// 5.0:1 light; 10.3:1 dark (8.6:1 on a card).
+    static let yellow = Tone.yellow.color
+    /// 5.1:1 light; 5.5:1 dark, 4.6:1 on a card (#FF6961 was 4.3:1 there).
+    static let red = Tone.red.color
+    /// 4.9:1 light; 8.5:1 dark (7.0:1 on a card).
+    static let info = Tone.info.color
+    /// 5.8:1 light; 6.3:1 dark (5.3:1 on a card).
+    static let link = Tone(rgb(0x0A4FC2), rgb(0x6AAEFF)).color
     /// A filled chip: white on it is 7.2:1 light, 6.0:1 dark (on systemBlue, 4.1:1).
-    static let chip = adaptive(rgb(0x0A4FC2), rgb(0x0A5BD6))
+    static let chip = Tone.chip.color
     /// Cards and rows sit on this, not on the bare glass, so their text has a
     /// ground that doesn't depend on the wallpaper.
-    static let surface = adaptive(NSColor.white.withAlphaComponent(0.85), NSColor.white.withAlphaComponent(0.06))
+    static let surface = Tone(NSColor.white.withAlphaComponent(0.85), NSColor.white.withAlphaComponent(0.06)).color
+    /// Behind every page of the panel: the glass's own tone, laid over it
+    /// translucently so the glass still shows (opaque read as a dark slab on a
+    /// dark desktop). A page moving off fades before the next covers it, so
+    /// the two don't show through each other. Not text; text sits on cards
+    /// (Ink.surface) or is measured against the greyest glass.
+    static let page = Tone(rgb(0xECECF0).withAlphaComponent(0.6), rgb(0x252932).withAlphaComponent(0.5)).color
+    /// Dividers; stronger under Increase Contrast. Not text.
+    static let hairline = Color(nsColor: NSColor(name: nil) { a in
+        let alpha: CGFloat = Ink.highContrast(a) ? 0.2 : Ink.isDark(a) ? 0.07 : 0.08
+        return (Ink.isDark(a) ? NSColor.white : NSColor.black).withAlphaComponent(alpha)
+    })
+    /// A card's edge: light cards need one on the pale glass, dark ones are
+    /// carried by their fill; every card gets one under Increase Contrast.
+    static let cardEdge = Color(nsColor: NSColor(name: nil) { a in
+        Ink.highContrast(a) ? (Ink.isDark(a) ? NSColor.white : NSColor.black).withAlphaComponent(0.2)
+            : Ink.isDark(a) ? .clear : NSColor.black.withAlphaComponent(0.06)
+    })
+    /// A card's soft shadow, light appearance only.
+    static let cardShadow = Tone(NSColor.black.withAlphaComponent(0.06), .clear).color
+    /// A row or card being pressed. Not text.
+    static let pressed = Tone(NSColor.black.withAlphaComponent(0.08), NSColor.white.withAlphaComponent(0.10)).color
+    /// A secondary button or tile: glass-white in light, a white wash in dark.
+    static let raised = Tone(NSColor.white.withAlphaComponent(0.7), NSColor.white.withAlphaComponent(0.06)).color
+    static let raisedEdge = Tone(NSColor.black.withAlphaComponent(0.12), NSColor.white.withAlphaComponent(0.14)).color
+    /// Small tags under the hero. Not text; their text is secondary.
+    static let chipFill = Tone.neutral.wash(dark: 0.07, light: 0.05)
+    /// The glyph on a status badge, which sits on the status ink: dark on the
+    /// bright dark-mode inks, white on the deep light-mode ones.
+    static let badgeGlyph = Tone(.white, rgb(0x1C1C1E)).color
+    /// A toast card's edge and shadow.
+    static let toastEdge = Tone(NSColor.black.withAlphaComponent(0.10), NSColor.white.withAlphaComponent(0.16)).color
+    static let toastShadow = Tone(NSColor.black.withAlphaComponent(0.16), NSColor.black.withAlphaComponent(0.45)).color
+    /// The out toast's breathing edge, dim and bright: 1 pt in dark, and a
+    /// further 0.5 pt in light where there is no glow.
+    static let outEdge = (dim: Tone.amber.wash(dark: 0.35, light: 0.45), bright: Tone.amber.wash(dark: 0.6, light: 0.85))
+    static let outEdgeLight = (dim: Tone(Tone.amber.light, .clear).wash(dark: 0, light: 0.45),
+                               bright: Tone(Tone.amber.light, .clear).wash(dark: 0, light: 0.85))
+    static let outGlow = (dim: Tone(.clear, Tone.amber.dark).wash(dark: 0.10, light: 0),
+                          bright: Tone(.clear, Tone.amber.dark).wash(dark: 0.24, light: 0))
+    /// The pace bar's "now" tick.
+    static let tick = Tone(rgb(0x1C1C1E), .white).color
+    /// A logo tile with nothing to report. Not text.
+    static let tile = Tone(NSColor.black.withAlphaComponent(0.05), NSColor.white.withAlphaComponent(0.09)).color
+    /// A logo on a neutral tile: a glyph, held to 3:1 (well over it at 85% / 92%).
+    static let logo = Tone(NSColor.black.withAlphaComponent(0.85), NSColor.white.withAlphaComponent(0.92)).color
+    /// Ring and bar tracks. Not text.
+    static let track = Tone(NSColor.black.withAlphaComponent(0.08), NSColor.white.withAlphaComponent(0.10)).color
+    /// Rows and cards under the pointer. Not text.
+    static let hover = Tone(NSColor.black.withAlphaComponent(0.05), NSColor.white.withAlphaComponent(0.07)).color
 
-    private static func adaptive(_ light: NSColor, _ dark: NSColor) -> Color {
-        Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light })
+    /// One ink's two values, kept together so it can also be laid down as a
+    /// tinted fill that follows the appearance.
+    struct Tone {
+        let light: NSColor
+        let dark: NSColor
+
+        init(_ light: NSColor, _ dark: NSColor) { (self.light, self.dark) = (light, dark) }
+
+        static let amber = Tone(rgb(0x9A5500), rgb(0xFFB340))
+        static let green = Tone(rgb(0x1A7431), rgb(0x30D158))
+        static let yellow = Tone(rgb(0x7A5C00), rgb(0xFFD60A))
+        static let red = Tone(rgb(0xB8261C), rgb(0xFF7369))
+        static let info = Tone(rgb(0x006A8E), rgb(0x64D2FF))
+        static let chip = Tone(rgb(0x0A4FC2), rgb(0x0A5BD6))
+        static let neutral = Tone(.black, .white)
+
+        var color: Color {
+            let (light, dark) = (light, dark)
+            return Color(nsColor: NSColor(name: nil) { Ink.isDark($0) ? dark : light })
+        }
+
+        /// The ink as a fill at a given alpha in each appearance (doubled under
+        /// Increase Contrast), for fills the design sets per appearance.
+        func wash(dark: CGFloat, light: CGFloat) -> Color {
+            let (lightInk, darkInk) = (self.light, self.dark)
+            return Color(nsColor: NSColor(name: nil) { appearance in
+                let boost: CGFloat = Ink.highContrast(appearance) ? 2 : 1
+                return Ink.isDark(appearance) ? darkInk.withAlphaComponent(min(1, dark * boost))
+                                              : lightInk.withAlphaComponent(min(1, light * boost))
+            })
+        }
+
+        /// The ink as a fill: `alpha` in dark, 0.8× in light, where the same
+        /// wash reads heavier on the pale glass; doubled under Increase Contrast.
+        func wash(_ alpha: CGFloat) -> Color { wash(dark: alpha, light: alpha * 0.8) }
     }
-    private static func rgb(_ hex: UInt32) -> NSColor {
+
+    static func isDark(_ appearance: NSAppearance) -> Bool {
+        appearance.bestMatch(from: [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua])
+            .map { $0 == .darkAqua || $0 == .accessibilityHighContrastDarkAqua } ?? false
+    }
+
+    static func highContrast(_ appearance: NSAppearance) -> Bool {
+        appearance.bestMatch(from: [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua])
+            .map { $0 == .accessibilityHighContrastAqua || $0 == .accessibilityHighContrastDarkAqua } ?? false
+    }
+
+    fileprivate static func rgb(_ hex: UInt32) -> NSColor {
         NSColor(srgbRed: CGFloat(hex >> 16 & 0xFF) / 255, green: CGFloat(hex >> 8 & 0xFF) / 255,
                 blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
     }

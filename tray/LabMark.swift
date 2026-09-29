@@ -13,7 +13,8 @@ struct LabMark: View {
             Image(nsImage: logo).renderingMode(.template).resizable().interpolation(.high)
                 .aspectRatio(contentMode: .fit).frame(width: size, height: size)
         } else {
-            Text(verbatim: vendor.monogram).font(.system(size: 8.5, weight: .semibold)).tracking(0.2).lineLimit(1)
+            Text(verbatim: vendor.monogram).font(.system(size: max(8.5, size * 0.62), weight: .semibold))
+                .tracking(0.2).lineLimit(1)
         }
     }
 
@@ -26,5 +27,27 @@ struct LabMark: View {
         image?.isTemplate = true
         logos[id] = image
         return image
+    }
+}
+
+/// A lab's logo on its tile. Everything is drawn from the size the tile is
+/// given — the corner is always 25% of the side and the logo 57% — so a tile
+/// keeps its shape at every size, including mid-flight between two sizes.
+/// A tile with no status is neutral (the suggestion card, the toast);
+/// StatusInk gives slots their status fill and ink.
+struct LogoTile: View {
+    let vendor: Vendor
+    var fill: Color = Ink.tile
+    var ink: Color = Ink.logo
+
+    var body: some View {
+        GeometryReader { g in
+            let side = min(g.size.width, g.size.height)
+            LabMark(vendor: vendor, size: side * 0.57)
+                .foregroundStyle(ink)
+                .frame(width: g.size.width, height: g.size.height)
+                .background(RoundedRectangle(cornerRadius: side * 0.25).fill(fill))
+        }
+        .accessibilityHidden(true)
     }
 }

@@ -4,10 +4,18 @@ import SwiftUI
 struct SettingsWindowView: View {
     @ObservedObject var model: PanelModel
     let actions: PanelActions
+    /// Fleet management (identity, pairing, kept-local items, managed tools,
+    /// activity), supplied by the app: the popover never manages.
+    var fleet: AnyView = AnyView(EmptyView())
     @State private var cliInstallMessage: String?
 
+    // "1.2.0 (16)": a prerelease counter resets with every stable release; the
+    // build number always climbs.
     private var version: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
+        let short = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0")
+            .prefix { $0 != "-" }
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
+        return UpdateChannel.isQABuild ? "\(short) (\(build)) · QA build" : "\(short) (\(build))"
     }
 
     var body: some View {
@@ -26,6 +34,7 @@ struct SettingsWindowView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
+                    fleet
                     FleetSyncSettings()
 
                     section("ACCOUNTS", subtitle: "Sign in again to check the account used by every listed profile.") {
@@ -137,6 +146,7 @@ struct SettingsWindowView: View {
                                 Button("Check Now…") { actions.checkForUpdates() }
                             }
                             .padding(.horizontal, 13).frame(height: 46)
+
                         }
                         .background(Ink.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }

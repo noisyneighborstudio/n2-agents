@@ -14,6 +14,7 @@ struct DispatchQueue {
 }
 final class ReadModel {
     var publications = 0
+    var workDraft = WorkDraft()
     var onPublish: ((FleetData) -> Void)?
     var fleet: FleetData? { didSet { precondition(Thread.isMainThread); publications += 1; onPublish?(fleet!) } }
 }
@@ -63,6 +64,8 @@ final class AppDelegate {
                         "tools deferred", "task list", "task notices", "malformed-task", "held-tasks",
                         "recovery", "empty", "uninitialized"]
     static var index = 0
+    static let spec = FleetDispatchSpec(task: "true", prompt: false, workspace: "", contextFile: "", requirements: "",
+                                        machine: nil, agent: nil)
     static var sawOthersWhileTasksHeld = false
     static func step() {
         app.mode = modes[index]
@@ -87,9 +90,13 @@ final class AppDelegate {
                 precondition(value.tasks == (previous?.tasks ?? []) && value.peers == (previous?.peers ?? []))
                 precondition(value.observedAt == previous?.observedAt)
                 precondition(app.announcements == announcements, "failed reads must not announce")
-                app.fleetDispatch()
+                app.model.workDraft = WorkDraft()
+                app.fleetDispatch(Self.spec)
                 app.fleetRetry(task: "task-1")
-                precondition(app.alerts == alerts + 2, "work without current fleet state must explain refusal")
+                precondition(app.alerts == alerts + 1, "a retry without current fleet state must explain refusal")
+                if case .failed = app.model.workDraft.state {} else {
+                    preconditionFailure("work without current fleet state must explain refusal on its page")
+                }
             case "uninitialized":
                 precondition(app.model.publications == publications + 1 && !value.initialized && value.readError == nil)
             default:
@@ -101,8 +108,11 @@ final class AppDelegate {
                 precondition(app.announcements == announcements + (failed == .activity ? 0 : 1))
                 if failed == .machines {
                     precondition(value.destinations.isEmpty && value.peers == previous!.peers)
-                    app.fleetDispatch()
-                    precondition(app.alerts == alerts + 1, "dispatch without a current machine list must explain refusal")
+                    app.model.workDraft = WorkDraft()
+                    app.fleetDispatch(Self.spec)
+                    if case .failed = app.model.workDraft.state {} else {
+                        preconditionFailure("dispatch without a current machine list must explain refusal on its page")
+                    }
                 } else {
                     precondition(value.destinations.count == 1)
                 }

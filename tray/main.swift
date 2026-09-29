@@ -76,12 +76,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     private var statusIcon: StatusIcon?
     private var quotaWatch: AnyCancellable?
     private var menuBarAppearance: NSKeyValueObservation?
-    private var drawnIcon: (remaining: Int?, dark: Bool, attention: Bool)?
-    private lazy var quotaToast = QuotaToast(anchor: statusItem.button!) { [weak self] in self?.togglePanel() }
+    private var drawnIcon: (remaining: Int?, dark: Bool, attention: Bool, dot: UsageTier?)?
+    /// The worst toast dismissed since the panel was last opened, from the quarter tier.
+    private var iconDot: UsageTier?
+    // A click opens the panel on that lab's page.
+    private lazy var quotaToast = QuotaToast(anchor: statusItem.button!, model: model, actions: self, open: { [weak self] warning in
+        guard let self else { return }
+        self.model.path = [.profile(warning.profile), .provider(profile: warning.profile, vendor: warning.vendor)]
+        self.model.closedAt = nil
+        if !self.panel.isShowing { self.togglePanel() }
+    }, dismissed: { [weak self] warning in
+        guard let self, warning.tier >= .quarter, !self.panel.isShowing else { return }
+        self.iconDot = max(self.iconDot ?? warning.tier, warning.tier)
+        self.drawStatusIcon()
+    })
     // Built on first use (an open, or the first quota reading): it anchors to
     // the status item's button.
-    private lazy var panel = GlassWindow(rootView: PanelView(model: model, actions: self),
-                                         behavior: .transient(anchor: statusItem.button!))
+    private lazy var panel: GlassWindow = {
+        let panel = GlassWindow(rootView: PanelView(model: model, actions: self),
+                                behavior: .transient(anchor: statusItem.button!))
+        panel.onDismiss = { [weak self] in self?.model.closedAt = Date() }
+        return panel
+    }()
     private lazy var hotKey = GlobalHotKey { [weak self] in self?.togglePanel() }
     /// Recent sessions, opened out of the panel into its own window.
     private var sessionsWindow: GlassWindow?
@@ -172,7 +188,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
             guard let self else { return }
             self.model.usage = self.model.usage.mapValues { Usage.expire($0, at: Date()) }
         }
-        Timer.scheduledTimer(withTimeInterval: 180, repeats: true) { [weak self] _ in self?.refreshPanel() }
+        Timer.scheduledTimer(withTimeInterval: 180, repeats: true) { [weak self] _ in
+            self?.refreshPanel()
+            // Every session too, so a profile's Recent is there before it's opened.
+            self?.loadAllSessions()
+        }
 
         // Keep claude-as / claude-<profile> on PATH in step with the profile
         // list — real executables, so apps and scripts get them too, and
@@ -195,21 +215,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     // The icon is a gauge of quota left, and anything newly low gets a toast.
     private func quotaChanged() {
         drawStatusIcon()
-        quotaToast.update(model.lowQuota, quiet: panel.isShowing)
+        quotaToast.update(quiet: panel.isShowing)
     }
 
     private func drawStatusIcon() {
         guard let icon = statusIcon, let button = statusItem.button else { return }
         let match = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua, .vibrantLight, .vibrantDark])
         let drawn = (remaining: model.remaining, dark: match == .darkAqua || match == .vibrantDark,
-                     attention: model.needsAttention)
+                     attention: model.needsAttention, dot: iconDot)
         // Setting the image re-resolves the button's appearance, which fires
         // the observer that calls this: redraw only on a real change, or the
         // two feed each other forever.
         statusItem.button?.toolTip = model.capacitySummary
         if let last = drawnIcon, last == drawn { return }
         drawnIcon = drawn
-        let image = icon.image(remaining: drawn.remaining, dark: drawn.dark, attention: drawn.attention)
+        let image = icon.image(remaining: drawn.remaining, dark: drawn.dark, attention: drawn.attention,
+                               dot: drawn.dot.map { drawn.dark ? $0.tone.dark : $0.tone.light })
         button.image = UpdateChannel.isQABuild ? StatusIcon.taggedQA(image) : image
     }
 
@@ -221,17 +242,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
             return
         }
         quotaToast.dismiss()
+        iconDot = nil
+        drawStatusIcon()
         var still = Transaction()
         still.disablesAnimations = true
-        withTransaction(still) { model.presented = false }
+        withTransaction(still) {
+            model.presented = false
+            // Back within a minute, the panel reopens where it was; after
+            // that, at Fleet.
+            if let closed = model.closedAt, Date().timeIntervalSince(closed) > 60 {
+                model.path = []
+            }
+        }
         // Sized from the already-loaded content, so the first frame is the
         // finished panel, not an empty one that grows into place.
         panel.present()
         DispatchQueue.main.async { self.model.presented = true }
-        refreshPanel()
+        // Everything shown was read in advance, on the timers. Opening re-reads
+        // only what has gone stale, so the panel isn't re-rendering under the
+        // pointer while it's being used.
+        if Date().timeIntervalSince(panelReadAt) > Self.openFreshness { refreshPanel() }
         refreshUsage(force: false, onDemand: true)
-        refreshFleet()
+        if Date().timeIntervalSince(model.fleet?.observedAt ?? .distantPast) > Self.openFreshness { refreshFleet() }
     }
+
+    /// How old a read may be and still be shown as is when the panel opens.
+    private static let openFreshness: TimeInterval = 30
+    private var panelReadAt = Date.distantPast
+    /// The last panel read as published: an identical read publishes nothing.
+    private var panelSource: String?
 
     // Anything that opens a window, dialog or terminal closes the panel first:
     // a transient panel would otherwise vanish under it mid-click.
@@ -251,13 +290,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         DispatchQueue.global(qos: .userInitiated).async {
             let data = self.loadPanelData()
             DispatchQueue.main.async {
-                guard generation == self.refreshGeneration, let data else { return }
+                guard generation == self.refreshGeneration, let (data, source) = data else { return }
+                self.panelReadAt = Date()
+                defer { self.refreshUsage(force: false) }
+                guard source != self.panelSource else { return }
+                self.panelSource = source
                 self.model.data = data
-                if let s = self.model.selection,
-                   data.profiles.first(where: { $0.name == s.profile })?.slots[s.vendor] == nil {
-                    self.model.selection = nil
+                // A page whose profile or lab is gone closes, with what it led to.
+                if let gone = self.model.path.firstIndex(where: { route in
+                    guard let name = route.profile else { return false }
+                    guard let p = data.profiles.first(where: { $0.name == name }) else { return true }
+                    switch route {
+                    case .profile, .sendSession, .machine, .conflicts, .task, .sendWork: return false
+                    case .provider(_, let v), .configure(_, let v): return p.slots[v] == nil
+                    }
+                }) {
+                    self.model.path.removeSubrange(gone...)
                 }
-                self.refreshUsage(force: false)
             }
         }
     }
@@ -273,14 +322,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     // next launch can draw from it before the CLI has answered.
     // A failed read returns nil and the panel keeps what it has, rather than
     // replacing real profiles with an empty, first-run-looking one.
-    private func loadPanelData() -> PanelData? {
+    /// The read, and what it was read from: CLI output and the local facts
+    /// (terminals, desktop apps) that buildPanelData adds.
+    private func loadPanelData() -> (PanelData, String)? {
         let porcelain = runCLI(["porcelain"])
         guard porcelain.status == 0 else { return nil }
         let sessions = runCLI(["sessions", "--porcelain", "--limit", "2"])
         let sessionText = sessions.status == 0 ? sessions.output : ""
         defaults.set(porcelain.output, forKey: CacheKey.porcelain)
         defaults.set(sessionText, forKey: CacheKey.sessions)
-        return buildPanelData(porcelain: porcelain.output, sessions: sessionText)
+        let data = buildPanelData(porcelain: porcelain.output, sessions: sessionText)
+        let source = [porcelain.output, sessionText, data.terminals.joined(separator: ","),
+                      data.desktops.sorted().joined(separator: ",")].joined(separator: "\u{1F}")
+        return (data, source)
     }
 
     // Everything else is local and fast enough to run on the main thread.
@@ -352,6 +406,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
                     usage[id] = Usage.merge(usage[id] ?? [:], rows, commandFailed: result.failed, profiles: profiles)
                 }
                 self.model.usage = usage
+                self.model.refreshedAt = Date()
                 if self.usageRefetch {
                     let onDemand = self.usageRefetchOnDemand
                     self.usageRefetch = false
@@ -388,6 +443,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
             }
             loginsChanged()
         }
+    }
+
+    func playUsageWeek() {
+        dismissPanel()
+        quotaToast.playWeek()
     }
 
     func retryUsage() {
@@ -647,15 +707,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     }
 
     func copyCommand(profile: String, vendor: String) {
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString("\(vendor)-\(profile.lowercased())", forType: .string)
+        Clipboard.copy(Clipboard.command(profile: profile, vendor: vendor))
     }
 
     func copyPath(_ path: String) {
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(path, forType: .string)
+        Clipboard.copy(path)
+    }
+
+    func revealPath(_ path: String) {
+        dismissPanel()
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
     }
 
     // Add a lab to an existing profile: one slot dir, plus its PATH shim.
@@ -949,21 +1010,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 
     @MainActor private lazy var sessionTransferCoordinator = SessionTransferCoordinator()
 
+    /// Send Session is a page, not an alert: from the sessions window (or
+    /// anywhere outside the panel) it opens the panel on that page.
     func sendSession(_ session: SessionInfo) {
+        sessionsWindow?.dismiss()
+        if model.sendDrafts[session.id] == nil { model.sendDrafts[session.id] = SendDraft(cwd: session.cwd ?? "") }
+        model.path = [.sendSession(session.id)]
+        model.closedAt = nil
+        if !panel.isShowing { togglePanel() }
+    }
+
+    /// The page's choice, sent through the same coordinator and checks as
+    /// before; the outcome lands on the draft rather than in an alert.
+    func sendSession(_ session: SessionInfo, to peerID: String, cwd: String) {
         let cli = cliPath, environment = Self.scriptEnvironment
-        dismissPanel()
+        model.sendDrafts[session.id, default: SendDraft(cwd: cwd)].state = .sending
         Task { @MainActor in
             await sessionTransferCoordinator.perform(thread: session.sessionID, vendor: session.vendor,
                 run: { SignInPlan.run(cli: cli, environment: environment, args: $0) },
-                choose: { peers in
-                    let (alert, picker, path) = SessionTransferPlan.prompt(
-                        title: session.title ?? session.snippet, peers: peers, cwd: session.cwd)
-                    NSApp.activate(ignoringOtherApps: true)
-                    guard alert.runModal() == .alertFirstButtonReturn,
-                          peers.indices.contains(picker.indexOfSelectedItem) else { return nil }
-                    return (peers[picker.indexOfSelectedItem], path.stringValue)
-                }, finish: { message in self.alert("Session sent", message) },
-                fail: { message in self.alert("Session transfer", message) })
+                // The coordinator re-reads the approved machines; the choice
+                // must be one of those, matched by identity.
+                choose: { peers in peers.first { $0.id == peerID }.map { ($0, cwd) } },
+                finish: { message in self.model.sendDrafts[session.id]?.state = .sent(message) },
+                fail: { message in self.model.sendDrafts[session.id]?.state = .failed(message) })
+            if case .sending? = self.model.sendDrafts[session.id]?.state {
+                self.model.sendDrafts[session.id]?.state = .failed(String(localized: "That machine is no longer approved.",
+                                                                          comment: "Send Session: the chosen peer vanished"))
+            }
         }
     }
 
@@ -1006,7 +1079,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     func showSettings() {
         dismissPanel()
         if settingsWindow == nil {
-            settingsWindow = GlassWindow(rootView: SettingsWindowView(model: model, actions: self), behavior: .floating)
+            settingsWindow = GlassWindow(rootView: SettingsWindowView(model: model, actions: self,
+                                                                          fleet: AnyView(FleetSettingsSection(model: model, actions: self))),
+                                         behavior: .floating)
             settingsWindow?.identifier = NSUserInterfaceItemIdentifier("dev.sethwebster.n2agents.settings")
         }
         settingsWindow?.present()

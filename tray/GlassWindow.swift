@@ -37,13 +37,20 @@ final class GlassWindow: NSPanel {
 
     /// Shown, and not on its way out.
     var isShowing: Bool { isVisible && !dismissing }
+    /// Told each time the window starts to close.
+    var onDismiss: (() -> Void)?
 
     /// The SwiftUI content's ideal size, as SwiftUI itself last measured it.
     private let measured = MeasuredSize()
     /// Whether the window is ordered in, for content that animates forever.
     private let onScreen = OnScreen()
 
-    init<Root: View>(rootView: Root, behavior: Behavior, cornerRadius: CGFloat = 16) {
+    /// No glass and no window shadow: the content draws its own surfaces
+    /// (the toast stack, whose cards each carry their glass).
+    private let clear: Bool
+
+    init<Root: View>(rootView: Root, behavior: Behavior, cornerRadius: CGFloat = 16, clear: Bool = false) {
+        self.clear = clear
         let (measured, onScreen) = (self.measured, self.onScreen)
         let hosting = NSHostingView(rootView: Measured(root: rootView, onScreen: onScreen) { measured.update($0) })
         // Intrinsic size gives the first measurement, before the view has a
@@ -75,7 +82,8 @@ final class GlassWindow: NSPanel {
         stage.layer?.masksToBounds = true
         content.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin]
         stage.addSubview(content)
-        surface = Self.glass(around: stage, cornerRadius: cornerRadius)
+        surface = clear ? stage : Self.glass(around: stage, cornerRadius: cornerRadius)
+        if clear { hasShadow = false }
         surface.autoresizingMask = [.width, .height]
         let container = NSView()
         container.addSubview(surface)
@@ -153,7 +161,7 @@ final class GlassWindow: NSPanel {
         if case .toast = behavior { toast = true } else { toast = false }
         if !toast { NSApp.activate(ignoringOtherApps: true) }
         let show = { toast ? self.orderFrontRegardless() : self.makeKeyAndOrderFront(nil) }
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || target.isEmpty {
+        if clear || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || target.isEmpty {
             show()
         } else {
             setFrame(furled(target), display: false)
@@ -172,7 +180,7 @@ final class GlassWindow: NSPanel {
             } completionHandler: { [weak self] in
                 guard let self, self.generation == generation else { return }
                 self.unfurling = false
-                self.hasShadow = true
+                self.hasShadow = !self.clear
                 self.fit(recenter: false)   // catch up with any resize held back mid-unfurl
             }
         }
@@ -197,6 +205,7 @@ final class GlassWindow: NSPanel {
     /// (160 ms). Floating: close for good.
     func dismiss() {
         guard isShowing else { return }
+        onDismiss?()
         if let monitor = clickMonitor {
             NSEvent.removeMonitor(monitor)
             clickMonitor = nil
@@ -207,7 +216,7 @@ final class GlassWindow: NSPanel {
         }
         generation += 1
         let generation = generation
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+        guard !clear, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
             orderOut(nil)
             return
         }
@@ -225,7 +234,7 @@ final class GlassWindow: NSPanel {
             self.dismissing = false
             self.unfurling = false
             self.alphaValue = 1
-            self.hasShadow = true
+            self.hasShadow = !self.clear
         }
     }
 
@@ -248,6 +257,11 @@ final class GlassWindow: NSPanel {
     private var pointerOnAnchor: Bool {
         guard case .transient(let button) = behavior, let window = button.window else { return false }
         return window.convertToScreen(button.convert(button.bounds, to: nil)).contains(NSEvent.mouseLocation)
+    }
+
+    private var followsPages: Bool {
+        if case .floating = behavior { return false }
+        return true
     }
 
     private func fit(recenter: Bool) {
@@ -277,8 +291,9 @@ final class GlassWindow: NSPanel {
         }
     }
 
-    /// The SwiftUI content animates its own height (a card opening, 320 ms on
-    /// the design curve), and the glass follows on the same clock. Nothing is
+    /// The SwiftUI content animates its own height (a page pushed, 480 ms on
+    /// the navigation curve; the setup window's steps, 320 ms), and the glass
+    /// follows on the same clock. Nothing is
     /// resized mid-flight: an animated window frame is shown a beat before
     /// its content redraws, and a resizing glass view re-lays out its content
     /// on its own schedule — both read as the whole panel jumping. Instead the
@@ -325,8 +340,11 @@ final class GlassWindow: NSPanel {
         let reveal = CABasicAnimation(keyPath: "path")
         reveal.fromValue = (mask.presentation()?.path ?? mask.path) ?? path(from)
         reveal.toValue = path(to)
-        reveal.duration = 0.32
-        reveal.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
+        // The panel's pages move on the navigation curve, and its height with them.
+        let (duration, curve) = followsPages ? (Motion.navDuration, CAMediaTimingFunction(controlPoints: 0.32, 0.72, 0, 1))
+                                             : (0.32, CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1))
+        reveal.duration = duration
+        reveal.timingFunction = curve
         mask.path = path(to)
         mask.add(reveal, forKey: "reveal")
         CATransaction.commit()
@@ -336,7 +354,7 @@ final class GlassWindow: NSPanel {
         let shadow = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
             self?.invalidateShadow()
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.36) { shadow.invalidate() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.04) { shadow.invalidate() }
     }
 }
 

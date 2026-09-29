@@ -87,9 +87,14 @@ fi
 
 # --- native (Swift) --------------------------------------------------------
 if in_group swift; then
-swiftc -typecheck tray/main.swift tray/NativeAuth.swift tray/UpdateChannel.swift tray/Vendors.swift tray/ProfileColor.swift tray/StatusIcon.swift tray/QuotaToast.swift tray/Ink.swift tray/LabMark.swift \
-  tray/PanelModel.swift tray/UsageDetailsView.swift tray/AccountOwnership.swift tray/NativeSignIn.swift tray/NativeSessionTransfer.swift tray/PanelView.swift tray/SettingsWindowView.swift tray/FleetSyncSettings.swift tray/FleetSettingsLoader.swift tray/ProfileSetup.swift tray/GlassWindow.swift tray/ShellPath.swift tray/Hotkey.swift tray/FleetModel.swift tray/FleetView.swift tray/FleetControl.swift
+swiftc -typecheck tray/main.swift tray/NativeAuth.swift tray/UpdateChannel.swift tray/Vendors.swift tray/ProfileColor.swift tray/StatusIcon.swift tray/QuotaToast.swift tray/UsageTiers.swift tray/ToastStack.swift tray/Ink.swift tray/StatusInk.swift tray/Motion.swift tray/LabMark.swift \
+  tray/PanelModel.swift tray/UsageDetailsView.swift tray/AccountOwnership.swift tray/NativeSignIn.swift tray/NativeSessionTransfer.swift tray/PanelView.swift tray/PageStack.swift tray/FleetPage.swift tray/ProfilePage.swift tray/ProviderPage.swift tray/ConfigurePage.swift tray/Clipboard.swift tray/PanelMenus.swift tray/RecentSessions.swift tray/SendWorkPage.swift tray/SessionsWindow.swift tray/SettingsWindowView.swift tray/FleetSyncSettings.swift tray/FleetSettingsLoader.swift tray/ProfileSetup.swift tray/GlassWindow.swift tray/ShellPath.swift tray/Hotkey.swift tray/FleetModel.swift tray/FleetView.swift tray/FleetControl.swift
 sh scripts/test-panel-usage.sh
+sh scripts/test-slot-status.sh
+clipboard_test=$(mktemp -d "$TMPDIR/clipboard.XXXXXX")/clipboard-tests
+swiftc -parse-as-library tray/Clipboard.swift tests/ClipboardTests.swift -o "$clipboard_test"
+"$clipboard_test"
+zsh scripts/panel-snapshot.sh "$TMPDIR/panel-snapshot"
 sh scripts/test-account-ownership.sh
 sh scripts/test-native-signin.sh
 sh scripts/test-native-session-transfer.sh
@@ -367,6 +372,13 @@ print -r -- '{"type":"custom-title","customTitle":"Renamed"}' >> "$home/.n2-agen
 touch -t 202601010000 "$home/.n2-agents/Work/claude/projects/p/c1.jsonl"
 touch -t 202601010001 "$home/.n2-agents/Work/claude/projects/p/c1.jsonl"
 test "$(run_agents sessions --porcelain Work --vendor claude | cut -f8)" = "Renamed"
+# A sessions folder that is a symlink (moved to another disk) is still read.
+mv "$home/.n2-agents/Work/codex/sessions" "$test_root/codex-sessions-elsewhere"
+ln -s "$test_root/codex-sessions-elsewhere" "$home/.n2-agents/Work/codex/sessions"
+rm -f "$home/.n2-agents/.sessions.v1.tsv"
+test "$(run_agents sessions --porcelain Work --vendor codex | cut -f3)" = "x1"
+rm "$home/.n2-agents/Work/codex/sessions"
+mv "$test_root/codex-sessions-elsewhere" "$home/.n2-agents/Work/codex/sessions"
 
 # login signs the pinned slot out and back in through the CLI's own commands.
 out=$(run_agents login Work --vendor codex 2>&1)

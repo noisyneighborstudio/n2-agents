@@ -7,8 +7,8 @@ import tempfile
 root = Path(__file__).resolve().parents[1]
 source = (root / 'tray/FleetControl.swift').read_text()
 refresh = source[source.index('    func refreshFleet() {'):source.index('    /// The menu bar')]
-start = source.index('    func fleetDispatch() {')
-dispatch = source[start:source.index('        let box = NSView', start)]
+start = source.index('    func fleetDispatch(_ spec: FleetDispatchSpec) {')
+dispatch = source[start:source.index('        model.workDraft.state = .sending', start)]
 dispatch += '        fatalError("stale dispatch passed admission")\n    }\n'
 start = source.index('    func fleetRetry(task: String) {')
 retry = source[start:source.index('        let confirm = NSAlert()', start)]

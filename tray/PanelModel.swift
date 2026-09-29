@@ -8,7 +8,7 @@ import Combine
 
 /// One structured allowance observation from `agents best --json`.
 struct Usage {
-    enum Note: String {
+    enum Note: String, CaseIterable {
         case ok
         case noToken = "no-token"
         case staleToken = "stale-token"
@@ -376,19 +376,38 @@ struct PanelData {
     }
 }
 
-/// Something whose quota has run low: overall, a profile, or one lab in one.
-/// The id holds across refreshes, so each tier is announced once per dip.
-struct LowQuota: Equatable {
-    let id: String
-    let title: String
-    let left: Int
+/// A page in the panel: Fleet → Profile → Provider → Configure.
+enum PanelRoute: Hashable {
+    case profile(String)
+    case provider(profile: String, vendor: String)
+    case configure(profile: String, vendor: String)
+    /// Send one saved session to another Mac, by SessionInfo.id.
+    case sendSession(String)
+    /// Another Mac in the fleet, by FleetPeer.id.
+    case machine(String)
+    /// Sync conflicts waiting on this Mac.
+    case conflicts
+    /// One fleet task, by FleetTask.id.
+    case task(String)
+    /// Compose work for another Mac.
+    case sendWork
 
-    var tier: StatusIcon.Tier { StatusIcon.Tier(remaining: left) }
+    /// The profile the page belongs to; nil for a page that belongs to none.
+    var profile: String? {
+        switch self {
+        case .profile(let p), .provider(let p, _), .configure(let p, _): return p
+        case .sendSession, .machine, .conflicts, .task, .sendWork: return nil
+        }
+    }
 }
 
-struct Selection: Equatable {
-    let profile: String
-    let vendor: String
+/// A Send Session page's choices and outcome, kept on the model so closing
+/// the panel loses nothing.
+struct SendDraft: Equatable {
+    enum State: Equatable { case editing, sending, sent(String), failed(String) }
+    var peer: String?        // FleetPeer.id
+    var cwd: String
+    var state: State = .editing
 }
 
 enum NextBest {
@@ -422,7 +441,7 @@ enum UpdateStatus: Equatable {
 }
 
 final class PanelModel: ObservableObject {
-    @Published var data: PanelData?
+    @Published var data: PanelData? { didSet { sortSessions() } }
     /// Quota for data.quotaVendors, vendor -> profile -> row. A lab is
     /// missing until its first fetch lands.
     @Published var usage: [String: [String: Usage]] = [:]
@@ -435,11 +454,12 @@ final class PanelModel: ObservableObject {
     var usageSweeping: Bool { usageLoading && !usageSlow }
     /// Flips false → true on every open; the content rises into place off it.
     @Published var presented = true
-    /// The one profile showing its labs. One at a time keeps the panel's
-    /// height bounded, which is what lets depth 3 open in place.
-    @Published var expanded: String?
-    /// The one slot showing its actions, inside the expanded profile.
-    @Published var selection: Selection?
+    /// The pages pushed over Fleet, deepest last. Empty is Fleet itself.
+    @Published var path: [PanelRoute] = []
+    /// When the last usage reading landed, for the footer.
+    @Published var refreshedAt: Date?
+    /// When the panel last closed: a reopen within a minute keeps the path.
+    var closedAt: Date?
     @Published var updateStatus: UpdateStatus?
     /// Profiles whose setup was left unfinished: profile -> the labs it set up.
     @Published var pendingSetups: [String: [String]] = [:]
@@ -448,7 +468,19 @@ final class PanelModel: ObservableObject {
     /// two newest. Kept between opens, so the window never starts empty.
     @Published var fleet: FleetData?
     @Published var fleetNotificationError: String?
-    @Published var allSessions: [SessionInfo] = []
+    @Published var allSessions: [SessionInfo] = [] { didSet { sortSessions() } }
+    /// Every known session, newest first, each once: sorted when a list
+    /// lands, never on a render.
+    private(set) var recentSessions: [SessionInfo] = []
+    func sortSessions() {
+        recentSessions = SessionInfo.filter(allSessions + (data?.sessions ?? []))
+    }
+    /// How the root's Recent is narrowed and ordered; kept across opens.
+    @Published var recentFilter = RecentFilter()
+    /// The Send Work page's draft.
+    @Published var workDraft = WorkDraft()
+    /// Send Session drafts, by SessionInfo.id.
+    @Published var sendDrafts: [String: SendDraft] = [:]
     @Published var sessionsLoading = false
 
     /// A profile's status and its capacity, read together because they answer
@@ -511,20 +543,6 @@ final class PanelModel: ObservableObject {
         }
     }
 
-    /// Each profile's most constrained measured slot. Independent provider
-    /// allowances cannot be averaged into capacity usable by a single task.
-    private var profilesLeft: [(name: String, left: Int, slots: Int)] {
-        let byProfile = Dictionary(grouping: slotsLeft, by: \.profile)
-        return (data?.profiles ?? []).compactMap { p in
-            guard let measured = byProfile[p.name], let minimum = measured.map(\.left).min() else { return nil }
-            let expected = data?.quotaVendors.filter {
-                p.slots[$0.id] != nil && data?.snapshot.signedIn[p.name]?[$0.id] != false
-            }.count ?? 0
-            guard minimum == 0 || measured.count == expected else { return nil }
-            return (p.name, minimum, measured.count)
-        }
-    }
-
     /// The icon warns about the most constrained measured slot. The next-agent
     /// action separately identifies a slot with capacity. Unknown is not zero.
     var measurementCoverage: (known: Int, expected: Int) {
@@ -558,23 +576,6 @@ final class PanelModel: ObservableObject {
         }
         return remaining.map { "Lowest measured headroom: \($0)%. Open N2 for individual accounts." }
             ?? "Usage unknown. Open N2 for account readings."
-    }
-
-    /// Low is the icon's orange tier or worse: under 50% left.
-    static let lowFrom = StatusIcon.Tier.orange
-
-    /// Everything running low, broadest first: overall, each profile, each
-    /// lab in a profile. A mean over a single slot is that slot again, so
-    /// it's only listed once, as the slot.
-    var lowQuota: [LowQuota] {
-        let profiles = profilesLeft
-        var all: [LowQuota] = []
-        if profiles.count > 1, let overall = remaining {
-            all.append(LowQuota(id: "*", title: "Lowest measured headroom", left: overall))
-        }
-        all += profiles.filter { $0.slots > 1 }.map { LowQuota(id: $0.name, title: $0.name, left: $0.left) }
-        all += slotsLeft.map { LowQuota(id: "\($0.profile)/\($0.vendor.id)", title: "\($0.vendor.label) · \($0.profile)", left: $0.left) }
-        return all.filter { $0.tier >= Self.lowFrom }
     }
 
     /// The CLI's next_best, run over what's already read, so the button names
@@ -631,11 +632,15 @@ protocol PanelActions: AnyObject {
     func setActive(profile: String, vendor: String?)
     func copyCommand(profile: String, vendor: String)
     func copyPath(_ path: String)
+    func revealPath(_ path: String)
     func openDesktop(profile: String, vendor: String)
     func signIn(profile: String, vendor: String, confirm: Bool)
     func finishSetup(profile: String)
     func resumeSession(_ session: SessionInfo)
+    /// Opens the Send Session page for it (from the sessions window, too).
     func sendSession(_ session: SessionInfo)
+    /// Sends it, recording the outcome on its draft.
+    func sendSession(_ session: SessionInfo, to peer: String, cwd: String)
     func moveSession(_ session: SessionInfo, to profile: String)
     func copyResumeCommand(_ session: SessionInfo)
     func showAllSessions()
@@ -649,6 +654,8 @@ protocol PanelActions: AnyObject {
     func deleteProfile(_ name: String)
     func newProfile()
     func retryUsage()
+    /// Debug, QA builds only: the four warning tiers, one after another.
+    func playUsageWeek()
     func setPreferredTerminal(_ name: String)
     func setUpdateChannel(_ channel: UpdateChannel)
     var panelShortcut: String? { get }

@@ -15,7 +15,7 @@ chmod +x "$probe_root/login-shell"
 # Match the package's Swift language mode, release optimization and deployment target.
 swiftc -swift-version 5 -O -target "$(uname -m)-apple-macosx13.0" \
   tray/SettingsWindowView.swift "${1:-tray/FleetSyncSettings.swift}" \
-  tray/FleetSettingsLoader.swift tray/GlassWindow.swift tray/Ink.swift \
+  tray/FleetSettingsLoader.swift tray/GlassWindow.swift tray/Motion.swift tray/Ink.swift \
   tray/UpdateChannel.swift tray/ShellPath.swift tests/FleetSettingsUITests.swift \
   -o "$app/Contents/MacOS/SettingsProbe"
 echo "Fixture app: $app"

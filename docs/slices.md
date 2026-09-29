@@ -70,8 +70,9 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
    (the AGENTS.md UI rule); accept and discard record the right outcome.
 
 6. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
-   Behavior: from the QA app, pair two disposable peers, sync (with a held
-   profile shared from Fleet settings), send work, show its result and revoke.
+   Behavior: from the QA app, pair two disposable peers (Settings › Fleet),
+   sync (with a held profile shared from Fleet settings), send work (the Send
+   Work page), show its result (the Task page) and revoke (the Machine page).
    Proof: packaged acceptance driven through accessibility events with
    disposable homes; each step asserts CLI state, and one negative control
    per step fails.
@@ -106,11 +107,32 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
    sources carry version data). Claude's account skills (`skills/synced/`)
    and Codex's bundled `skills/.system/` are excluded: their tools update them.
 
+Blocked on a decision:
+- `remote-machines` (docs/tray-redesign/08-slices.md S9): peer machines as Fleet
+  sections needs a CLI source for profiles held on peers (open question Q1).
+
 Blocked on authorization:
 - Per-provider sign-in lifecycle evidence needs live provider accounts
   (readiness: "provider-specific authentication lifecycle").
 
 ## Noticed
+
+- The menu bar icon still gauges the lowest measured slot across every
+  profile; the redesign wants the worst slot of the active profile in the
+  status inks (docs/tray-redesign/03-states.md). No slice owns it yet.
+
+- Arrow keys don't yet move between Fleet cards or Profile rows (Tab and
+  Return do). docs/tray-redesign/02-screens.md asks for it.
+
+- Open next best can still pick an unmetered slot when nothing metered has
+  room: it mirrors the CLI's rotation. The redesign's acceptance list says it
+  never should; that is a CLI policy change first.
+
+- Toasts ship without "Notify when back" (open question Q7) and without a
+  "Recent warnings" list (Q5). Add them once answered.
+
+- Configure has no "Sign out of {Provider}": the CLI has no per-slot sign-out,
+  and provider logout is deferred (below). Add the row with that verb.
 
 - Macs polling the same Claude account share its usage budget. Serving a
   peer's fresh verified reading instead of polling needs an identity-match slice.
