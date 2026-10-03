@@ -95,6 +95,10 @@ Blocked on authorization:
   signed out, and its card turned to "2 signed out". Decide whether `use`
   should only switch the labs the profile holds.
 
+- AXShowMenu on a profile card (VoiceOver's "show menu") opens its context
+  menu near the top of the panel, not at the card; a right-click opens it at
+  the pointer as expected. SwiftUI's `.contextMenu` places it.
+
 - The panel's scroll area refuses AXScrollDownByPage / AXScrollUpByPage and
   exposes no vertical scroll bar (`.scrollIndicators(.never)`), so assistive
   tools can't page it; wheel and trackpad scrolling work. Check with

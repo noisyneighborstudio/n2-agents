@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 @main struct SlotStatusTests {
@@ -178,6 +179,18 @@ import Foundation
                                        .init(profile: "Home", vendor: "claude", checked: false)], "each lab checks its active profile")
         check(ActiveMenu.title(Snapshot(vendors: [], profiles: [], active: "mixed")) == nil
               && ActiveMenu.title(Snapshot(vendors: [], profiles: [], active: "Work")) == "Work", "the header names one profile or none")
+        // A menu opens from the copy of its control that is still on screen:
+        // mid-transition SwiftUI draws a page twice and may update the outgoing
+        // copy last, then tear it down (the walkthrough's dead + and filter menus).
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [.borderless],
+                              backing: .buffered, defer: true)
+        let anchor = MenuAnchor(), incoming = NSView(), outgoing = NSView()
+        window.contentView?.addSubview(incoming)
+        window.contentView?.addSubview(outgoing)
+        anchor.add(incoming)
+        anchor.add(outgoing)
+        outgoing.removeFromSuperview()
+        check(anchor.view === incoming, "a menu opens from the control still on screen, not the copy updated last")
         // Mixed, explained on the cards: each names the labs it is active for.
         let labs3 = Snapshot(vendors: [lab("claude"), lab("codex"), lab("grok")], profiles: [], active: "mixed")
         check(ActiveMenu.badge(work, labs3) == "Active for Claude", "mixed: one active lab is named")

@@ -1,4 +1,5 @@
-import Foundation
+import AppKit
+import SwiftUI
 
 /// A localized string with automatic grammar agreement ("^[3 profile](inflect:
 /// true)" → "3 profiles"). String(localized:) leaves that markup as text; only
@@ -69,4 +70,72 @@ struct ActiveMenu: Equatable {
         default: return String(localized: "Active for \(labs.count) labs", comment: "Profile card while labs differ: how many labs it is active for")
         }
     }
+}
+
+// MARK: - AppKit menus
+
+// SwiftUI's Menu flattens custom labels on macOS, so the panel's menus are
+// plain NSMenus, each opened under the control that owns it.
+final class ClosureItem: NSMenuItem {
+    private let handler: () -> Void
+
+    init(_ title: String, symbol: String? = nil, checked: Bool = false,
+         handler: @escaping () -> Void) {
+        self.handler = handler
+        super.init(title: title, action: #selector(fire), keyEquivalent: "")
+        target = self
+        state = checked ? .on : .off
+        if let symbol { image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) }
+    }
+
+    required init(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    @objc private func fire() { handler() }
+}
+
+func submenu(_ title: String, symbol: String? = nil, _ items: [NSMenuItem]) -> NSMenuItem {
+    let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+    if let symbol { item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) }
+    let menu = NSMenu()
+    items.forEach(menu.addItem)
+    item.submenu = menu
+    return item
+}
+
+/// Where a control's menu opens: an AppKit view behind the control, so the
+/// menu drops from its bottom edge however it was pressed — by pointer,
+/// keyboard or VoiceOver — rather than wherever the pointer happens to be.
+final class MenuAnchor {
+    /// Every view drawn for the control. Mid-transition SwiftUI draws a page
+    /// twice and may update the outgoing copy last, so the one to open from is
+    /// whichever is still in a window, not whichever was set last.
+    private let views = NSHashTable<NSView>.weakObjects()
+    var view: NSView? { views.allObjects.first { $0.window != nil } }
+    func add(_ view: NSView) { views.add(view) }
+}
+
+private struct MenuAnchorView: NSViewRepresentable {
+    let anchor: MenuAnchor
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        anchor.add(view)
+        return view
+    }
+    func updateNSView(_ view: NSView, context: Context) { anchor.add(view) }
+}
+
+extension View {
+    /// The control whose bottom edge `popUp(_:under:)` opens a menu from.
+    func menuAnchor(_ anchor: MenuAnchor) -> some View { background(MenuAnchorView(anchor: anchor)) }
+}
+
+func popUp(_ items: [NSMenuItem], under anchor: MenuAnchor) {
+    let menu = NSMenu()
+    items.forEach(menu.addItem)
+    guard let view = anchor.view, let window = view.window else { return }
+    // A control in the trailing half lines the menu up with its trailing
+    // edge, so the menu hangs inside the panel rather than off its side.
+    let trailing = view.convert(view.bounds, to: nil).midX > window.frame.width / 2
+    let x = trailing ? view.bounds.maxX - menu.size.width : 0
+    menu.popUp(positioning: nil, at: NSPoint(x: x, y: view.isFlipped ? view.bounds.maxY + 4 : -4), in: view)
 }
