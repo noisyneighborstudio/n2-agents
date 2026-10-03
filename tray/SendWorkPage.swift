@@ -11,6 +11,11 @@ struct SendWorkPage: View {
     @State private var taskHeight: CGFloat = 0
 
     private var draft: WorkDraft { model.workDraft }
+    /// Sent work isn't sent again by a second click; any edit makes a new draft.
+    private var sent: Bool {
+        if case .sent = draft.state { return true }
+        return false
+    }
     private static let taskBox: ClosedRange<CGFloat> = 64...160
 
     /// Any edit returns the page to editing: a plan is only true of the draft it was made for.
@@ -87,7 +92,7 @@ struct SendWorkPage: View {
                             if let spec = d.spec { actions.fleetDispatch(spec) }
                         }
                         .buttonStyle(WideButton(prominent: true))
-                        .disabled(d.spec == nil || d.state == .sending)
+                        .disabled(d.spec == nil || d.state == .sending || sent)
                     }
                 }
                 .padding(.horizontal, 16).padding(.top, 6).padding(.bottom, 16)
