@@ -23,6 +23,7 @@ struct RecentSection: View {
     var vendor: String? = nil
     var limit = 2
     @FocusState private var searchFocused: Bool
+    @State private var filterAnchor = MenuAnchor()
 
     /// Root's Recent narrows by profile, provider and search, and sorts by age;
     /// a page's Recent is already scoped by the page.
@@ -69,7 +70,8 @@ struct RecentSection: View {
                 }
                 tool(filter.profile != nil || filter.vendor != nil || filter.oldestFirst
                         ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle",
-                     String(localized: "Filter and sort", comment: "Recent: filter menu")) { popUp(filterMenu(filter)) }
+                     String(localized: "Filter and sort", comment: "Recent: filter menu")) { popUp(filterMenu(filter), under: filterAnchor) }
+                .menuAnchor(filterAnchor)
             }
             tool("arrow.up.left.and.arrow.down.right", String(localized: "All sessions", comment: "Recent: open the sessions window")) {
                 actions.showAllSessions()
@@ -141,7 +143,7 @@ struct RecentSection: View {
             submenu(String(localized: "Profile", comment: "Recent filter"), symbol: "person.crop.circle",
                     [ClosureItem(all, checked: filter.profile == nil) { model.recentFilter.profile = nil }]
                     + profiles.map { p in ClosureItem(p, checked: filter.profile == p) { model.recentFilter.profile = p } }),
-            submenu(String(localized: "Provider", comment: "Recent filter"), symbol: "square.stack.3d.up",
+            submenu(String(localized: "Lab", comment: "Recent filter"), symbol: "square.stack.3d.up",
                     [ClosureItem(all, checked: filter.vendor == nil) { model.recentFilter.vendor = nil }]
                     + vendors.map { v in ClosureItem(v.label, checked: filter.vendor == v.id) { model.recentFilter.vendor = v.id } }),
             submenu(String(localized: "Sort", comment: "Recent filter"), symbol: "arrow.up.arrow.down", [
@@ -170,10 +172,17 @@ struct RecentSection: View {
     }
 }
 
+/// How long ago a session last moved ("26m ago"), in the same words wherever
+/// sessions are listed, and kept current while it's on screen.
+func sessionAge(_ date: Date) -> Text {
+    Text(date, format: .relative(presentation: .numeric, unitsStyle: .narrow))
+}
+
 private struct RecentCard: View {
     let session: SessionInfo
     @ObservedObject var model: PanelModel
     let actions: PanelActions
+    @State private var menuAnchor = MenuAnchor()
 
     private var vendor: Vendor? { model.data?.snapshot.vendor(session.vendor) }
     private var place: String? {
@@ -187,7 +196,7 @@ private struct RecentCard: View {
                     Text(verbatim: session.title ?? session.snippet)
                         .font(.system(size: 13, weight: .medium)).lineLimit(1)
                     Spacer(minLength: 6)
-                    Text(session.mtime, format: .relative(presentation: .numeric, unitsStyle: .narrow))
+                    sessionAge(session.mtime)
                         .font(.system(size: 11)).monospacedDigit().foregroundStyle(Ink.tertiary).lineLimit(1)
                     Color.clear.frame(width: 18, height: 1)   // under the menu button
                 }
@@ -215,11 +224,12 @@ private struct RecentCard: View {
         .overlay(alignment: .topTrailing) {
             // Beside the card's button, not inside it: a control nested in a
             // button's label doesn't get its own clicks.
-            Button { popUp(menu) } label: {
+            Button { popUp(menu, under: menuAnchor) } label: {
                 Image(systemName: "ellipsis").font(.system(size: 11, weight: .semibold)).foregroundStyle(Ink.secondary)
                     .frame(width: 22, height: 20).contentShape(Rectangle())
             }
             .buttonStyle(PressableStyle(radius: 5))
+            .menuAnchor(menuAnchor)
             .help(String(localized: "Resume, send, move or copy", comment: "Recent card menu"))
             .padding(.top, 5).padding(.trailing, 5)
         }
@@ -345,11 +355,17 @@ struct SendSessionPage: View {
                     .contentShape(RoundedRectangle(cornerRadius: 9))
                 }
                 .buttonStyle(PressableStyle(radius: 9, scale: 0.97))
-                .disabled(chosen == nil || d.cwd.isEmpty || d.state == .sending)
-                .opacity(chosen == nil || d.cwd.isEmpty ? 0.5 : 1)
+                .disabled(chosen == nil || d.cwd.isEmpty || d.state == .sending || sent(d.state))
+                .opacity(chosen == nil || d.cwd.isEmpty || sent(d.state) ? 0.5 : 1)
             }
             .padding(.horizontal, 16).padding(.top, 6).padding(.bottom, 16)
         }
+    }
+
+    /// Sent once is done: the button doesn't invite a duplicate.
+    private func sent(_ state: SendDraft.State) -> Bool {
+        if case .sent = state { return true }
+        return false
     }
 
     @ViewBuilder private func outcome(_ state: SendDraft.State) -> some View {

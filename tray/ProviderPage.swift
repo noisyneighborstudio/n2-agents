@@ -222,6 +222,7 @@ struct PrimaryAction: View {
     let vendor: Vendor
     /// A lab with room was suggested, so starting here anyway steps down.
     var suggested = false
+    @State private var terminalMenu = MenuAnchor()
 
     private var terminal: String { terminals.first ?? "Terminal" }
     private var prominent: Bool {
@@ -261,6 +262,7 @@ struct PrimaryAction: View {
         .foregroundStyle(ink)
         .background(RoundedRectangle(cornerRadius: 9).fill(prominent ? Ink.chip : Ink.raised))
         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(prominent ? .clear : Ink.raisedEdge, lineWidth: 1))
+        .menuAnchor(terminalMenu)   // the menu drops under the whole button
     }
 
     private var title: String {
@@ -286,7 +288,7 @@ struct PrimaryAction: View {
         header.isEnabled = false
         popUp([header] + terminals.map { name in
             ClosureItem(name, checked: name == terminal) { actions.setPreferredTerminal(name) }
-        })
+        }, under: terminalMenu)
     }
 }
 
@@ -295,6 +297,7 @@ private struct ActionTiles: View {
     let profile: Profile
     let vendor: Vendor
     let actions: PanelActions
+    @State private var moveMenu = MenuAnchor()
 
     private var sessions: [SessionInfo] {
         data.sessions.filter { $0.profile == profile.name && $0.vendor == vendor.id }
@@ -311,8 +314,9 @@ private struct ActionTiles: View {
                 actions.signIn(profile: profile.name, vendor: vendor.id, confirm: true)
             }
             tile("arrow.right.doc.on.clipboard", String(localized: "Move session", comment: "Provider tile: move or send a recent session")) {
-                popUp(moveItems)
+                popUp(moveItems, under: moveMenu)
             }
+            .menuAnchor(moveMenu)
         }
     }
 
@@ -349,7 +353,8 @@ private struct ActionTiles: View {
     private func tile(_ symbol: String, _ label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 6) {
-                Image(systemName: symbol).font(.system(size: 17))
+                // Symbols differ in height; a fixed box keeps the labels on one line.
+                Image(systemName: symbol).font(.system(size: 17)).frame(height: 20)
                 Text(verbatim: label).font(.system(size: 11.5)).lineLimit(1).minimumScaleFactor(0.85)
             }
             .foregroundStyle(.primary.opacity(0.8))

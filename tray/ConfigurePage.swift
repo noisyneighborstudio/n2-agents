@@ -11,6 +11,7 @@ struct ConfigurePage: View {
     let profile: Profile
     let vendor: Vendor
     @State private var showOwnership = false
+    @State private var terminalMenu = MenuAnchor()
 
     private var usage: Usage? { model.effectiveUsage(profile.name, vendor.id) }
     private var command: String { Clipboard.command(profile: profile.name, vendor: vendor.id) }
@@ -37,6 +38,7 @@ struct ConfigurePage: View {
                                 .padding(.leading, 10).padding(.trailing, 6).frame(height: 24)
                                 .contentShape(Rectangle())
                             }
+                            .menuAnchor(terminalMenu)
                             .buttonStyle(PressableStyle(radius: 6, fill: Ink.tile, scale: 0.97))
                             .accessibilityLabel(String(localized: "Terminal, \(terminal)", comment: "Configure: terminal picker"))
                         }
@@ -186,7 +188,7 @@ struct ConfigurePage: View {
     private func chooseTerminal() {
         popUp(data.terminals.map { name in
             ClosureItem(name, checked: name == terminal) { actions.setPreferredTerminal(name) }
-        })
+        }, under: terminalMenu)
     }
 }
 

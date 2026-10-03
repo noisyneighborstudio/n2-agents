@@ -1,28 +1,29 @@
 import AppKit
 import SwiftUI
 
-// A small tag. Takes a monogram when the thing has one, a symbol otherwise —
-// never bare text, so a row can be scanned rather than read.
+// A small tag. Takes a mark when the thing has one — a lab's logo, a
+// profile's colour as a dot — never bare text, so a row can be scanned rather
+// than read. The words stay in label colour: a profile's colour as text on
+// the glass is too faint to read.
 private struct Chip: View {
     var text: String? = nil
     var vendor: Vendor? = nil
-    var symbol: String? = nil
-    var tint: Color = .primary
+    var dot: Color? = nil
 
     var body: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 4) {
             if let vendor {
                 LabMark(vendor: vendor, size: 9)
-            } else if let symbol {
-                Image(systemName: symbol).font(.system(size: 8, weight: .semibold))
+            } else if let dot {
+                Circle().fill(dot).frame(width: 6, height: 6)
             }
-            if let text { Text(text).font(.system(size: 10)) }
+            if let text { Text(text).font(.system(size: 10.5)) }
         }
-        .padding(.horizontal, text == nil ? 3.5 : 5)
+        .padding(.horizontal, text == nil ? 3.5 : 6)
         .frame(height: 16)
-        .foregroundStyle(tint)
-        .background(Capsule().fill(tint.opacity(0.12)))
-        .overlay(Capsule().strokeBorder(tint.opacity(0.28)))
+        .foregroundStyle(Ink.secondary)
+        .background(Capsule().fill(Ink.Tone.neutral.wash(dark: 0.08, light: 0.06)))
+        .overlay(Capsule().strokeBorder(Ink.cardEdge, lineWidth: 0.5))
         .fixedSize()
     }
 }
@@ -36,14 +37,7 @@ private struct SessionRow: View {
     let data: PanelData
     let actions: PanelActions
     var promptLines = 1
-
-    private static let age: DateComponentsFormatter = {
-        let f = DateComponentsFormatter()
-        f.unitsStyle = .abbreviated
-        f.maximumUnitCount = 1
-        f.allowedUnits = [.minute, .hour, .day, .weekOfMonth]
-        return f
-    }()
+    @State private var menuAnchor = MenuAnchor()
 
     private var place: String {
         guard let cwd = session.cwd else { return "—" }
@@ -66,14 +60,13 @@ private struct SessionRow: View {
                         .font(.system(size: 12.5, weight: .medium))
                         .lineLimit(1).truncationMode(.tail)
                     Spacer(minLength: 6)
-                    Chip(text: session.profile, symbol: "person.crop.circle",
-                         tint: profileColor(session.profile))
+                    Chip(text: session.profile, dot: profileColor(session.profile))
                     // The logo is the lab's name; spelling it out again was
                     // costing the title its width.
                     if let v = data.snapshot.vendor(session.vendor) {
-                        Chip(vendor: v, tint: Ink.secondary)
+                        Chip(vendor: v)
                     }
-                    Text(Self.age.string(from: session.mtime, to: Date()) ?? "")
+                    sessionAge(session.mtime)
                         .font(.system(size: 11)).monospacedDigit()
                         .foregroundStyle(Ink.secondary)
                         .frame(minWidth: 22, alignment: .trailing)
@@ -107,7 +100,7 @@ private struct SessionRow: View {
         // Beside the row's button, not inside it: a control nested in a
         // button's label doesn't get its own clicks.
         .overlay(alignment: .topTrailing) {
-            Button { popUp(menuItems) } label: {
+            Button { popUp(menuItems, under: menuAnchor) } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(Ink.secondary)
@@ -115,6 +108,7 @@ private struct SessionRow: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(PressableStyle(radius: 4))
+            .menuAnchor(menuAnchor)
             .help("Send to another machine, move to another profile, or copy the resume command")
             .padding(.top, 6)
             .padding(.trailing, 5)

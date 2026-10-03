@@ -7,6 +7,7 @@ struct ProfilePage: View {
     let actions: PanelActions
     let data: PanelData
     let profile: Profile
+    @FocusState private var focusedRow: String?
 
     private var addable: Bool { data.snapshot.installedVendors.contains { profile.slots[$0.id] == nil } }
 
@@ -34,7 +35,8 @@ struct ProfilePage: View {
                             .padding(.horizontal, 8).padding(.vertical, 6)
                     }
                     ForEach(data.slotted(profile), id: \.id) { v in
-                        SlotRow(profile: profile, vendor: v, data: data, model: model, actions: actions)
+                        SlotRow(profile: profile, vendor: v, data: data, model: model, actions: actions,
+                                focus: $focusedRow)
                     }
                     if addable {
                         Button { actions.addVendor(profile: profile.name) } label: {
@@ -52,6 +54,7 @@ struct ProfilePage: View {
                         .padding(.horizontal, 4).padding(.top, 8)
                 }
                 .padding(.horizontal, 8).padding(.top, 5).padding(.bottom, 7)
+                .arrowFocus(data.slotted(profile).map(\.id), $focusedRow)
             }
         }
     }
@@ -66,6 +69,7 @@ private struct SlotRow: View {
     let data: PanelData
     @ObservedObject var model: PanelModel
     let actions: PanelActions
+    var focus: FocusState<String?>.Binding
 
     var body: some View {
         let (status, resets) = model.status(profile.name, vendor)
@@ -98,6 +102,8 @@ private struct SlotRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(PressableStyle(radius: 8))
+            .opens { model.push(.provider(profile: profile.name, vendor: vendor.id)) }
+            .focused(focus, equals: vendor.id)
             .accessibilityLabel("\(vendor.label), \(status.label)")
             if status == .checkFailed {
                 CheckAgainButton(checking: model.usageLoading) { actions.retryUsage() }

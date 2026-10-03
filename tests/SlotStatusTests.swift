@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 @main struct SlotStatusTests {
@@ -143,6 +144,12 @@ import Foundation
         check(ladder.update([warn(0)], measured: id).map(\.tier) == [.out], "running out announces out")
         check(ladder.update([warn(30)], measured: id).isEmpty && ladder.update([warn(20)], measured: id).map(\.tier) == [.quarter],
               "recovering to a lesser tier lowers the record, so the next dip announces")
+        // Titles give what is left, as the ring does; the tier only decides when.
+        check(ToastCopy(warn(48), label: "Codex", shared: false).title == "Codex · 48% left", "a half-tier title gives the figure")
+        check(ToastCopy(warn(14), label: "Codex", shared: true).title == "Codex in A · 14% left",
+              "a reading between two thresholds is titled by its figure, not the tier's")
+        check(ToastCopy(warn(8), label: "Codex", shared: false).title == "Codex · 8% left", "a low title gives the figure")
+        check(ToastCopy(warn(0), label: "Codex", shared: false).title == "Codex is out", "out says so")
 
         // Pace: needs the window's length and reset; never estimated without them.
         let week = 7 * 86400.0
@@ -172,6 +179,27 @@ import Foundation
                                        .init(profile: "Home", vendor: "claude", checked: false)], "each lab checks its active profile")
         check(ActiveMenu.title(Snapshot(vendors: [], profiles: [], active: "mixed")) == nil
               && ActiveMenu.title(Snapshot(vendors: [], profiles: [], active: "Work")) == "Work", "the header names one profile or none")
+        // A menu opens from the copy of its control that is still on screen:
+        // mid-transition SwiftUI draws a page twice and may update the outgoing
+        // copy last, then tear it down (the walkthrough's dead + and filter menus).
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [.borderless],
+                              backing: .buffered, defer: true)
+        let anchor = MenuAnchor(), incoming = NSView(), outgoing = NSView()
+        window.contentView?.addSubview(incoming)
+        window.contentView?.addSubview(outgoing)
+        anchor.add(incoming)
+        anchor.add(outgoing)
+        outgoing.removeFromSuperview()
+        check(anchor.view === incoming, "a menu opens from the control still on screen, not the copy updated last")
+        // Mixed, explained on the cards: each names the labs it is active for.
+        let labs3 = Snapshot(vendors: [lab("claude"), lab("codex"), lab("grok")], profiles: [], active: "mixed")
+        check(ActiveMenu.badge(work, labs3) == "Active for Claude", "mixed: one active lab is named")
+        check(ActiveMenu.badge(home, labs3) == "Active for 2 labs", "mixed: several active labs are counted")
+        check(ActiveMenu.badge(Profile(name: "Spare", running: false, slots: ["claude": "ok"]), labs3) == nil,
+              "mixed: a profile active for nothing has no badge")
+        let allWork = Snapshot(vendors: [lab("claude"), lab("codex")], profiles: [], active: "Work")
+        check(ActiveMenu.badge(work, allWork) == "Active" && ActiveMenu.badge(home, allWork) == nil,
+              "one active profile: only its card says Active")
         // Session filters: scope by profile, lab, both; search tokens; newest first, each once.
         func sess(_ p: String, _ v: String, _ id: String, _ age: TimeInterval, _ title: String) -> SessionInfo {
             SessionInfo.parse("\(p)\t\(v)\t\(id)\t\(now.timeIntervalSince1970 - age)\t/Users/me/n2\t\(title)\tmain\t\(title)").first!

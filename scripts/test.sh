@@ -115,6 +115,7 @@ path_test=$(mktemp -d "$TMPDIR/shellpath.XXXXXX")/shell-path-tests
 swiftc tray/ShellPath.swift tests/ShellPathTests.swift -o "$path_test"
 "$path_test"
 sh scripts/test-fleet-settings.sh
+sh scripts/test-glass-window.sh
 icon_test=$(mktemp -d "$TMPDIR/statusicon.XXXXXX")/status-icon-tests
 swiftc tray/StatusIcon.swift tests/StatusIconTests.swift -o "$icon_test"
 "$icon_test"

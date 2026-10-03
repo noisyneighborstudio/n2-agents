@@ -118,6 +118,46 @@ struct Pace: Equatable {
     }
 }
 
+/// A toast's words: the title, with the profile when more than one holds the
+/// lab, and one sentence or none — the pace needs the window's length and
+/// reset, and a return time needs to be known. The title gives what is
+/// actually left, as the ring does; the tier only decides when it is said.
+struct ToastCopy {
+    let title: String
+    let sub: String?
+
+    var announcement: String { [title, sub].compactMap { $0 }.joined(separator: ". ") }
+
+    init(_ warning: UsageWarning, label: String, shared: Bool, now: Date = Date()) {
+        let lab = shared ? String(localized: "\(label) in \(warning.profile)", comment: "Toast: a lab in a named profile") : label
+        // Only an out slot has no figure (the ladder tiers ready, low and out).
+        if let left = warning.status.left {
+            title = String(localized: "\(lab) · \(left)% left", comment: "Toast title: what is left")
+        } else {
+            title = String(localized: "\(lab) is out", comment: "Toast title: out of allowance")
+        }
+        let pace = Pace(warning.window, now: now)
+        let resets = warning.window?.resets.map {
+            String(localized: "Resets \(clockTime($0))", comment: "Toast: when the window resets")
+        }
+        switch warning.tier {
+        case .half, .quarter:
+            sub = pace?.sentence ?? resets
+        case .low:
+            sub = pace?.workLeft(now: now) ?? resets
+        case .out:
+            if case .out(let back?) = warning.status {
+                let countdown = Duration.seconds(max(0, back.timeIntervalSince(now)))
+                    .formatted(.units(allowed: [.days, .hours, .minutes], width: .narrow, maximumUnitCount: 2))
+                sub = String(localized: "Back \(SlotStatus.day(back)) at \(back.formatted(.dateTime.hour().minute())) · in \(countdown)",
+                             comment: "Toast: the day and time allowance returns, and how long until then")
+            } else {
+                sub = nil
+            }
+        }
+    }
+}
+
 extension PanelModel {
     /// Every slot at a tier now, and every slot with a fresh reading.
     var usageWarnings: (warnings: [UsageWarning], measured: Set<String>) {

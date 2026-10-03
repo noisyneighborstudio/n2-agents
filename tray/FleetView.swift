@@ -425,7 +425,7 @@ struct MachinePage: View {
                                 Circle().fill(peer.isOnline && peer.state == .approved ? Ink.green : Ink.tertiary).frame(width: 6, height: 6)
                                 Text(verbatim: word.text)
                                 Text(verbatim: "·")
-                                Text(verbatim: peer.transport)
+                                Text(verbatim: FleetWords.transport(peer.transport))
                             }
                             .font(.system(size: 12.5)).foregroundStyle(Ink.secondary)
                         }
@@ -441,7 +441,7 @@ struct MachinePage: View {
                                 HStack {
                                     Text(verbatim: t.label.isEmpty ? t.id : t.label).font(.system(size: 13)).lineLimit(1)
                                     Spacer()
-                                    Text(verbatim: t.state.rawValue).font(.system(size: 12)).foregroundStyle(Ink.secondary)
+                                    Text(verbatim: t.word).font(.system(size: 12)).foregroundStyle(Ink.secondary)
                                 }
                                 .padding(.horizontal, 12).frame(height: 36)
                             }
@@ -454,7 +454,8 @@ struct MachinePage: View {
                         }
                         ForEach(Array(activity)) { n in
                             HStack(alignment: .firstTextBaseline) {
-                                Text(verbatim: n.title).font(.system(size: 12.5)).lineLimit(1)
+                                // This page is the machine's own: name the task, not the machine.
+                                Text(verbatim: n.text.isEmpty ? n.title : "\(n.text) · \(n.word)").font(.system(size: 12.5)).lineLimit(1)
                                 Spacer()
                                 Text(verbatim: FleetNoticeTime.string(n.at)).font(.system(size: 11.5)).foregroundStyle(Ink.tertiary)
                             }
@@ -580,6 +581,7 @@ struct TaskPage: View {
     @ObservedObject var model: PanelModel
     let actions: FleetActions
     let task: FleetTask
+    @State private var copyMenu = MenuAnchor()
 
     var body: some View {
         let fleet = model.fleet ?? FleetData()
@@ -666,8 +668,9 @@ struct TaskPage: View {
                 Button(String(localized: "Show Result", comment: "Task page: the task's output")) { actions.fleetShowTask(task.id) }
                     .buttonStyle(WideButton(prominent: true))
                 if task.canFetch {
-                    Button(String(localized: "Copy Result To…", comment: "Task page: distribute its outputs")) { popUp(copyTargets(fleet)) }
+                    Button(String(localized: "Copy Result To…", comment: "Task page: distribute its outputs")) { popUp(copyTargets(fleet), under: copyMenu) }
                         .buttonStyle(WideButton())
+                        .menuAnchor(copyMenu)
                 }
             }
             if !task.isFinished && !task.isStranded {
@@ -701,6 +704,7 @@ struct TaskPage: View {
 }
 
 struct WideButton: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
     var prominent = false
 
     func makeBody(configuration: Configuration) -> some View {
@@ -710,6 +714,9 @@ struct WideButton: ButtonStyle {
             .frame(maxWidth: .infinity).frame(height: 36)
             .background(RoundedRectangle(cornerRadius: 9).fill(prominent ? Ink.chip : Ink.raised))
             .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(prominent ? .clear : Ink.raisedEdge, lineWidth: 1))
+            // A disabled button looks it, as FleetPill does: Plan while the
+            // fleet answers, Send once sent.
+            .opacity(isEnabled ? 1 : 0.45)
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .animation(Motion.press, value: configuration.isPressed)
     }

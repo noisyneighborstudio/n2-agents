@@ -5,7 +5,14 @@ import SwiftUI
 func clockTime(_ date: Date) -> String {
     if Calendar.current.isDateInToday(date) { return date.formatted(.dateTime.hour().minute()) }
     if date.timeIntervalSinceNow > 6 * 86400 { return date.formatted(.dateTime.month(.abbreviated).day()) }
-    return date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+    // A weekday and its time are one value: never wrap between them.
+    return date.formatted(.dateTime.weekday(.abbreviated).hour().minute()).replacingOccurrences(of: " ", with: "\u{00A0}")
+}
+
+/// "Updated just now", "Updated 4 minutes ago". A reading stamped a moment
+/// ahead of this clock is just now, never "in 0 seconds".
+func updatedAgo(_ at: Date, now: Date) -> String {
+    String(localized: "Updated \(FleetWords.ago(at, now: now))", comment: "Footer: when usage was last read")
 }
 
 // One closed status vocabulary for every surface that shows a slot: strip,

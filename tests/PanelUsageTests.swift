@@ -55,6 +55,29 @@ import Foundation
               "unknown capacity must not hide a known restriction")
         model.usage["claude"] = ["Default": healthy]
         check(model.remaining == 0, "complete coverage retains known rejection")
+        // The icon gauges the slots new sessions use: the active profile's, or
+        // while labs differ, each lab's active profile. A low slot elsewhere
+        // waits in its card.
+        let work = Profile(name: "Work", running: false, slots: ["claude": "ok", "codex": "ok"])
+        let home = Profile(name: "Default", running: false, slots: ["claude": "ok", "codex": "ok"])
+        let roomy = Usage(fiveHour: 10, sevenDay: 30, resets: nil, note: .ok, sevenResets: nil)
+        let nearlyOut = Usage(fiveHour: 10, sevenDay: 85, resets: nil, note: .ok, sevenResets: nil)
+        model.usage = ["claude": ["Default": roomy, "Work": nearlyOut], "codex": ["Default": roomy, "Work": roomy]]
+        model.data = PanelData(snapshot: Snapshot(vendors: vendors, profiles: [], active: "Default"),
+                               profiles: [home, work], sessions: [], terminals: [], desktops: [])
+        check(model.remaining == 70, "a low slot in an inactive profile leaves the icon on the active profile's worst")
+        check(model.measurementCoverage.expected == 2, "the icon's coverage counts the active profile's slots")
+        model.data = PanelData(snapshot: Snapshot(vendors: vendors, profiles: [], active: "Work"),
+                               profiles: [home, work], sessions: [], terminals: [], desktops: [])
+        check(model.remaining == 15, "the same slot in the active profile turns the icon")
+        let mixedWork = Profile(name: "Work", running: false, slots: ["claude": "active", "codex": "ok"])
+        let mixedHome = Profile(name: "Default", running: false, slots: ["claude": "ok", "codex": "active"])
+        model.data = PanelData(snapshot: Snapshot(vendors: vendors, profiles: [], active: "mixed"),
+                               profiles: [mixedHome, mixedWork], sessions: [], terminals: [], desktops: [])
+        check(model.remaining == 15, "mixed: each lab is gauged in the profile active for it")
+        model.usage["claude"]?["Work"] = roomy
+        model.usage["claude"]?["Default"] = nearlyOut
+        check(model.remaining == 70, "mixed: a low slot in a lab's inactive profile does not turn the icon")
         print("Native panel restriction, summary, and next-agent tests passed")
     }
 }
