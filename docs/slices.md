@@ -20,42 +20,36 @@ Walkthrough fixes (from the recorded product walkthrough, 2026-10-01). Each is
 proved by a check that fails on the old code plus frames captured from the
 demo build (`clip.sh` in the walkthrough tooling).
 
-1. **Toast titles state the threshold truthfully** (`toast-title-under`).
-   Behavior: tier titles read "under 25% left" / "under 10% left" / "under
-   half left", so a ring at 14% no longer sits under "25% left".
-   Proof: toast copy checks for each tier; frames of a low toast.
-   Scope: copy only; the tier ladder and announce-once rule are unchanged.
-
-2. **Mixed is explained on the cards** (`mixed-explained`).
+1. **Mixed is explained on the cards** (`mixed-explained`).
    Behavior: when labs use different profiles, each card that is active for
    some of its labs says which ("Active for Codex", "Active for 2 labs"), and
    the header's Mixed carries the same explanation as help.
    Proof: model checks for the badge text in all, some and no-lab cases;
    frames of the Fleet page in a mixed state.
 
-3. **Sessions window reads like the panel** (`sessions-window-polish`).
+2. **Sessions window reads like the panel** (`sessions-window-polish`).
    Behavior: profile chips meet contrast in both appearances, and ages use the
    panel's words ("26m ago").
    Proof: one age formatter used by both; frames of the window in light and dark.
 
-4. **Send Work behaves like a form** (`send-work-polish`).
+3. **Send Work behaves like a form** (`send-work-polish`).
    Behavior: the task box shows a scroller only when its text overflows,
    placeholders are in the body font, and a sent task appears in Tasks at once.
    Proof: frames of the page empty and sent; the sent task's row is on Fleet
    before the next fleet read.
 
-5. **The Tasks list fades under the footer** (`tasks-fade`).
+4. **The Tasks list fades under the footer** (`tasks-fade`).
    Behavior: a list cut off by the footer fades out instead of clipping a row
    in half.
    Proof: frames of the Fleet page with more tasks than fit.
 
-6. **The menu bar icon gauges the active profile** (`status-icon-active-profile`).
+5. **The menu bar icon gauges the active profile** (`status-icon-active-profile`).
    Behavior: the icon's ring shows the worst slot of the active profile (per
    lab when Mixed), not the lowest slot anywhere (docs/tray-redesign/03-states.md).
    Proof: StatusIcon tests: a low slot in an inactive profile leaves the icon
    green; the same slot in the active profile turns it.
 
-7. **Arrow keys move between cards and rows** (`panel-arrow-keys`).
+6. **Arrow keys move between cards and rows** (`panel-arrow-keys`).
    Behavior: Up and Down move focus between Fleet cards and Profile rows;
    Return opens (docs/tray-redesign/02-screens.md).
    Proof: AX run: arrows move the focused element; Return opens it.

@@ -143,6 +143,12 @@ import Foundation
         check(ladder.update([warn(0)], measured: id).map(\.tier) == [.out], "running out announces out")
         check(ladder.update([warn(30)], measured: id).isEmpty && ladder.update([warn(20)], measured: id).map(\.tier) == [.quarter],
               "recovering to a lesser tier lowers the record, so the next dip announces")
+        // Titles give what is left, as the ring does; the tier only decides when.
+        check(ToastCopy(warn(48), label: "Codex", shared: false).title == "Codex · 48% left", "a half-tier title gives the figure")
+        check(ToastCopy(warn(14), label: "Codex", shared: true).title == "Codex in A · 14% left",
+              "a reading between two thresholds is titled by its figure, not the tier's")
+        check(ToastCopy(warn(8), label: "Codex", shared: false).title == "Codex · 8% left", "a low title gives the figure")
+        check(ToastCopy(warn(0), label: "Codex", shared: false).title == "Codex is out", "out says so")
 
         // Pace: needs the window's length and reset; never estimated without them.
         let week = 7 * 86400.0
