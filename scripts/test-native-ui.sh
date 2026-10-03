@@ -76,6 +76,12 @@ if grep -qE 'announcedNotices|firstRead' tray/FleetControl.swift tray/main.swift
   echo "FAIL the old empty-set-means-unread gate is back"; fail=$((fail+1))
 else echo "ok no untested seen-set is left in the app delegate"; fi
 
+# Panel menus open under the control that owns them (MenuAnchor), so keyboard
+# and VoiceOver presses don't open them wherever the pointer was left.
+if grep -n 'NSEvent.mouseLocation, in: nil' tray/*.swift; then
+  echo "FAIL a panel menu pops at the pointer again — use popUp(_:under:)"; fail=$((fail+1))
+else echo "ok every panel menu opens under its control"; fi
+
 # `fleet task reconcile` re-probes workers and can APPEND notices; the CLI has
 # no verb that discards the feed. A button labelled "Clear" promised the
 # opposite of what it does, so the label has to name the reconcile.

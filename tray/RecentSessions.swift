@@ -23,6 +23,7 @@ struct RecentSection: View {
     var vendor: String? = nil
     var limit = 2
     @FocusState private var searchFocused: Bool
+    @State private var filterAnchor = MenuAnchor()
 
     /// Root's Recent narrows by profile, provider and search, and sorts by age;
     /// a page's Recent is already scoped by the page.
@@ -69,7 +70,8 @@ struct RecentSection: View {
                 }
                 tool(filter.profile != nil || filter.vendor != nil || filter.oldestFirst
                         ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle",
-                     String(localized: "Filter and sort", comment: "Recent: filter menu")) { popUp(filterMenu(filter)) }
+                     String(localized: "Filter and sort", comment: "Recent: filter menu")) { popUp(filterMenu(filter), under: filterAnchor) }
+                .menuAnchor(filterAnchor)
             }
             tool("arrow.up.left.and.arrow.down.right", String(localized: "All sessions", comment: "Recent: open the sessions window")) {
                 actions.showAllSessions()
@@ -174,6 +176,7 @@ private struct RecentCard: View {
     let session: SessionInfo
     @ObservedObject var model: PanelModel
     let actions: PanelActions
+    @State private var menuAnchor = MenuAnchor()
 
     private var vendor: Vendor? { model.data?.snapshot.vendor(session.vendor) }
     private var place: String? {
@@ -215,11 +218,12 @@ private struct RecentCard: View {
         .overlay(alignment: .topTrailing) {
             // Beside the card's button, not inside it: a control nested in a
             // button's label doesn't get its own clicks.
-            Button { popUp(menu) } label: {
+            Button { popUp(menu, under: menuAnchor) } label: {
                 Image(systemName: "ellipsis").font(.system(size: 11, weight: .semibold)).foregroundStyle(Ink.secondary)
                     .frame(width: 22, height: 20).contentShape(Rectangle())
             }
             .buttonStyle(PressableStyle(radius: 5))
+            .menuAnchor(menuAnchor)
             .help(String(localized: "Resume, send, move or copy", comment: "Recent card menu"))
             .padding(.top, 5).padding(.trailing, 5)
         }

@@ -295,7 +295,7 @@ private struct Pressable<Content: View>: View {
 // MARK: - AppKit menus
 
 // SwiftUI's Menu flattens custom labels on macOS, so the panel's menus are
-// plain NSMenus popped at the pointer.
+// plain NSMenus, each opened under the control that owns it.
 final class ClosureItem: NSMenuItem {
     private let handler: () -> Void
 
@@ -322,8 +322,35 @@ func submenu(_ title: String, symbol: String? = nil, _ items: [NSMenuItem]) -> N
     return item
 }
 
-func popUp(_ items: [NSMenuItem]) {
+/// Where a control's menu opens: an AppKit view behind the control, so the
+/// menu drops from its bottom edge however it was pressed — by pointer,
+/// keyboard or VoiceOver — rather than wherever the pointer happens to be.
+final class MenuAnchor {
+    fileprivate weak var view: NSView?
+}
+
+private struct MenuAnchorView: NSViewRepresentable {
+    let anchor: MenuAnchor
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        anchor.view = view
+        return view
+    }
+    func updateNSView(_ view: NSView, context: Context) { anchor.view = view }
+}
+
+extension View {
+    /// The control whose bottom edge `popUp(_:under:)` opens a menu from.
+    func menuAnchor(_ anchor: MenuAnchor) -> some View { background(MenuAnchorView(anchor: anchor)) }
+}
+
+func popUp(_ items: [NSMenuItem], under anchor: MenuAnchor) {
     let menu = NSMenu()
     items.forEach(menu.addItem)
-    menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    guard let view = anchor.view, let window = view.window else { return }
+    // A control in the trailing half lines the menu up with its trailing
+    // edge, so the menu hangs inside the panel rather than off its side.
+    let trailing = view.convert(view.bounds, to: nil).midX > window.frame.width / 2
+    let x = trailing ? view.bounds.maxX - menu.size.width : 0
+    menu.popUp(positioning: nil, at: NSPoint(x: x, y: view.isFlipped ? view.bounds.maxY + 4 : -4), in: view)
 }

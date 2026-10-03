@@ -58,6 +58,7 @@ private struct AppHeader: View {
     @ObservedObject var model: PanelModel
     let actions: PanelActions
     let data: PanelData
+    @State private var activeMenu = MenuAnchor()
 
     var body: some View {
         let tally = model.tally
@@ -79,6 +80,7 @@ private struct AppHeader: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .menuAnchor(activeMenu)
                 .help(String(localized: "Choose the profile new sessions use", comment: "App header: Active switch help"))
             }
             Spacer(minLength: 8)
@@ -108,7 +110,7 @@ private struct AppHeader: View {
         .frame(height: 56)
     }
 
-    /// Per profile, then a submenu per lab; the native menu, popped at the pointer.
+    /// Per profile, then a submenu per lab; the native menu, under the switch.
     private func popUpActive() {
         let menu = ActiveMenu(snapshot: data.snapshot, profiles: data.profiles)
         var items: [NSMenuItem] = menu.profiles.map { c in
@@ -124,7 +126,7 @@ private struct AppHeader: View {
                 })
             }
         }
-        popUp(items)
+        popUp(items, under: activeMenu)
     }
 
     private func pair(_ symbol: String, _ count: Int, _ ink: Color, _ label: String) -> some View {
@@ -150,6 +152,7 @@ private struct NextBestButton: View {
     @ObservedObject var model: PanelModel
     let data: PanelData
     let actions: PanelActions
+    @State private var anytimeMenu = MenuAnchor()
 
     var body: some View {
         switch pick {
@@ -176,7 +179,7 @@ private struct NextBestButton: View {
                             actions.openSession(profile: p.name, vendor: v.id, terminal: nil)
                         }
                     }
-                })
+                }, under: anytimeMenu)
             } label: {
                 shape(symbol: "hourglass", fill: Ink.amber, title: String(localized: "Everything is out", comment: "Open next best when every lab is out")) {
                     if let firstBack {
@@ -186,6 +189,7 @@ private struct NextBestButton: View {
                 }
             }
             .buttonStyle(PressableStyle(radius: 11, scale: 0.97))
+            .menuAnchor(anytimeMenu)
         case .usageUnavailable?:
             Button { actions.retryUsage() } label: {
                 shape(symbol: "arrow.clockwise", fill: Ink.secondary, title: String(localized: "Usage unavailable", comment: "Open next best when nothing could be read")) {
@@ -242,6 +246,7 @@ private struct MachineHeader: View {
     @ObservedObject var model: PanelModel
     let actions: PanelActions
     let profiles: Int
+    @State private var addMenu = MenuAnchor()
 
     var body: some View {
         HStack(spacing: 7) {
@@ -258,12 +263,13 @@ private struct MachineHeader: View {
                 popUp([ClosureItem(String(localized: "New Profile…", comment: "Add menu"), symbol: "person.badge.plus") { actions.newProfile() },
                        ClosureItem(String(localized: "Add a Mac…", comment: "Add menu: pair another Mac, in Settings"), symbol: "desktopcomputer") {
                            actions.showSettings()
-                       }])
+                       }], under: addMenu)
             } label: {
                 Image(systemName: "plus").font(.system(size: 12, weight: .semibold))
                     .frame(width: 22, height: 22).contentShape(Rectangle())
             }
             .buttonStyle(PressableStyle(radius: 6))
+            .menuAnchor(addMenu)
             .help(String(localized: "New profile or another Mac", comment: "Machine header: add menu"))
             .accessibilityLabel(String(localized: "Add", comment: "Machine header: add menu"))
         }
@@ -334,19 +340,23 @@ private struct ProfileCard: View {
         }
         .buttonStyle(PressableStyle(radius: 12, fill: Ink.surface, card: true))
         .accessibilityLabel(String(localized: "\(profile.name) profile, \(note.text)", comment: "Profile card"))
+        // Every item names the profile: the menu opens at the pointer, which
+        // may have left the card it came from by the time you read it.
         .contextMenu {
             if !isActive {
                 Button { actions.setActive(profile: profile.name, vendor: nil) } label: {
-                    Label("Make Active for All Labs", systemImage: "checkmark.circle")
+                    Label("Make “\(profile.name)” Active for All Labs", systemImage: "checkmark.circle")
                 }
             }
             if addable {
-                Button { actions.addVendor(profile: profile.name) } label: { Label("Add Lab…", systemImage: "plus") }
+                Button { actions.addVendor(profile: profile.name) } label: {
+                    Label("Add a Lab to “\(profile.name)”…", systemImage: "plus")
+                }
             }
             if !profile.isDefault {
                 Divider()
                 Button(role: .destructive) { actions.deleteProfile(profile.name) } label: {
-                    Label("Delete Profile…", systemImage: "trash")
+                    Label("Delete “\(profile.name)”…", systemImage: "trash")
                 }
             }
         }

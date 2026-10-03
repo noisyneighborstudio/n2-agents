@@ -20,55 +20,48 @@ Walkthrough fixes (from the recorded product walkthrough, 2026-10-01). Each is
 proved by a check that fails on the old code plus frames captured from the
 demo build (`clip.sh` in the walkthrough tooling).
 
-1. **Menus open at their control** (`menus-at-control`).
-   Behavior: every panel menu (Active switch, card menus, Recent filters,
-   session menus) opens under the control that owns it, by pointer, keyboard
-   or VoiceOver; a profile card's menu names the profile it acts on.
-   Proof: a check that the menu anchor is the control's frame, not the
-   pointer; frames with the pointer elsewhere when the menu opens.
-
-2. **The panel comes back after an alert** (`panel-returns-after-alert`).
+1. **The panel comes back after an alert** (`panel-returns-after-alert`).
    Behavior: Approve…, Show Result and other alerts raised from the panel
    reopen it on the same page when the alert closes.
    Proof: AX run: press Approve…, answer the alert, the panel is open on
    Fleet; same for Show Result on its Task page.
 
-3. **Toast titles state the threshold truthfully** (`toast-title-under`).
+2. **Toast titles state the threshold truthfully** (`toast-title-under`).
    Behavior: tier titles read "under 25% left" / "under 10% left" / "under
    half left", so a ring at 14% no longer sits under "25% left".
    Proof: toast copy checks for each tier; frames of a low toast.
    Scope: copy only; the tier ladder and announce-once rule are unchanged.
 
-4. **Mixed is explained on the cards** (`mixed-explained`).
+3. **Mixed is explained on the cards** (`mixed-explained`).
    Behavior: when labs use different profiles, each card that is active for
    some of its labs says which ("Active for Codex", "Active for 2 labs"), and
    the header's Mixed carries the same explanation as help.
    Proof: model checks for the badge text in all, some and no-lab cases;
    frames of the Fleet page in a mixed state.
 
-5. **Sessions window reads like the panel** (`sessions-window-polish`).
+4. **Sessions window reads like the panel** (`sessions-window-polish`).
    Behavior: profile chips meet contrast in both appearances, and ages use the
    panel's words ("26m ago").
    Proof: one age formatter used by both; frames of the window in light and dark.
 
-6. **Send Work behaves like a form** (`send-work-polish`).
+5. **Send Work behaves like a form** (`send-work-polish`).
    Behavior: the task box shows a scroller only when its text overflows,
    placeholders are in the body font, and a sent task appears in Tasks at once.
    Proof: frames of the page empty and sent; the sent task's row is on Fleet
    before the next fleet read.
 
-7. **The Tasks list fades under the footer** (`tasks-fade`).
+6. **The Tasks list fades under the footer** (`tasks-fade`).
    Behavior: a list cut off by the footer fades out instead of clipping a row
    in half.
    Proof: frames of the Fleet page with more tasks than fit.
 
-8. **The menu bar icon gauges the active profile** (`status-icon-active-profile`).
+7. **The menu bar icon gauges the active profile** (`status-icon-active-profile`).
    Behavior: the icon's ring shows the worst slot of the active profile (per
    lab when Mixed), not the lowest slot anywhere (docs/tray-redesign/03-states.md).
    Proof: StatusIcon tests: a low slot in an inactive profile leaves the icon
    green; the same slot in the active profile turns it.
 
-9. **Arrow keys move between cards and rows** (`panel-arrow-keys`).
+8. **Arrow keys move between cards and rows** (`panel-arrow-keys`).
    Behavior: Up and Down move focus between Fleet cards and Profile rows;
    Return opens (docs/tray-redesign/02-screens.md).
    Proof: AX run: arrows move the focused element; Return opens it.

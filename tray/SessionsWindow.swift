@@ -36,6 +36,7 @@ private struct SessionRow: View {
     let data: PanelData
     let actions: PanelActions
     var promptLines = 1
+    @State private var menuAnchor = MenuAnchor()
 
     private static let age: DateComponentsFormatter = {
         let f = DateComponentsFormatter()
@@ -107,7 +108,7 @@ private struct SessionRow: View {
         // Beside the row's button, not inside it: a control nested in a
         // button's label doesn't get its own clicks.
         .overlay(alignment: .topTrailing) {
-            Button { popUp(menuItems) } label: {
+            Button { popUp(menuItems, under: menuAnchor) } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(Ink.secondary)
@@ -115,6 +116,7 @@ private struct SessionRow: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(PressableStyle(radius: 4))
+            .menuAnchor(menuAnchor)
             .help("Send to another machine, move to another profile, or copy the resume command")
             .padding(.top, 6)
             .padding(.trailing, 5)

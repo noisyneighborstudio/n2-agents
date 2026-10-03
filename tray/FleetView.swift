@@ -581,6 +581,7 @@ struct TaskPage: View {
     @ObservedObject var model: PanelModel
     let actions: FleetActions
     let task: FleetTask
+    @State private var copyMenu = MenuAnchor()
 
     var body: some View {
         let fleet = model.fleet ?? FleetData()
@@ -667,8 +668,9 @@ struct TaskPage: View {
                 Button(String(localized: "Show Result", comment: "Task page: the task's output")) { actions.fleetShowTask(task.id) }
                     .buttonStyle(WideButton(prominent: true))
                 if task.canFetch {
-                    Button(String(localized: "Copy Result To…", comment: "Task page: distribute its outputs")) { popUp(copyTargets(fleet)) }
+                    Button(String(localized: "Copy Result To…", comment: "Task page: distribute its outputs")) { popUp(copyTargets(fleet), under: copyMenu) }
                         .buttonStyle(WideButton())
+                        .menuAnchor(copyMenu)
                 }
             }
             if !task.isFinished && !task.isStranded {
