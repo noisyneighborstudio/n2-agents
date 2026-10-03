@@ -89,6 +89,24 @@ Blocked on authorization:
 
 ## Noticed
 
+- From the recorded product walkthrough (2026-10-01), still open:
+  - Panel push/pop resizes in the wrong order: the window grows before the
+    content is pinned to its top, so a grey band opens above the page and the
+    content drops, clips and snaps back (GlassWindow `resize`, PageStack
+    height). The Send Work page jumps when plan results arrive.
+  - Panel menus pop at `NSEvent.mouseLocation`, not at the control, so
+    keyboard or VoiceOver activation (and some display layouts) open them far
+    away; a card's menu doesn't mark which profile it acts on.
+  - Toast titles say the tier ("25% left") beside a ring at 14%: the spec
+    chose tier titles (05-toasts.md); decide whether the figure wins.
+  - Approve and Show Result close the panel and leave it closed.
+  - "Mixed" in the header isn't explained on any card.
+  - The Sessions window's profile chips are low contrast, and its ages ("27m")
+    differ from the panel's ("26m ago").
+  - Send Work: the task box always shows a scroller, placeholders are
+    monospaced, and a sent task appears in Tasks only on the next fleet read.
+  - The last Tasks row is cut off under the footer with no fade.
+
 - Sync still spends about 30 ms of shell forks per address in sync_scope_ok on
   each side (1,500 files: 103 s dry run). Moving scope evaluation into the
   manifest process would remove most of it.

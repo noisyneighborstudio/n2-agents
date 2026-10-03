@@ -61,7 +61,9 @@ Order, top to bottom:
    (`Ink.chip` at 14%), 0.5 pt blue stroke at 45%.
    - Leading: 24 pt blue circle with `bolt.fill` in white.
    - "Open next best" 13 semibold.
-   - Trailing: `LabMark` 14, "Cursor · Default · 100%" at 12 secondary, then `chevron.right`.
+   - Trailing: `LabMark` 14, "Default · 100%" at 12 secondary, then `chevron.right`.
+     The logo names the lab; at 360 pt a lab name and a profile don't both fit
+     beside the title. VoiceOver still reads "Cursor · Default · 100%".
    - It keeps the existing `NextBestButton` behavior for the `.allMaxed` /
      `.usageUnavailable` / `.nothingSignedIn` cases, re-skinned to this shape.
 4. For each machine:

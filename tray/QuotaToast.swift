@@ -244,7 +244,7 @@ struct UsageToastCard: View {
         }
         .contentShape(RoundedRectangle(cornerRadius: 18))
         .onTapGesture(perform: open)
-        .onHover { hovering = $0 }
+        .background(AlwaysHover { hovering = $0 })
         .accessibilityElement(children: .contain)
         .accessibilityLabel(copy.announcement)
     }

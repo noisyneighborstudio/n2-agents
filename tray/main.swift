@@ -340,6 +340,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     // Everything else is local and fast enough to run on the main thread.
     private func buildPanelData(porcelain: String, sessions: String) -> PanelData {
         let snap = Snapshot.parse(porcelain)
+        FleetWords.labs = Dictionary(snap.vendors.map { ($0.id, $0.label) }) { a, _ in a }
         let profiles = discoverProfiles(snap)
         let preferred = preferredTerminal.name
         let terminals = [preferred] + installedTerminals().map(\.name).filter { $0 != preferred }
@@ -972,8 +973,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         let confirm = NSAlert()
         confirm.messageText = "Delete profile “\(p.name)”?"
         confirm.informativeText = "This removes its logins, CLI config and desktop app data. It can't be undone."
-        confirm.addButton(withTitle: "Delete")
-        confirm.addButton(withTitle: "Cancel")
+        let delete = confirm.addButton(withTitle: "Delete")
+        delete.hasDestructiveAction = true
+        delete.keyEquivalent = ""
+        confirm.addButton(withTitle: "Cancel").keyEquivalent = "\r"
         NSApp.activate(ignoringOtherApps: true)
         guard confirm.runModal() == .alertFirstButtonReturn else { return }
 

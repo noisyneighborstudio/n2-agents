@@ -349,7 +349,8 @@ private struct ActionTiles: View {
     private func tile(_ symbol: String, _ label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 6) {
-                Image(systemName: symbol).font(.system(size: 17))
+                // Symbols differ in height; a fixed box keeps the labels on one line.
+                Image(systemName: symbol).font(.system(size: 17)).frame(height: 20)
                 Text(verbatim: label).font(.system(size: 11.5)).lineLimit(1).minimumScaleFactor(0.85)
             }
             .foregroundStyle(.primary.opacity(0.8))

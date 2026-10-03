@@ -173,8 +173,17 @@ extension AppDelegate {
     func fleetApprove(peer: String) {
         dismissPanel()
         let confirm = NSAlert()
-        confirm.messageText = "Approve this machine?"
-        confirm.informativeText = "Approving \(peer) lets it receive shared profiles, skills and credentials. Only approve it if this fingerprint matches the one shown on that Mac."
+        let machine = model.fleet?.pending.first { $0.id == peer }?.machine
+        confirm.messageText = machine.map { "Approve \($0)?" } ?? "Approve this machine?"
+        confirm.informativeText = "Approving sends it shared profiles and credentials. Approve only if this fingerprint matches the one on that Mac."
+        // The fingerprint is compared character by character: its own line,
+        // monospaced, and never broken with a hyphen.
+        let fingerprint = NSTextField(wrappingLabelWithString: peer)
+        fingerprint.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        fingerprint.isSelectable = true
+        fingerprint.preferredMaxLayoutWidth = 220
+        fingerprint.frame = NSRect(x: 0, y: 0, width: 220, height: 32)
+        confirm.accessoryView = fingerprint
         confirm.addButton(withTitle: "Approve")
         confirm.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
@@ -297,7 +306,12 @@ extension AppDelegate {
     func fleetShowTask(_ id: String) {
         dismissPanel()
         let r = runCLI(["fleet", "task", "show", id])
-        alert("Task \(id)", r.output.isEmpty ? "No detail recorded for this task." : r.output)
+        guard r.status == 0, !r.output.isEmpty else {
+            alert("Task \(id)", r.output.isEmpty ? "No detail recorded for this task." : r.output)
+            return
+        }
+        let summary = FleetWords.taskSummary(r.output, id: id)
+        alert(summary.title, summary.body)
     }
 
     /// A retry is a new task the user asked for. It is never automatic, and the

@@ -159,11 +159,12 @@ private struct NextBestButton: View {
                     if let v = data.snapshot.vendor(vendorID) {
                         LabMark(vendor: v, size: 14).foregroundStyle(Ink.logo)
                     }
-                    Text(verbatim: detail(profile, vendorID))
+                    Text(verbatim: detail(profile, vendorID, lab: false))
                         .font(.system(size: 12)).monospacedDigit().foregroundStyle(Ink.secondary).lineLimit(1)
                 }
             }
             .buttonStyle(PressableStyle(radius: 11, scale: 0.97))
+            .accessibilityLabel(String(localized: "Open next best, \(detail(profile, vendorID))", comment: "Open next best: VoiceOver"))
             .help(String(localized: "The next signed-in slot with room, in rotation — no lab is favoured",
                          comment: "Open next best help"))
         case .allMaxed(let firstBack)?:
@@ -202,12 +203,15 @@ private struct NextBestButton: View {
     }
 
     /// "Cursor · Default · 100%": the lab, where, and what's left when known.
-    private func detail(_ profile: String, _ vendorID: String) -> String {
+    /// On screen the logo already names the lab; a lab name and a profile
+    /// don't both fit beside the title.
+    private func detail(_ profile: String, _ vendorID: String, lab: Bool = true) -> String {
         let label = data.snapshot.vendor(vendorID)?.label ?? vendorID
+        let parts = (lab ? [label] : []) + [profile]
         guard let v = data.snapshot.vendor(vendorID), let left = model.status(profile, v).status.left else {
-            return "\(label) · \(profile)"
+            return parts.joined(separator: " · ")
         }
-        return "\(label) · \(profile) · \(SlotStatus.percent(left))"
+        return (parts + [SlotStatus.percent(left)]).joined(separator: " · ")
     }
 
     private func shape<Trailing: View>(symbol: String, fill: Color,
@@ -424,10 +428,11 @@ private struct FleetFooter: View {
             icon("arrow.clockwise", String(localized: "Refresh", comment: "Footer: re-read usage"), turning: model.usageLoading) {
                 actions.retryUsage()
             }
-            TimelineView(.periodic(from: .now, by: 30)) { _ in
+            // A fixed origin: a schedule started at .now restarts on every
+            // re-render, and the label never moves while the panel is busy.
+            TimelineView(.periodic(from: .distantPast, by: 15)) { context in
                 if let at = model.refreshedAt {
-                    Text("Updated \(at, format: .relative(presentation: .numeric, unitsStyle: .wide))",
-                         comment: "Footer: when usage was last read")
+                    Text(verbatim: updatedAgo(at, now: context.date))
                 } else if model.usageLoading {
                     Text("Reading usage…", comment: "Footer: first usage read running")
                 }

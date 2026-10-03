@@ -131,7 +131,12 @@ final class GlassWindow: NSPanel {
         return material
     }
 
-    override var canBecomeKey: Bool { true }
+    // A toast never takes key: a click on it opens the panel, and a toast that
+    // became key on the press would take key back and close the panel at once.
+    override var canBecomeKey: Bool {
+        if case .toast = behavior { return false }
+        return true
+    }
 
     /// Content fills the stage at rest; from here its autoresizing margins keep
     /// it top-centred while the frame animates.

@@ -425,7 +425,7 @@ struct MachinePage: View {
                                 Circle().fill(peer.isOnline && peer.state == .approved ? Ink.green : Ink.tertiary).frame(width: 6, height: 6)
                                 Text(verbatim: word.text)
                                 Text(verbatim: "·")
-                                Text(verbatim: peer.transport)
+                                Text(verbatim: FleetWords.transport(peer.transport))
                             }
                             .font(.system(size: 12.5)).foregroundStyle(Ink.secondary)
                         }
@@ -441,7 +441,7 @@ struct MachinePage: View {
                                 HStack {
                                     Text(verbatim: t.label.isEmpty ? t.id : t.label).font(.system(size: 13)).lineLimit(1)
                                     Spacer()
-                                    Text(verbatim: t.state.rawValue).font(.system(size: 12)).foregroundStyle(Ink.secondary)
+                                    Text(verbatim: t.word).font(.system(size: 12)).foregroundStyle(Ink.secondary)
                                 }
                                 .padding(.horizontal, 12).frame(height: 36)
                             }
@@ -454,7 +454,8 @@ struct MachinePage: View {
                         }
                         ForEach(Array(activity)) { n in
                             HStack(alignment: .firstTextBaseline) {
-                                Text(verbatim: n.title).font(.system(size: 12.5)).lineLimit(1)
+                                // This page is the machine's own: name the task, not the machine.
+                                Text(verbatim: n.text.isEmpty ? n.title : "\(n.text) · \(n.word)").font(.system(size: 12.5)).lineLimit(1)
                                 Spacer()
                                 Text(verbatim: FleetNoticeTime.string(n.at)).font(.system(size: 11.5)).foregroundStyle(Ink.tertiary)
                             }

@@ -132,12 +132,8 @@ struct FleetConflict: Identifiable, Equatable {
     let remote: String      // present | absent
     let inScope: Bool
 
-    /// `profile|Work|claude|settings` reads as "Work · claude · settings".
-    var label: String {
-        address.split(separator: "|", omittingEmptySubsequences: false)
-            .map(String.init).filter { $0 != "-" && !$0.isEmpty }
-            .joined(separator: " · ")
-    }
+    /// `settings|Work|claude|settings.json` reads as "Claude Code settings.json in Work".
+    var label: String { FleetWords.resource(address) }
 
     /// A deletion on one side and an edit on the other — worth saying out loud,
     /// because "keep mine" means something different when the other side is gone.
@@ -341,6 +337,18 @@ struct FleetNotice: Identifiable, Equatable {
         }
     }
 
+    /// One word for the event, for rows that already name the machine.
+    var word: String {
+        switch kind {
+        case .done:         return "finished"
+        case .failed:       return "failed"
+        case .disconnected: return "not answering"
+        case .delivered:    return "files arrived"
+        case .reconciled:   return "checked in"
+        case .started:      return "started"
+        }
+    }
+
     static func parse(_ text: String) -> [FleetNotice] {
         text.split(separator: "\n").compactMap { line in
             let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
@@ -361,11 +369,7 @@ struct FleetException: Identifiable, Equatable {
     /// `except rm` withdraws by that number. Both halves are kept: the address
     /// is what the panel shows, the number is how it withdraws.
     let index: Int
-    var label: String {
-        id.split(separator: "|", omittingEmptySubsequences: false)
-            .map(String.init).filter { $0 != "-" && !$0.isEmpty }
-            .joined(separator: " · ")
-    }
+    var label: String { FleetWords.resource(id) }
 
     static func parse(_ text: String) -> [FleetException] {
         text.split(separator: "\n").enumerated().compactMap { n, line in
@@ -577,12 +581,20 @@ struct FleetDispatchSpec {
     var agent: String?
 
     var arguments: [String] {
-        var args = ["fleet", "task", "run", "--label", "Panel dispatch"]
+        var args = ["fleet", "task", "run", "--label", Self.label(task)]
         if prompt { args.append("--prompt") }
         if !workspace.isEmpty { args += ["--workspace", workspace] }
         if !contextFile.isEmpty { args += ["--context", contextFile] }
         if !requirements.isEmpty { args += ["--requires", requirements] }
         return args + FleetPins.flags(machine: machine, agent: agent)
+    }
+
+    /// What the Tasks list calls the work: its first line, not one fixed word
+    /// for everything sent from the panel.
+    static func label(_ task: String) -> String {
+        let line = task.split(whereSeparator: \.isNewline).first.map(String.init) ?? task
+        let text = line.trimmingCharacters(in: .whitespaces)
+        return text.count > 60 ? String(text.prefix(59)) + "…" : text
     }
 
     static func hasCandidate(_ plan: String) -> Bool {
@@ -649,5 +661,146 @@ struct WorkDraft: Equatable {
         }
         return FleetDispatchSpec(task: text, prompt: !shell, workspace: path(workspace), contextFile: path(contextFile),
                                  requirements: requirements.trimmingCharacters(in: .whitespaces), machine: machine, agent: agent)
+    }
+}
+
+/// The fleet CLI speaks ids, enums and tab-separated rows; this turns them into
+/// what the panel says. Lab names come from the porcelain snapshot when one
+/// has loaded (`labs` is refreshed with it) and fall back to the id.
+enum FleetWords {
+    static var labs: [String: String] = [:]
+
+    static func lab(_ id: String) -> String { labs[id] ?? id }
+
+    /// `category|profile|lab|path`, `-` for a part that doesn't apply and `*`
+    /// for everything: "Claude Code settings.json in Work", "All Claude Code
+    /// settings in Acme".
+    static func resource(_ address: String) -> String {
+        let f = address.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+        guard f.count >= 4 else {
+            return f.filter { $0 != "-" && !$0.isEmpty }.joined(separator: " · ")
+        }
+        let category = ["settings": "settings", "skills": "skills and instructions", "mcp": "MCP configuration",
+                        "auth": "credentials", "profile": "profile", "tools": "tools"][f[0]] ?? f[0]
+        let lab = f[2] == "-" || f[2].isEmpty ? nil : self.lab(f[2])
+        let path = f[3...].joined(separator: "|")
+        let what: String
+        if path == "*" || path.isEmpty {
+            what = "All " + [lab, category].compactMap { $0 }.joined(separator: " ")
+        } else if let lab {
+            what = "\(lab) \(path)"
+        } else {
+            what = category.prefix(1).uppercased() + category.dropFirst() + ": " + path
+        }
+        return f[1] == "-" || f[1].isEmpty ? what : "\(what) in \(f[1])"
+    }
+
+    /// "just now" under a minute (a stamp a moment ahead of this clock too,
+    /// never "in 0 seconds"), then "4 minutes ago".
+    static func ago(_ at: Date, now: Date) -> String {
+        guard now.timeIntervalSince(at) >= 60 else { return "just now" }
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .full
+        f.dateTimeStyle = .numeric
+        return f.localizedString(for: at, relativeTo: now)
+    }
+
+    /// "Claude Code credentials · partly shareable": the support word is the CLI's.
+    static func credentials(_ vendor: String, _ support: String) -> String {
+        let word = ["full": nil, "partial": "partly shareable", "unverified": "unverified",
+                    "unsupported": "not shareable"][support] ?? support
+        return [lab(vendor) + " credentials", word].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// `fleet sync service status` rows (`plist`, `loaded`, `log`, `last-event`)
+    /// as one sentence: "Background sync is on · last ran 2 minutes ago."
+    static func service(_ text: String, now: Date) -> String {
+        var f: [String: String] = [:]
+        for line in text.split(separator: "\n") {
+            let p = line.split(separator: "\t", maxSplits: 1).map(String.init)
+            if p.count == 2 { f[p[0]] = p[1] }
+        }
+        guard let loaded = f["loaded"] else { return text }
+        var sentence = loaded == "yes" ? "Background sync is on" : "Background sync is off"
+        if let last = f["last-event"], last != "never" {
+            let iso = ISO8601DateFormatter()
+            iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let at = TimeInterval(last).map { Date(timeIntervalSince1970: $0) } ?? iso.date(from: last) ?? ISO8601DateFormatter().date(from: last)
+            if let at { sentence += " · last ran \(ago(at, now: now))" }
+        } else if loaded == "yes" {
+            sentence += " · hasn’t run yet"
+        }
+        return sentence + "."
+    }
+
+    static func transport(_ id: String) -> String {
+        ["tailscale": "Tailscale", "ssh": "SSH", "exec": "Local", "self": "This Mac"][id] ?? id
+    }
+
+    /// A plan's `excluded:` row, `x \t peer \t machine \t agent \t reason`:
+    /// "studio: not approved yet".
+    static func exclusion(_ line: String) -> String {
+        let f = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+        guard f.count >= 5, f[0] == "x" else {
+            return f.filter { !$0.isEmpty && $0 != "-" }.joined(separator: " · ")
+        }
+        let lab = f[3] == "-" ? "" : self.lab(f[3])
+        let reason = f[4]
+        func inside(_ word: String) -> String? {
+            guard reason.hasPrefix(word + "("), reason.hasSuffix(")") else { return nil }
+            return String(reason.dropFirst(word.count + 1).dropLast())
+        }
+        let why: String
+        if let state = inside("not-approved") { why = state == "pending" ? "not approved yet" : "not approved (\(state))" }
+        else if let missing = inside("missing-requirement") { why = "missing \(missing.replacingOccurrences(of: " ", with: ", "))" }
+        else {
+            why = ["unreachable": "not reachable",
+                   "unsupported-prompt-adapter": "\(lab) can’t take agent tasks",
+                   "agent-excluded-by-preference": "\(lab) is excluded by your preferences",
+                   "agent-not-installed": "\(lab) isn’t installed",
+                   "agent-auth-unknown": "\(lab) sign-in is unknown"][reason] ?? reason.replacingOccurrences(of: "-", with: " ")
+        }
+        return "\(f[2]): \(why)"
+    }
+
+    /// `fleet task run` answers `id \t machine \t agent \t eta \t assumed=…`:
+    /// "Sent to mac-mini · Claude Code, about 90s. Follow it in Tasks."
+    static func receipt(_ output: String) -> String {
+        let f = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+        guard f.count >= 4, !f[1].isEmpty else { return output }
+        return "Sent to \(f[1]) · \(lab(f[2])), about \(f[3]). Follow it in Tasks."
+    }
+
+    /// `fleet task show`: `key \t value` lines, a blank line, then events
+    /// `epoch \t kind \t detail`. The alert gets a title and plain sentences.
+    static func taskSummary(_ output: String, id: String) -> (title: String, body: String) {
+        var meta: [String: String] = [:]
+        var events: [String] = []
+        var inEvents = false
+        for line in output.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
+            if line.isEmpty { inEvents = true; continue }
+            let f = line.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+            if inEvents {
+                let e = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+                guard e.count >= 2 else { continue }
+                let when = TimeInterval(e[0]).map { Date(timeIntervalSince1970: $0).formatted(date: .omitted, time: .shortened) } ?? e[0]
+                let detail = e.count > 2 && !e[2].isEmpty ? " — \(e[2])" : ""
+                events.append("\(when)  \(e[1].replacingOccurrences(of: "-", with: " "))\(detail)")
+            } else if f.count == 2 {
+                meta[f[0]] = f[1]
+            }
+        }
+        guard !meta.isEmpty else { return ("Task \(id)", output) }
+        let task = FleetTask.parse([id, meta["state"] ?? "", meta["vendor"] ?? "", meta["rc"] ?? "",
+                                    meta["label"] ?? "", meta["machine"] ?? "", meta["role"] ?? ""].joined(separator: "\t")).first
+        var lines: [String] = []
+        let state = task.map { $0.word } ?? (meta["state"] ?? "")
+        let place = [meta["machine"].map { "on \($0)" }, meta["vendor"].map { lab($0) }].compactMap { $0 }.joined(separator: " · ")
+        lines.append([state, place].filter { !$0.isEmpty }.joined(separator: " "))
+        if let rc = meta["rc"], rc != "0", !rc.isEmpty, task?.state != .running { lines.append("Exit code \(rc)") }
+        if !events.isEmpty { lines.append(""); lines += events.suffix(8) }
+        let title = meta["label"].flatMap { $0.isEmpty ? nil : $0 } ?? "Task \(id)"
+        return (title, lines.joined(separator: "\n"))
     }
 }

@@ -52,7 +52,7 @@ check("sync: an unknown support word is dropped, not guessed",
 
 let c = FleetConflict.parse(conflictText)
 check("conflict: parsed", c.count == 1)
-check("conflict: address becomes a readable label", c[0].label == "tools · manifest")
+check("conflict: address becomes a readable label", c[0].label == "Tools: manifest")
 check("conflict: remote:present is not a deletion", !c[0].isDeletion)
 check("conflict: remote:absent reads as a deletion",
       FleetConflict.parse("id\ta|b\tdig\tremote:absent\tscope:in")[0].isDeletion)
@@ -99,7 +99,8 @@ let exceptions = FleetException.parse("""
 check("except: both rows parsed", exceptions.count == 2)
 check("except: the row number is not part of the address",
       exceptions[0].id == "profile|Work|claude|*")
-check("except: the label drops the empty fields", exceptions[1].label == "skills · review.md")
+check("except: the label drops the empty fields", exceptions[1].label == "Skills and instructions: review.md")
+check("except: a whole lab's category reads as words", exceptions[0].label == "All claude profile in Work")
 check("except: the CLI's own number is what a withdrawal uses",
       exceptions[0].index == 1 && exceptions[1].index == 2)
 check("except: an unnumbered row still parses",
@@ -165,6 +166,52 @@ check("dispatch: prompt, workspace and context are explicit", dispatch.arguments
 check("dispatch: shell text remains data", dispatch.task == "Inspect $(touch NEVER)")
 check("dispatch: exclusions alone are not a candidate", !FleetDispatchSpec.hasCandidate("excluded:\nx\tpeer\tbeta\tcodex\tagent-not-installed"))
 check("dispatch: a ranked plan has a candidate", FleetDispatchSpec.hasCandidate("rank\tpeer\tmachine\tagent\teta\tassumed\n1\tp\tbeta\tcodex\t1s\tnone"))
+
+
+// The panel says words, not the CLI's ids, enums and tab-separated rows.
+FleetWords.labs = ["claude": "Claude Code", "codex": "Codex"]
+check("words: a lab file names the lab and the profile",
+      FleetWords.resource("settings|Work|claude|settings.json") == "Claude Code settings.json in Work")
+check("words: a whole category reads as all of it",
+      FleetWords.resource("settings|Acme|claude|*") == "All Claude Code settings in Acme")
+check("words: an unknown shape still drops the empty fields", FleetWords.resource("a|-|b") == "a · b")
+check("words: transports are proper nouns", FleetWords.transport("tailscale") == "Tailscale" && FleetWords.transport("ssh") == "SSH")
+check("words: a pending peer is not approved yet",
+      FleetWords.exclusion("x\tSHA256:p\tstudio\t-\tnot-approved(pending)") == "studio: not approved yet")
+check("words: a missing requirement names what is missing",
+      FleetWords.exclusion("x\tSHA256:p\tbeta\t-\tmissing-requirement(node git)") == "beta: missing node, git")
+check("words: an agent reason names the lab",
+      FleetWords.exclusion("x\tSHA256:p\tbeta\tcodex\tagent-not-installed") == "beta: Codex isn’t installed")
+check("words: no fingerprint reaches the screen",
+      !FleetWords.exclusion("x\tSHA256:p\tbeta\t-\tunreachable").contains("SHA256"))
+check("words: the dispatch receipt is a sentence",
+      FleetWords.receipt("5d1f8e2b9c04\tmac-mini\tclaude\t90s\tassumed=none\n")
+        == "Sent to mac-mini · Claude Code, about 90s. Follow it in Tasks.")
+check("words: an unrecognised receipt is shown as it came", FleetWords.receipt("Sent.") == "Sent.")
+let shown = FleetWords.taskSummary("role\tdispatcher\nstate\tcompleted\nmachine\tmac-mini\nvendor\tcodex\nlabel\tRegenerate API client\nrc\t0\n\n1790000000\tstarted\t\n1790000060\tcompleted\tok\n", id: "4b7e")
+check("words: a task's title is its label", shown.title == "Regenerate API client")
+check("words: a task's state uses the panel's word", shown.body.hasPrefix("Finished on mac-mini · Codex"))
+check("words: task rows and epochs don't reach the alert",
+      !shown.body.contains("\t") && !shown.body.contains("1790000000") && !shown.body.contains("role"))
+check("words: a nonzero exit is said once",
+      FleetWords.taskSummary("state\tfailed\nrc\t1\nlabel\tLint\n", id: "x").body.contains("Exit code 1"))
+let now = Date(timeIntervalSince1970: 1_800_000_000)
+check("words: a stamp a moment ahead is just now", FleetWords.ago(now.addingTimeInterval(0.4), now: now) == "just now")
+check("words: under a minute is just now", FleetWords.ago(now.addingTimeInterval(-42), now: now) == "just now")
+check("words: minutes read as minutes ago", FleetWords.ago(now.addingTimeInterval(-240), now: now) == "4 minutes ago")
+check("words: credentials name the lab and the support",
+      FleetWords.credentials("claude", "partial") == "Claude Code credentials · partly shareable"
+        && FleetWords.credentials("codex", "full") == "Codex credentials")
+check("words: the sync service is a sentence",
+      FleetWords.service("plist\t/p\nloaded\tyes\nlog\t/l\nlast-event\t\(Int(now.timeIntervalSince1970) - 120)", now: now)
+        == "Background sync is on · last ran 2 minutes ago.")
+check("words: a stopped service says so", FleetWords.service("plist\tnone\nloaded\tno\nlog\t/l\nlast-event\tnever", now: now)
+        == "Background sync is off.")
+check("dispatch: the label is the task's first line",
+      FleetDispatchSpec(task: "Run the evals\nthen summarize", prompt: true, workspace: "", contextFile: "", requirements: "",
+                        machine: nil, agent: nil).arguments.contains("Run the evals"))
+check("dispatch: a long first line is shortened",
+      FleetDispatchSpec.label(String(repeating: "x", count: 90)).count == 60)
 
 check("task: production unreachable is stranded",
       FleetTask.parse("t\tunreachable\tcodex\t\tl\tm\tdispatcher")[0].isStranded)

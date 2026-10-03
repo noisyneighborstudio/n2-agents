@@ -108,14 +108,14 @@ struct SendWorkPage: View {
                     }
                 }
                 ForEach(plan.excluded.prefix(3), id: \.self) { line in
-                    Text(verbatim: line).font(.system(size: 11, design: .monospaced)).foregroundStyle(Ink.tertiary).lineLimit(1)
+                    Text(verbatim: FleetWords.exclusion(line)).font(.system(size: 11.5)).foregroundStyle(Ink.tertiary).lineLimit(1)
                 }
             }
             .font(.system(size: 12.5))
             .padding(10)
             .background(RoundedRectangle(cornerRadius: 10).fill(Ink.surface))
         case .sent(let receipt):
-            Label { Text(receipt.isEmpty ? String(localized: "Sent.", comment: "Send Work: done") : receipt) }
+            Label { Text(receipt.isEmpty ? String(localized: "Sent.", comment: "Send Work: done") : FleetWords.receipt(receipt)) }
                 icon: { Image(systemName: "checkmark.circle.fill").foregroundStyle(Ink.green) }
                 .font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
         case .failed(let message):

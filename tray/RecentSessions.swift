@@ -141,7 +141,7 @@ struct RecentSection: View {
             submenu(String(localized: "Profile", comment: "Recent filter"), symbol: "person.crop.circle",
                     [ClosureItem(all, checked: filter.profile == nil) { model.recentFilter.profile = nil }]
                     + profiles.map { p in ClosureItem(p, checked: filter.profile == p) { model.recentFilter.profile = p } }),
-            submenu(String(localized: "Provider", comment: "Recent filter"), symbol: "square.stack.3d.up",
+            submenu(String(localized: "Lab", comment: "Recent filter"), symbol: "square.stack.3d.up",
                     [ClosureItem(all, checked: filter.vendor == nil) { model.recentFilter.vendor = nil }]
                     + vendors.map { v in ClosureItem(v.label, checked: filter.vendor == v.id) { model.recentFilter.vendor = v.id } }),
             submenu(String(localized: "Sort", comment: "Recent filter"), symbol: "arrow.up.arrow.down", [
@@ -345,11 +345,17 @@ struct SendSessionPage: View {
                     .contentShape(RoundedRectangle(cornerRadius: 9))
                 }
                 .buttonStyle(PressableStyle(radius: 9, scale: 0.97))
-                .disabled(chosen == nil || d.cwd.isEmpty || d.state == .sending)
-                .opacity(chosen == nil || d.cwd.isEmpty ? 0.5 : 1)
+                .disabled(chosen == nil || d.cwd.isEmpty || d.state == .sending || sent(d.state))
+                .opacity(chosen == nil || d.cwd.isEmpty || sent(d.state) ? 0.5 : 1)
             }
             .padding(.horizontal, 16).padding(.top, 6).padding(.bottom, 16)
         }
+    }
+
+    /// Sent once is done: the button doesn't invite a duplicate.
+    private func sent(_ state: SendDraft.State) -> Bool {
+        if case .sent = state { return true }
+        return false
     }
 
     @ViewBuilder private func outcome(_ state: SendDraft.State) -> some View {
