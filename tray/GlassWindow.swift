@@ -306,8 +306,12 @@ final class GlassWindow: NSPanel {
     /// and a rounded mask, pinned top, animates between the two heights. A
     /// shrinking window drops to its size once the mask has.
     private func resize(to target: NSRect, animated: Bool) {
-        guard animated, isVisible, frame.size != target.size, let clip = surface.layer,
+        // A reveal still running counts as a change even at the same frame size.
+        let revealing = surface.layer?.mask != nil
+        guard animated, isVisible, frame.size != target.size || revealing, let clip = surface.layer,
               !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            generation += 1   // strands a running reveal's completion
+            surface.layer?.mask = nil
             setFrame(target, display: true)
             surface.frame = contentView?.bounds ?? .zero
             placeContent()
@@ -315,8 +319,13 @@ final class GlassWindow: NSPanel {
         }
         generation += 1
         let generation = generation
-        let from = frame.height, to = target.height
-        let outer = to > from ? target : frame
+        // Mid-reveal, what shows is the mask's height, not the window's; the
+        // next reveal starts there, redrawn for the new window (an old path
+        // is in the old window's coordinates, and would open a gap at the top).
+        let mask = clip.mask as? CAShapeLayer ?? CAShapeLayer()
+        let from = (mask.presentation()?.path ?? mask.path)?.boundingBox.height ?? frame.height
+        let to = target.height
+        let outer = NSRect(x: target.minX, y: target.maxY - max(from, to), width: target.width, height: max(from, to))
         // Pinned to the top edge, which is y = 0 in a flipped layer.
         let flipped = clip.contentsAreFlipped()
         let path = { (h: CGFloat) in
@@ -329,7 +338,6 @@ final class GlassWindow: NSPanel {
         setFrame(outer, display: false)
         surface.frame = contentView?.bounds ?? .zero
         placeContent()
-        let mask = clip.mask as? CAShapeLayer ?? CAShapeLayer()
         mask.frame = clip.bounds
         clip.mask = mask
         CATransaction.begin()
@@ -343,7 +351,7 @@ final class GlassWindow: NSPanel {
             self.display()
         }
         let reveal = CABasicAnimation(keyPath: "path")
-        reveal.fromValue = (mask.presentation()?.path ?? mask.path) ?? path(from)
+        reveal.fromValue = path(from)
         reveal.toValue = path(to)
         // The panel's pages move on the navigation curve, and its height with them.
         let (duration, curve) = followsPages ? (Motion.navDuration, CAMediaTimingFunction(controlPoints: 0.32, 0.72, 0, 1))
@@ -396,10 +404,28 @@ private struct Measured<Root: View>: View {
     let report: (CGSize) -> Void
 
     var body: some View {
-        root
-            .environment(\.windowOnScreen, onScreen.value)
-            .fixedSize(horizontal: false, vertical: true)
-            .onGeometryChange(for: CGSize.self, of: { $0.size }, action: report)
-            .frame(maxHeight: .infinity, alignment: .top)
+        TopPinned {
+            root
+                .environment(\.windowOnScreen, onScreen.value)
+                .fixedSize(horizontal: false, vertical: true)
+                .onGeometryChange(for: CGSize.self, of: { $0.size }, action: report)
+        }
+    }
+}
+
+/// Places its one child at the top-left at the child's own size, whatever
+/// room it is given. A frame would centre a child taller than the window,
+/// which happens for a moment whenever content grows (the window follows a
+/// turn of the run loop later): the page then animated down from the centred
+/// spot and back, opening a band of bare glass above it.
+private struct TopPinned: Layout {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let child = subviews.first?.sizeThatFits(.init(width: proposal.width, height: nil)) ?? .zero
+        return CGSize(width: proposal.width ?? child.width, height: proposal.height ?? child.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, anchor: .topLeading,
+                              proposal: .init(width: bounds.width, height: nil))
     }
 }
