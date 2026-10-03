@@ -50,6 +50,7 @@ final class AppDelegate {
     func updateFleetAttention(_ data: FleetData) {}
     func alert(_ title: String, _ body: String) { alerts += 1 }
     func dismissPanel() { fatalError("refused work opened a form") }
+    func returnToPanel() { fatalError("refused work reopened the panel") }
     // PRODUCTION_METHODS
 }
 @main struct FleetReadTests {

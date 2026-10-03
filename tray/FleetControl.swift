@@ -172,6 +172,7 @@ extension AppDelegate {
 
     func fleetApprove(peer: String) {
         dismissPanel()
+        defer { returnToPanel() }
         let confirm = NSAlert()
         let machine = model.fleet?.pending.first { $0.id == peer }?.machine
         confirm.messageText = machine.map { "Approve \($0)?" } ?? "Approve this machine?"
@@ -201,6 +202,7 @@ extension AppDelegate {
 
     func fleetRevoke(peer: String) {
         dismissPanel()
+        defer { returnToPanel() }
         let confirm = NSAlert()
         confirm.messageText = "Remove this machine from the fleet?"
         confirm.informativeText = "It stops receiving profiles and credentials and can no longer reach this Mac. Anything already on it stays there — revoking is not a remote wipe."
@@ -305,6 +307,7 @@ extension AppDelegate {
 
     func fleetShowTask(_ id: String) {
         dismissPanel()
+        defer { returnToPanel() }
         let r = runCLI(["fleet", "task", "show", id])
         guard r.status == 0, !r.output.isEmpty else {
             alert("Task \(id)", r.output.isEmpty ? "No detail recorded for this task." : r.output)
@@ -322,6 +325,7 @@ extension AppDelegate {
             return
         }
         dismissPanel()
+        defer { returnToPanel() }
         let confirm = NSAlert()
         confirm.messageText = "Run this work somewhere else?"
         confirm.informativeText = "The original task may still be running on the machine that stopped answering. This starts a second, separate task — it does not cancel the first."

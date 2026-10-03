@@ -273,9 +273,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     private var panelSource: String?
 
     // Anything that opens a window, dialog or terminal closes the panel first:
-    // a transient panel would otherwise vanish under it mid-click.
+    // a transient panel would otherwise vanish under it mid-click. A dialog
+    // that is one step of the panel's work brings it back (returnToPanel).
     func dismissPanel() {
         panel.dismiss()
+    }
+
+    /// After an alert the panel closed for, it opens again where it was: the
+    /// alert was a step in the panel's work, not the end of it.
+    func returnToPanel() {
+        guard !panel.isShowing else { return }
+        togglePanel()
     }
 
     // A refresh reads the CLI and the disk off the main thread and publishes
@@ -936,6 +944,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     // Name first; the setup window then picks its labs and signs in to each.
     func newProfile() {
         dismissPanel()
+        // Named, it goes on to the setup window; otherwise back to the panel.
+        var named = false
+        defer { if !named { returnToPanel() } }
         let alert = NSAlert()
         alert.messageText = "New profile"
         alert.informativeText = "Name, letters/numbers only (e.g. Work). Next you’ll pick the labs it holds and sign in to each."
@@ -960,11 +971,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
             self.alert("Profile exists", "“\(name)” is already a profile. Pick another name, or delete the existing one first.")
             return
         }
+        named = true
         openSetup(profile: name, isNew: true, resume: nil)
     }
 
     func deleteProfile(_ name: String) {
         dismissPanel()
+        defer { returnToPanel() }
         guard let p = profile(named: name) else { return }
         if p.running {
             alert("“\(p.name)” is open", "Quit this profile’s desktop apps first, then delete it.")
