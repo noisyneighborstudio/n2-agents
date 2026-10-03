@@ -129,6 +129,34 @@ struct FittingScroll<Content: View>: View {
     private static var space: String { "fitting-scroll" }
 }
 
+extension View {
+    /// Up and Down move keyboard focus along a list's rows (Fleet's cards, a
+    /// profile's labs) without stopping at each control between them, as Tab
+    /// does. Space activates the focused row, and Return does too (`opens`).
+    func arrowFocus<ID: Hashable>(_ ids: [ID], _ focus: FocusState<ID?>.Binding) -> some View {
+        onMoveCommand { direction in
+            guard let current = focus.wrappedValue, let i = ids.firstIndex(of: current) else { return }
+            switch direction {
+            case .up where i > 0: focus.wrappedValue = ids[i - 1]
+            case .down where i < ids.count - 1: focus.wrappedValue = ids[i + 1]
+            default: break
+            }
+        }
+    }
+}
+
+extension View {
+    /// Return activates a focused row, as Space does for any button. Before
+    /// macOS 14 there is no key handler, and Space alone opens it.
+    @ViewBuilder func opens(_ action: @escaping () -> Void) -> some View {
+        if #available(macOS 14.0, *) {
+            onKeyPress(.return) { action(); return .handled }
+        } else {
+            self
+        }
+    }
+}
+
 private struct ContentHeight: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }

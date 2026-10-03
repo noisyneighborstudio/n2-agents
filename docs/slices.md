@@ -16,17 +16,6 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
 
 ## Queue
 
-Walkthrough fixes (from the recorded product walkthrough, 2026-10-01). Each is
-proved by a check that fails on the old code plus frames captured from the
-demo build (`clip.sh` in the walkthrough tooling).
-
-1. **Arrow keys move between cards and rows** (`panel-arrow-keys`).
-   Behavior: Up and Down move focus between Fleet cards and Profile rows;
-   Return opens (docs/tray-redesign/02-screens.md).
-   Proof: AX run: arrows move the focused element; Return opens it.
-
-Fleet slices:
-
 1. **Merge a conflict with an agent, reviewed by another** (`fleet-sync-agent-merge`).
    Behavior: `fleet sync merge <id>` asks an agent with measured headroom for a
    merged version, then an agent from a different lab reviews it (Claude
@@ -100,6 +89,17 @@ Blocked on authorization:
 
 ## Noticed
 
+- Making a profile Active for all labs (`agents use Work`, the Active menu and
+  the card menu) gives it a slot for every lab it didn't hold: in the
+  walkthrough fixture, Work gained Cursor, opencode and Muse, two of them
+  signed out, and its card turned to "2 signed out". Decide whether `use`
+  should only switch the labs the profile holds.
+
+- The panel's scroll area refuses AXScrollDownByPage / AXScrollUpByPage and
+  exposes no vertical scroll bar (`.scrollIndicators(.never)`), so assistive
+  tools can't page it; wheel and trackpad scrolling work. Check with
+  VoiceOver before changing it.
+
 - Sync still spends about 30 ms of shell forks per address in sync_scope_ok on
   each side (1,500 files: 103 s dry run). Moving scope evaluation into the
   manifest process would remove most of it.
@@ -145,7 +145,7 @@ Blocked on authorization:
   and make the app treat a running account reset as finished.
 
 - test-fleet-auth-manage.py's SIGINT cancel case allows 5s for exit and failed
-  twice (2026-09-28, 2026-09-29) with three test groups running on one Mac; it
+  three times (2026-09-28, 2026-09-29, 2026-10-02) with other work on the Mac; it
   passes alone. Runners share each Mac, so capture exit receipts if it recurs in CI.
 
 - The inherited full-suite quota fixture fails intermittently (main saw it at

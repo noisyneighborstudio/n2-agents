@@ -9,6 +9,7 @@ struct FleetPage: View {
     @ObservedObject var model: PanelModel
     let actions: PanelActions
     let data: PanelData
+    @FocusState private var focusedCard: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,8 +32,10 @@ struct FleetPage: View {
                         VStack(spacing: 8) {
                             ForEach(data.profiles, id: \.name) { p in
                                 ProfileCard(profile: p, data: data, model: model, actions: actions)
+                                    .focused($focusedCard, equals: p.name)
                             }
                         }
+                        .arrowFocus(data.profiles.map(\.name), $focusedCard)
                         .padding(.horizontal, 12).padding(.vertical, 2)
                         RecentSection(model: model, actions: actions)
                             .padding(.horizontal, 12).padding(.top, 10)
@@ -350,6 +353,7 @@ private struct ProfileCard: View {
             .contentShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(PressableStyle(radius: 12, fill: Ink.surface, card: true))
+        .opens { model.push(.profile(profile.name)) }
         .accessibilityLabel(([String(localized: "\(profile.name) profile", comment: "Profile card"),
                               ActiveMenu.badge(profile, data.snapshot), note.text] as [String?]).compactMap { $0 }.joined(separator: ", "))
         // Every item names the profile: the menu opens at the pointer, which
