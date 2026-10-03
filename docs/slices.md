@@ -16,6 +16,74 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
 
 ## Queue
 
+Walkthrough fixes (from the recorded product walkthrough, 2026-10-01). Each is
+proved by a check that fails on the old code plus frames captured from the
+demo build (`clip.sh` in the walkthrough tooling).
+
+1. **Panel resizes pinned to its top** (`panel-resize-pinned`).
+   Behavior: pushing, popping and content that grows mid-resize (Send Work's
+   plan) never open a band of bare glass above the page or drop it and snap
+   it back; the glass follows the content's height from the top edge.
+   Proof: `scripts/test-glass-window.sh`: growing content is laid out at the
+   top on every pass, and a reveal retargeted mid-flight starts at the new
+   window's top edge. Both checks fail on the old code.
+   Scope: GlassWindow only; page transitions themselves are unchanged.
+
+2. **Menus open at their control** (`menus-at-control`).
+   Behavior: every panel menu (Active switch, card menus, Recent filters,
+   session menus) opens under the control that owns it, by pointer, keyboard
+   or VoiceOver; a profile card's menu names the profile it acts on.
+   Proof: a check that the menu anchor is the control's frame, not the
+   pointer; frames with the pointer elsewhere when the menu opens.
+
+3. **The panel comes back after an alert** (`panel-returns-after-alert`).
+   Behavior: Approve…, Show Result and other alerts raised from the panel
+   reopen it on the same page when the alert closes.
+   Proof: AX run: press Approve…, answer the alert, the panel is open on
+   Fleet; same for Show Result on its Task page.
+
+4. **Toast titles state the threshold truthfully** (`toast-title-under`).
+   Behavior: tier titles read "under 25% left" / "under 10% left" / "under
+   half left", so a ring at 14% no longer sits under "25% left".
+   Proof: toast copy checks for each tier; frames of a low toast.
+   Scope: copy only; the tier ladder and announce-once rule are unchanged.
+
+5. **Mixed is explained on the cards** (`mixed-explained`).
+   Behavior: when labs use different profiles, each card that is active for
+   some of its labs says which ("Active for Codex", "Active for 2 labs"), and
+   the header's Mixed carries the same explanation as help.
+   Proof: model checks for the badge text in all, some and no-lab cases;
+   frames of the Fleet page in a mixed state.
+
+6. **Sessions window reads like the panel** (`sessions-window-polish`).
+   Behavior: profile chips meet contrast in both appearances, and ages use the
+   panel's words ("26m ago").
+   Proof: one age formatter used by both; frames of the window in light and dark.
+
+7. **Send Work behaves like a form** (`send-work-polish`).
+   Behavior: the task box shows a scroller only when its text overflows,
+   placeholders are in the body font, and a sent task appears in Tasks at once.
+   Proof: frames of the page empty and sent; the sent task's row is on Fleet
+   before the next fleet read.
+
+8. **The Tasks list fades under the footer** (`tasks-fade`).
+   Behavior: a list cut off by the footer fades out instead of clipping a row
+   in half.
+   Proof: frames of the Fleet page with more tasks than fit.
+
+9. **The menu bar icon gauges the active profile** (`status-icon-active-profile`).
+   Behavior: the icon's ring shows the worst slot of the active profile (per
+   lab when Mixed), not the lowest slot anywhere (docs/tray-redesign/03-states.md).
+   Proof: StatusIcon tests: a low slot in an inactive profile leaves the icon
+   green; the same slot in the active profile turns it.
+
+10. **Arrow keys move between cards and rows** (`panel-arrow-keys`).
+    Behavior: Up and Down move focus between Fleet cards and Profile rows;
+    Return opens (docs/tray-redesign/02-screens.md).
+    Proof: AX run: arrows move the focused element; Return opens it.
+
+Fleet slices:
+
 1. **Merge a conflict with an agent, reviewed by another** (`fleet-sync-agent-merge`).
    Behavior: `fleet sync merge <id>` asks an agent with measured headroom for a
    merged version, then an agent from a different lab reviews it (Claude
@@ -89,34 +157,9 @@ Blocked on authorization:
 
 ## Noticed
 
-- From the recorded product walkthrough (2026-10-01), still open:
-  - Panel push/pop resizes in the wrong order: the window grows before the
-    content is pinned to its top, so a grey band opens above the page and the
-    content drops, clips and snaps back (GlassWindow `resize`, PageStack
-    height). The Send Work page jumps when plan results arrive.
-  - Panel menus pop at `NSEvent.mouseLocation`, not at the control, so
-    keyboard or VoiceOver activation (and some display layouts) open them far
-    away; a card's menu doesn't mark which profile it acts on.
-  - Toast titles say the tier ("25% left") beside a ring at 14%: the spec
-    chose tier titles (05-toasts.md); decide whether the figure wins.
-  - Approve and Show Result close the panel and leave it closed.
-  - "Mixed" in the header isn't explained on any card.
-  - The Sessions window's profile chips are low contrast, and its ages ("27m")
-    differ from the panel's ("26m ago").
-  - Send Work: the task box always shows a scroller, placeholders are
-    monospaced, and a sent task appears in Tasks only on the next fleet read.
-  - The last Tasks row is cut off under the footer with no fade.
-
 - Sync still spends about 30 ms of shell forks per address in sync_scope_ok on
   each side (1,500 files: 103 s dry run). Moving scope evaluation into the
   manifest process would remove most of it.
-
-- The menu bar icon still gauges the lowest measured slot across every
-  profile; the redesign wants the worst slot of the active profile in the
-  status inks (docs/tray-redesign/03-states.md). No slice owns it yet.
-
-- Arrow keys don't yet move between Fleet cards or Profile rows (Tab and
-  Return do). docs/tray-redesign/02-screens.md asks for it.
 
 - Open next best can still pick an unmetered slot when nothing metered has
   room: it mirrors the CLI's rotation. The redesign's acceptance list says it
