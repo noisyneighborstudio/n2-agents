@@ -172,6 +172,12 @@ struct RecentSection: View {
     }
 }
 
+/// How long ago a session last moved ("26m ago"), in the same words wherever
+/// sessions are listed, and kept current while it's on screen.
+func sessionAge(_ date: Date) -> Text {
+    Text(date, format: .relative(presentation: .numeric, unitsStyle: .narrow))
+}
+
 private struct RecentCard: View {
     let session: SessionInfo
     @ObservedObject var model: PanelModel
@@ -190,7 +196,7 @@ private struct RecentCard: View {
                     Text(verbatim: session.title ?? session.snippet)
                         .font(.system(size: 13, weight: .medium)).lineLimit(1)
                     Spacer(minLength: 6)
-                    Text(session.mtime, format: .relative(presentation: .numeric, unitsStyle: .narrow))
+                    sessionAge(session.mtime)
                         .font(.system(size: 11)).monospacedDigit().foregroundStyle(Ink.tertiary).lineLimit(1)
                     Color.clear.frame(width: 18, height: 1)   // under the menu button
                 }

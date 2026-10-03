@@ -82,6 +82,12 @@ if grep -n 'NSEvent.mouseLocation, in: nil' tray/*.swift; then
   echo "FAIL a panel menu pops at the pointer again — use popUp(_:under:)"; fail=$((fail+1))
 else echo "ok every panel menu opens under its control"; fi
 
+# A session's age reads the same in the panel and the Sessions window ("26m ago").
+if grep -q 'sessionAge(session.mtime)' tray/RecentSessions.swift && grep -q 'sessionAge(session.mtime)' tray/SessionsWindow.swift \
+   && ! grep -q 'DateComponentsFormatter' tray/SessionsWindow.swift; then
+  echo "ok session ages share one format"
+else echo "FAIL the panel and the Sessions window format session ages differently"; fail=$((fail+1)); fi
+
 # `fleet task reconcile` re-probes workers and can APPEND notices; the CLI has
 # no verb that discards the feed. A button labelled "Clear" promised the
 # opposite of what it does, so the label has to name the reconcile.
