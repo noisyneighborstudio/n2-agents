@@ -530,26 +530,37 @@ final class PanelModel: ObservableObject {
         return (.ready, used)
     }
 
-    /// Runnable headroom in each measured slot. Restrictions and the local
-    /// scheduling reserve contribute zero; missing readings stay unknown.
+    /// The slots new sessions start in, which the menu bar icon gauges: the
+    /// Active profile's, or while labs use different profiles, each lab's
+    /// active one. A low slot elsewhere waits in its own card.
+    private func gauged(_ profile: Profile, _ vendor: String, _ snapshot: Snapshot) -> Bool {
+        snapshot.active == "mixed" ? profile.isActive(for: vendor) : profile.name == snapshot.active
+    }
+
+    /// Runnable headroom in each measured slot the icon gauges. Restrictions
+    /// and the local scheduling reserve contribute zero; missing readings stay
+    /// unknown.
     private var slotsLeft: [(profile: String, vendor: Vendor, left: Int)] {
         guard let data else { return [] }
         return data.profiles.flatMap { p in
             data.quotaVendors
-                .filter { p.slots[$0.id] != nil && data.snapshot.signedIn[p.name]?[$0.id] != false }
+                .filter { p.slots[$0.id] != nil && data.snapshot.signedIn[p.name]?[$0.id] != false
+                    && gauged(p, $0.id, data.snapshot) }
                 .compactMap { v in
                     effectiveUsage(p.name, v.id).flatMap { u in u.availableRemaining.map { (p.name, v, $0) } }
                 }
         }
     }
 
-    /// The icon warns about the most constrained measured slot. The next-agent
-    /// action separately identifies a slot with capacity. Unknown is not zero.
+    /// The icon warns about the most constrained measured slot it gauges. The
+    /// next-agent action separately identifies a slot with capacity. Unknown
+    /// is not zero.
     var measurementCoverage: (known: Int, expected: Int) {
         guard let data else { return (0, 0) }
         let expected = data.profiles.reduce(0) { count, profile in
             count + data.quotaVendors.filter {
                 profile.slots[$0.id] != nil && data.snapshot.signedIn[profile.name]?[$0.id] != false
+                    && gauged(profile, $0.id, data.snapshot)
             }.count
         }
         return (slotsLeft.count, expected)
@@ -574,7 +585,7 @@ final class PanelModel: ObservableObject {
             let warning = remaining == 0 ? "At least one provider has no schedulable headroom. " : "Overall headroom unknown. "
             return warning + "\(unknown) of \(coverage.expected) provider readings unavailable. Open N2 for account details."
         }
-        return remaining.map { "Lowest measured headroom: \($0)%. Open N2 for individual accounts." }
+        return remaining.map { "Lowest measured headroom where new sessions start: \($0)%. Open N2 for individual accounts." }
             ?? "Usage unknown. Open N2 for account readings."
     }
 
