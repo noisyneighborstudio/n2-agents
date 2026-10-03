@@ -81,7 +81,10 @@ private struct AppHeader: View {
                 }
                 .buttonStyle(.plain)
                 .menuAnchor(activeMenu)
-                .help(String(localized: "Choose the profile new sessions use", comment: "App header: Active switch help"))
+                .help(ActiveMenu.title(data.snapshot) == nil
+                      ? String(localized: "Labs use different profiles: each card says which labs it is active for. Choose a profile to use it for every lab.",
+                               comment: "App header: Mixed explained")
+                      : String(localized: "Choose the profile new sessions use", comment: "App header: Active switch help"))
             }
             Spacer(minLength: 8)
             HStack(spacing: 10) {
@@ -312,6 +315,13 @@ private struct ProfileCard: View {
     let actions: PanelActions
 
     private var isActive: Bool { data.snapshot.active == profile.name }
+    /// "Active for 5 labs" names them on hover.
+    private var badgeHelp: String {
+        let labs = ActiveMenu.activeLabs(profile, data.snapshot)
+        guard !isActive, labs.count > 1 else { return "" }
+        return String(localized: "New \(labs.map(\.label).formatted(.list(type: .and))) sessions start in \(profile.name)",
+                      comment: "Profile card while labs differ: which labs it is active for")
+    }
     private var addable: Bool { data.snapshot.installedVendors.contains { profile.slots[$0.id] == nil } }
 
     var body: some View {
@@ -321,11 +331,12 @@ private struct ProfileCard: View {
                 HStack(spacing: 8) {
                     ProfileDot(name: profile.name)
                     Text(verbatim: profile.name).font(.system(size: 14, weight: .semibold)).tracking(-0.14).lineLimit(1)
-                    if isActive {
-                        Text("Active", comment: "The profile new sessions use")
-                            .font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Ink.secondary)
+                    if let badge = ActiveMenu.badge(profile, data.snapshot) {
+                        Text(verbatim: badge)
+                            .font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Ink.secondary).lineLimit(1)
                             .padding(.horizontal, 6).frame(height: 16)
                             .background(RoundedRectangle(cornerRadius: 5).fill(Ink.Tone.neutral.wash(dark: 0.08, light: 0.06)))
+                            .help(badgeHelp)
                     }
                     Spacer(minLength: 6)
                     Text(verbatim: note.text).font(.system(size: 11.5)).foregroundStyle(note.ink).lineLimit(1)
@@ -339,7 +350,8 @@ private struct ProfileCard: View {
             .contentShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(PressableStyle(radius: 12, fill: Ink.surface, card: true))
-        .accessibilityLabel(String(localized: "\(profile.name) profile, \(note.text)", comment: "Profile card"))
+        .accessibilityLabel(([String(localized: "\(profile.name) profile", comment: "Profile card"),
+                              ActiveMenu.badge(profile, data.snapshot), note.text] as [String?]).compactMap { $0 }.joined(separator: ", "))
         // Every item names the profile: the menu opens at the pointer, which
         // may have left the card it came from by the time you read it.
         .contextMenu {

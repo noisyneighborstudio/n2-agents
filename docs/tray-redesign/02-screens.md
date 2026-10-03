@@ -76,8 +76,11 @@ Order, top to bottom:
      8 pt gap between cards):
      - Row 1 (20): 9 pt profile-color dot with a 3 pt halo (color at 20%), then
        the name at 14 semibold. An "Active" capsule appears if active (10.5
-       semibold, fill 8%). Then a spacer, a one-line **profile note** (below),
-       and `chevron.right` 10.
+       semibold, fill 8%). While labs use different profiles (the header's
+       "Mixed"), the capsule names what this profile is active for instead:
+       "Active for Codex", or "Active for 5 labs" with the labs on hover; a
+       profile active for no lab has none. Then a spacer, a one-line
+       **profile note** (below), and `chevron.right` 10.
      - Row 2: **CapacityStrip**. One segment per slotted provider, 54 wide with
        8 between. A segment is a 22 tile with a value to its right (11 semibold,
        monospaced), and below it a 3 pt bar spanning the segment (fill = remaining %).

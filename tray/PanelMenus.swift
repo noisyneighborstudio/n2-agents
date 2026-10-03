@@ -50,4 +50,23 @@ struct ActiveMenu: Equatable {
     static func title(_ snapshot: Snapshot) -> String? {
         snapshot.active == "mixed" ? nil : snapshot.active
     }
+
+    /// The labs a profile is active for, in the snapshot's order.
+    static func activeLabs(_ profile: Profile, _ snapshot: Snapshot) -> [Vendor] {
+        snapshot.installedVendors.filter { profile.isActive(for: $0.id) }
+    }
+
+    /// A card's word for where new sessions go: "Active" on the one active
+    /// profile; while labs use different profiles, the labs this one is
+    /// active for, which is what the header's Mixed means card by card.
+    static func badge(_ profile: Profile, _ snapshot: Snapshot) -> String? {
+        if snapshot.active == profile.name { return String(localized: "Active", comment: "The profile new sessions use") }
+        guard snapshot.active == "mixed" else { return nil }
+        let labs = activeLabs(profile, snapshot)
+        switch labs.count {
+        case 0: return nil
+        case 1: return String(localized: "Active for \(labs[0].label)", comment: "Profile card while labs differ: its one active lab")
+        default: return String(localized: "Active for \(labs.count) labs", comment: "Profile card while labs differ: how many labs it is active for")
+        }
+    }
 }

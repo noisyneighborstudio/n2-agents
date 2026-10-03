@@ -178,6 +178,15 @@ import Foundation
                                        .init(profile: "Home", vendor: "claude", checked: false)], "each lab checks its active profile")
         check(ActiveMenu.title(Snapshot(vendors: [], profiles: [], active: "mixed")) == nil
               && ActiveMenu.title(Snapshot(vendors: [], profiles: [], active: "Work")) == "Work", "the header names one profile or none")
+        // Mixed, explained on the cards: each names the labs it is active for.
+        let labs3 = Snapshot(vendors: [lab("claude"), lab("codex"), lab("grok")], profiles: [], active: "mixed")
+        check(ActiveMenu.badge(work, labs3) == "Active for Claude", "mixed: one active lab is named")
+        check(ActiveMenu.badge(home, labs3) == "Active for 2 labs", "mixed: several active labs are counted")
+        check(ActiveMenu.badge(Profile(name: "Spare", running: false, slots: ["claude": "ok"]), labs3) == nil,
+              "mixed: a profile active for nothing has no badge")
+        let allWork = Snapshot(vendors: [lab("claude"), lab("codex")], profiles: [], active: "Work")
+        check(ActiveMenu.badge(work, allWork) == "Active" && ActiveMenu.badge(home, allWork) == nil,
+              "one active profile: only its card says Active")
         // Session filters: scope by profile, lab, both; search tokens; newest first, each once.
         func sess(_ p: String, _ v: String, _ id: String, _ age: TimeInterval, _ title: String) -> SessionInfo {
             SessionInfo.parse("\(p)\t\(v)\t\(id)\t\(now.timeIntervalSince1970 - age)\t/Users/me/n2\t\(title)\tmain\t\(title)").first!
