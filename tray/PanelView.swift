@@ -91,25 +91,52 @@ struct FittingScroll<Content: View>: View {
     @ViewBuilder let content: Content
     @State private var contentHeight: CGFloat = 0
 
+    /// How far the content has scrolled up, in points.
+    @State private var scrolled: CGFloat = 0
+
+    /// The fade over the last points of a list that runs on below.
+    static var fade: CGFloat { 28 }
+
     var body: some View {
         let measured = content.background(GeometryReader { g in
             Color.clear.preference(key: ContentHeight.self, value: g.size.height)
+                .preference(key: ScrollOffset.self, value: -g.frame(in: .named(Self.space)).minY)
         })
         Group {
             if contentHeight > maxHeight {
                 // No scroller gutter: legacy scrollers would narrow every card.
-                ScrollView(.vertical) { measured }.frame(height: maxHeight).scrollIndicators(.never)
+                // With more below, the bottom edge fades out rather than
+                // cutting a row in half against the footer.
+                let more = contentHeight - scrolled > maxHeight + 1
+                ScrollView(.vertical) { measured }
+                    .coordinateSpace(name: Self.space)
+                    .frame(height: maxHeight).scrollIndicators(.never)
+                    .mask {
+                        VStack(spacing: 0) {
+                            Rectangle()
+                            LinearGradient(colors: [.black, .black.opacity(more ? 0 : 1)], startPoint: .top, endPoint: .bottom)
+                                .frame(height: Self.fade)
+                        }
+                    }
+                    .onPreferenceChange(ScrollOffset.self) { scrolled = $0 }
             } else {
                 measured
             }
         }
         .onPreferenceChange(ContentHeight.self) { contentHeight = $0 }
     }
+
+    private static var space: String { "fitting-scroll" }
 }
 
 private struct ContentHeight: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+private struct ScrollOffset: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
 // Indeterminate progress: a 40%-wide highlight crossing its track every

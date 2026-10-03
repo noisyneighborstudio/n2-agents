@@ -91,6 +91,8 @@ Order, top to bottom:
    - **Profile note**, first match wins: "N signed out" (red), "N out · M
      unchecked" (amber), "N running low" (amber), "All ready" (secondary).
 5. **Footer** (40, hairline above): "Updated 2 min ago" at 11.5 secondary.
+   A page taller than the screen scrolls above the footer, and while more
+   lies below, its last 28 pt fade out instead of cutting a row in half.
    Trailing are three 28 pt icon buttons: `arrow.clockwise` (refresh, spins while
    refreshing), `plus` (new profile), `slider.horizontal.3` (settings).
 

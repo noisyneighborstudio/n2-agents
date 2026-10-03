@@ -20,18 +20,13 @@ Walkthrough fixes (from the recorded product walkthrough, 2026-10-01). Each is
 proved by a check that fails on the old code plus frames captured from the
 demo build (`clip.sh` in the walkthrough tooling).
 
-1. **The Tasks list fades under the footer** (`tasks-fade`).
-   Behavior: a list cut off by the footer fades out instead of clipping a row
-   in half.
-   Proof: frames of the Fleet page with more tasks than fit.
-
-2. **The menu bar icon gauges the active profile** (`status-icon-active-profile`).
+1. **The menu bar icon gauges the active profile** (`status-icon-active-profile`).
    Behavior: the icon's ring shows the worst slot of the active profile (per
    lab when Mixed), not the lowest slot anywhere (docs/tray-redesign/03-states.md).
    Proof: StatusIcon tests: a low slot in an inactive profile leaves the icon
    green; the same slot in the active profile turns it.
 
-3. **Arrow keys move between cards and rows** (`panel-arrow-keys`).
+2. **Arrow keys move between cards and rows** (`panel-arrow-keys`).
    Behavior: Up and Down move focus between Fleet cards and Profile rows;
    Return opens (docs/tray-redesign/02-screens.md).
    Proof: AX run: arrows move the focused element; Return opens it.
