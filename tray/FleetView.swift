@@ -704,6 +704,7 @@ struct TaskPage: View {
 }
 
 struct WideButton: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
     var prominent = false
 
     func makeBody(configuration: Configuration) -> some View {
@@ -713,6 +714,9 @@ struct WideButton: ButtonStyle {
             .frame(maxWidth: .infinity).frame(height: 36)
             .background(RoundedRectangle(cornerRadius: 9).fill(prominent ? Ink.chip : Ink.raised))
             .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(prominent ? .clear : Ink.raisedEdge, lineWidth: 1))
+            // A disabled button looks it, as FleetPill does: Plan while the
+            // fleet answers, Send once sent.
+            .opacity(isEnabled ? 1 : 0.45)
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .animation(Motion.press, value: configuration.isPressed)
     }
