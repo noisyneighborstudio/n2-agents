@@ -18,8 +18,12 @@ unset CODEX_HOME CLAUDE_CONFIG_DIR OPENAI_API_KEY
 grep -Fq 'agents loop' "$smoke_root/help"
 ./agents run Fixture --vendor codex --version > "$smoke_root/route"
 test "$(cat "$smoke_root/route")" = "$HOME/.n2-agents/Fixture/codex"
+# A BUSY Bar that isn't there is reported and logged; alerts still return.
+./agents busybar on --address 127.0.0.1:9 | grep -qx 'state	unreachable'
+./agents busybar alert out 'Fixture - Codex' --key 'Fixture|codex'
+grep -q 'alert out failed' "$HOME/.n2-agents/busybar.log"
 )
-echo 'Smoke: real CLI routes to isolated profile.'
+echo 'Smoke: real CLI routes to isolated profile and survives a missing BUSY Bar.'
 # The behaviors a real run depends on (AGENTS.md "Smoke run"). Full suites run
 # in scripts/test.sh; smoke repeats none of them.
 python3 scripts/test-fleet-auth-bridge.py \

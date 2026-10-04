@@ -89,6 +89,11 @@ Blocked on authorization:
 
 ## Noticed
 
+- BUSY Bar alerts (`busybar-lab-alerts`) are proven against a fake bar only: no
+  bar answered over USB or the LAN while the slice was built. Turn the switch on
+  with a bar attached and check the hello, one tier card and a signed-out card
+  that clears on sign-in, then delete this item.
+
 - Making a profile Active for all labs (`agents use Work`, the Active menu and
   the card menu) gives it a slot for every lab it didn't hold: in the
   walkthrough fixture, Work gained Cursor, opencode and Muse, two of them

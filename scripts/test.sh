@@ -89,9 +89,10 @@ fi
 # --- native (Swift) --------------------------------------------------------
 if in_group swift; then
 swiftc -typecheck tray/main.swift tray/NativeAuth.swift tray/UpdateChannel.swift tray/Vendors.swift tray/ProfileColor.swift tray/StatusIcon.swift tray/QuotaToast.swift tray/UsageTiers.swift tray/ToastStack.swift tray/Ink.swift tray/StatusInk.swift tray/Motion.swift tray/LabMark.swift \
-  tray/PanelModel.swift tray/UsageDetailsView.swift tray/AccountOwnership.swift tray/NativeSignIn.swift tray/NativeSessionTransfer.swift tray/PanelView.swift tray/PageStack.swift tray/FleetPage.swift tray/ProfilePage.swift tray/ProviderPage.swift tray/ConfigurePage.swift tray/Clipboard.swift tray/PanelMenus.swift tray/RecentSessions.swift tray/SendWorkPage.swift tray/SessionsWindow.swift tray/SettingsWindowView.swift tray/FleetSyncSettings.swift tray/FleetSettingsLoader.swift tray/ProfileSetup.swift tray/GlassWindow.swift tray/ShellPath.swift tray/Hotkey.swift tray/FleetModel.swift tray/FleetView.swift tray/FleetControl.swift
+  tray/PanelModel.swift tray/UsageDetailsView.swift tray/AccountOwnership.swift tray/NativeSignIn.swift tray/NativeSessionTransfer.swift tray/PanelView.swift tray/PageStack.swift tray/FleetPage.swift tray/ProfilePage.swift tray/ProviderPage.swift tray/ConfigurePage.swift tray/Clipboard.swift tray/PanelMenus.swift tray/RecentSessions.swift tray/SendWorkPage.swift tray/SessionsWindow.swift tray/SettingsWindowView.swift tray/FleetSyncSettings.swift tray/FleetSettingsLoader.swift tray/BusyBar.swift tray/BusyBarSettings.swift tray/ProfileSetup.swift tray/GlassWindow.swift tray/ShellPath.swift tray/Hotkey.swift tray/FleetModel.swift tray/FleetView.swift tray/FleetControl.swift
 sh scripts/test-panel-usage.sh
 sh scripts/test-slot-status.sh
+sh scripts/test-busybar.sh
 clipboard_test=$(mktemp -d "$TMPDIR/clipboard.XXXXXX")/clipboard-tests
 swiftc -parse-as-library tray/Clipboard.swift tests/ClipboardTests.swift -o "$clipboard_test"
 "$clipboard_test"

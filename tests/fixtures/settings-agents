@@ -21,5 +21,8 @@ case "$*" in
   'fleet sync review')
     /bin/sleep 0.1
     printf 'nothing to review\n' ;;
+  'busybar status')
+    /bin/sleep 0.1
+    printf 'enabled\toff\naddress\t\ntoken\tnone\nconnection\tusb\nhost\t10.0.4.20\nstate\tunreachable\napi\t\n' ;;
   *) printf 'Unexpected fixture command\n' >&2; exit 1 ;;
 esac

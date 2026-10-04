@@ -22,6 +22,7 @@
 #   agents loop "goal" --budget 2h [...]  fan a goal out across slots until its definition of done holds
 #   agents version
 #   agents update [--check] [--channel stable|continuous]   install the newest build on the app's channel
+#   agents busybar on|off|status [--address <ip|api.busy.app>] [--token-stdin]   lab alerts on a BUSY Bar
 #
 # A profile is an IDENTITY, not a login: "Work" holds one slot per vendor, so
 # `agents use Work` moves Claude, Codex, Grok and the rest in one step.
@@ -1715,7 +1716,7 @@ cmd_porcelain() {
 }
 
 cmd_help() {
-  sed -n '3,25p' "$self" | sed 's/^# \{0,3\}//'
+  sed -n '3,26p' "$self" | sed 's/^# \{0,3\}//'
 }
 
 # The newest build from the app's own update feed: the appcast Sparkle reads,
@@ -1788,6 +1789,7 @@ case $cmd in
   porcelain) cmd_porcelain ;;
   version)  cmd_version ;;
   update)   cmd_update "$@" ;;
+  busybar)  exec /usr/bin/python3 "$scripts_dir/busybar.py" --root "$root" "$@" ;;
   help|-h|--help) cmd_help ;;
   *) die "unknown command: $cmd (try: agents help)" ;;
 esac

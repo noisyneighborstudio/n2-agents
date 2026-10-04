@@ -66,15 +66,20 @@ enum FleetSettingsLoader {
     /// is stopped and reported as timed out, so a hung read cannot hold its
     /// caller or leave processes stacking up behind it.
     static func bounded(_ arguments: [String], environment: [String: String],
-                        timeout: TimeInterval) -> (status: Int32, output: String) {
-        let process = Process(), pipe = Pipe()
+                        timeout: TimeInterval, input: Data? = nil) -> (status: Int32, output: String) {
+        let process = Process(), pipe = Pipe(), stdin = Pipe()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = arguments
         process.environment = environment
         process.standardOutput = pipe; process.standardError = pipe
+        if input != nil { process.standardInput = stdin }
         let exited = DispatchSemaphore(value: 0), drained = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in exited.signal() }
         do { try process.run() } catch { return (1, error.localizedDescription) }
+        if let input {
+            stdin.fileHandleForWriting.write(input)
+            try? stdin.fileHandleForWriting.close()
+        }
         let output = OutputBox()
         DispatchQueue.global(qos: .utility).async {
             output.data = pipe.fileHandleForReading.readDataToEndOfFile()

@@ -77,6 +77,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     private var quotaWatch: AnyCancellable?
     private var menuBarAppearance: NSKeyValueObservation?
     private var drawnIcon: (remaining: Int?, dark: Bool, attention: Bool, dot: UsageTier?)?
+    /// Lab health on a BUSY Bar, when its switch is on.
+    private let busyBar = BusyBarAlerts()
     /// The worst toast dismissed since the panel was last opened, from the quarter tier.
     private var iconDot: UsageTier?
     // A click opens the panel on that lab's page.
@@ -216,6 +218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     private func quotaChanged() {
         drawStatusIcon()
         quotaToast.update(quiet: panel.isShowing)
+        busyBar.update(model)
     }
 
     private func drawStatusIcon() {
