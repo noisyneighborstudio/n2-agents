@@ -110,7 +110,18 @@ func spawnAndWait(_ argv: [String], cwd: String, stdin: String, stdout: String, 
     defer { posix_spawnattr_destroy(&attr) }
     // A concurrent Foundation Process may own Git output pipes or locks.
     // Keep only descriptors installed by our explicit file actions.
-    let flags = Int16(POSIX_SPAWN_CLOEXEC_DEFAULT) | (detach ? Int16(POSIX_SPAWN_SETSID) : 0)
+    // The agent must not inherit the controller's ignored TERM and INT, nor the
+    // mask of the dispatch thread that spawns it (which blocks them): either
+    // way a pause or timeout only ever lands as the KILL after the grace.
+    var defaults = sigset_t(), unblocked = sigset_t()
+    sigemptyset(&defaults)
+    sigaddset(&defaults, SIGTERM)
+    sigaddset(&defaults, SIGINT)
+    sigemptyset(&unblocked)
+    posix_spawnattr_setsigdefault(&attr, &defaults)
+    posix_spawnattr_setsigmask(&attr, &unblocked)
+    let flags = Int16(POSIX_SPAWN_CLOEXEC_DEFAULT) | Int16(POSIX_SPAWN_SETSIGDEF) | Int16(POSIX_SPAWN_SETSIGMASK)
+        | (detach ? Int16(POSIX_SPAWN_SETSID) : 0)
     posix_spawnattr_setflags(&attr, flags)
 
     var pid: pid_t = 0
