@@ -586,7 +586,7 @@ final class Controller {
                 self.jobs[id] = nil
                 guard let (exit, timedOut, aborted) = result, !aborted else { return }   // paused: runs again on resume
                 let code: Int32 = timedOut ? 124 : exit
-                self.s.commands.append(CommandResult(command: command, exitCode: code, tail: String(text.suffix(4000)),
+                self.s.commands.append(CommandResult(command: command, exitCode: code, tail: failureExcerpt(text) + "\n(full output: \(files).out and \(files).out.err)",
                                                      candidate: candidate, seconds: Date().timeIntervalSince(started)))
                 self.note("verify", "\(command) → exit \(code)\(timedOut ? " (timed out)" : "")")
             }

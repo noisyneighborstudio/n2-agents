@@ -214,3 +214,21 @@ func oneLine(_ s: String, _ n: Int = 120) -> String {
     let flat = s.split(whereSeparator: \.isNewline).joined(separator: " ")
     return flat.count <= n ? flat : String(flat.prefix(n - 1)) + "…"
 }
+
+/// What a failed command said, within `limit` characters: terminal escapes
+/// stripped, the lines that name a failure first (FAIL, ERROR, tracebacks,
+/// assertions), then as much of the end as fits. A plain tail lost the
+/// failing test's name under a test's screen dump.
+func failureExcerpt(_ text: String, limit: Int = 3000) -> String {
+    let plain = text.replacingOccurrences(of: "\u{1B}(\\[[0-9;?]*[ -/]*[@-~]|[()][0-9A-Za-z]|[@-Z\\\\-_])", with: "", options: .regularExpression)
+    guard plain.count > limit else { return plain }
+    let names = try! NSRegularExpression(pattern: #"^(FAIL|ERROR|FAILED)\b|Error\b|Exception\b|Traceback|^\s+File "|assert|panic|✗"#)
+    var key: [String] = [], used = 0
+    for line in plain.split(separator: "\n", omittingEmptySubsequences: true) {
+        let l = String(line.prefix(300))
+        guard names.firstMatch(in: l, range: NSRange(l.startIndex..., in: l)) != nil, used + l.count < limit / 2 else { continue }
+        key.append(l); used += l.count + 1
+    }
+    let head = key.isEmpty ? "" : key.joined(separator: "\n") + "\n…\n"
+    return head + String(plain.suffix(max(0, limit - head.count)))
+}

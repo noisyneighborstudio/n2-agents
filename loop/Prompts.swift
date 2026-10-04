@@ -127,7 +127,7 @@ func diagnosePrompt(_ s: RunState, _ c: Chunk, problem: String) -> String {
 
 func verifierPrompt(_ s: RunState, candidate: String, results: [CommandResult]) -> String {
     let cmds = results.isEmpty ? "No verification commands in the plan." : results.map {
-        "$ \($0.command)  → exit \($0.exitCode)\n\(clip($0.tail, 3000))"
+        "$ \($0.command)  → exit \($0.exitCode)\n\(clip($0.tail, 3200))"
     }.joined(separator: "\n\n")
     return """
     ROLE: verifier

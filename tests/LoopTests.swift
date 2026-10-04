@@ -127,6 +127,19 @@ import Darwin
         let seen = (try? String(contentsOfFile: probe, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
         expect(seen == "[] False", "a spawned command starts with no blocked or ignored signals (saw \(seen ?? "nothing"))")
 
+        // A failed command keeps the failure's name: the trial's PTY test dumped
+        // 50 KB of screen bytes after it, and a plain tail kept only those.
+        let dump = String(repeating: "\u{1B}[3;9H1\u{1B}[23;40H\u{1B}(B\u{1B}[m screen bytes\n", count: 1500)
+        let output = "test_flash ... ok\nFAIL: test_resize (tests.test_tui_pty.CalculatorPTYTests)\n"
+            + "  File \"tests/test_tui_pty.py\", line 479, in test_resize\nAssertionError: Timed out waiting for the long entry\n" + dump
+            + "\nRan 67 tests in 7.6s\n\nFAILED (failures=1)\n"
+        let excerpt = failureExcerpt(output)
+        expect(excerpt.count <= 3000, "the excerpt fits its limit (\(excerpt.count))")
+        expect(excerpt.contains("FAIL: test_resize") && excerpt.contains("AssertionError: Timed out") && excerpt.contains("line 479"),
+               "the failing test, its line and its assertion survive")
+        expect(excerpt.hasSuffix("FAILED (failures=1)\n") && !excerpt.contains("\u{1B}"), "the end is kept and terminal escapes are gone")
+        expect(failureExcerpt("short\n") == "short\n", "short output is kept whole")
+
         // A repair keeps coupled chunks together: the trial's tui and pty-smoke
         // deadlocked split (pty-smoke waited on tui; tui's review failed on its test).
         func chunk(_ id: String, _ deps: [String] = []) -> Chunk {
