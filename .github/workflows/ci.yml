@@ -26,6 +26,20 @@ jobs:
         run: scripts/check.sh lint
       - name: Smoke
         run: scripts/smoke.sh
+      # Tests build debug; this is the release compile gate. Publish ships
+      # these bytes for this commit instead of compiling again. Tar keeps
+      # Sparkle.framework's symlinks, which an artifact upload drops.
+      - name: Release build
+        run: |
+          scripts/release-binaries.sh "$RUNNER_TEMP/release-binaries"
+          tar -czf "$RUNNER_TEMP/release-binaries.tgz" -C "$RUNNER_TEMP/release-binaries" .
+      - name: Hand the release build to publish
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-binaries
+          path: ${{ runner.temp }}/release-binaries.tgz
+          retention-days: 7
   tests:
     if: github.event_name == 'push' || github.event.pull_request.head.repo.fork
     runs-on: ${{ github.event_name == 'push' && fromJSON('["self-hosted","macOS","n2"]') || 'macos-26' }}
