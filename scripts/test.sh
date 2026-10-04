@@ -596,6 +596,35 @@ HOME="$shim_home" PATH="$fake_bin:$shim_bin:/usr/bin:/bin" ./agents shims --remo
 test ! -e "$shim_bin/claude-client"
 test "$(readlink "$shim_bin/claude-outside")" = "$test_root/foreign/agent-as"
 
+# --- Grok's CLI lives inside its dot dir -----------------------------------
+# Its installer puts bin/grok -> ../downloads/grok-<v> in ~/.grok, so switching
+# ~/.grok to a profile slot must carry the install along, or Grok vanishes.
+grok_home="$test_root/grok-home"
+grok_bin="$grok_home/.local/bin"
+mkdir -p "$grok_home/.grok/bin" "$grok_home/.grok/downloads" "$grok_bin"
+cp "$fake_bin/grok" "$grok_home/.grok/downloads/grok-1"
+ln -s ../downloads/grok-1 "$grok_home/.grok/bin/grok"
+ln -s "$fake_bin/security" "$grok_bin/security"
+ln -s "$PWD/agents" "$grok_bin/agents"
+run_grok_home() { HOME="$grok_home" PATH="$grok_home/.grok/bin:$grok_bin:/usr/bin:/bin" ./agents "$@" }
+grok_installed() { [[ $(run_grok_home porcelain) == *$'\nV\tgrok\t1\t'* ]] }
+grok_installed
+run_grok_home new Work --vendors grok >/dev/null
+run_grok_home use Work >/dev/null
+test "$(readlink "$grok_home/.grok")" = "$grok_home/.n2-agents/Work/grok"
+test "$(readlink "$grok_home/.n2-agents/Work/grok/bin")" = "$grok_home/.n2-agents/Default/grok/bin"
+grok_installed
+[[ $(run_grok_home run Work --vendor grok) == *"GROK_HOME=$grok_home/.n2-agents/Work/grok"* ]]
+# A slot made before install parts were shared heals on the next shim sync,
+# which the app runs at launch.
+mkdir -p "$grok_home/.n2-agents/Old/grok"
+rm "$grok_home/.grok"
+ln -s "$grok_home/.n2-agents/Old/grok" "$grok_home/.grok"
+! grok_installed
+run_grok_home shims >/dev/null
+grok_installed
+test -x "$grok_bin/grok-old"
+
 # --- shell helpers load ----------------------------------------------------
 HOME="$shim_home" PATH="/usr/bin:/bin" zsh -c 'source shell/agents.zsh; command -v agents >/dev/null'
 HOME="$shim_home" PATH="/usr/bin:/bin" bash -c 'source shell/agents.bash; command -v agents >/dev/null'
