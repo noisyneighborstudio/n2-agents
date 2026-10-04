@@ -111,7 +111,7 @@ func spawnAndWait(_ argv: [String], cwd: String, stdin: String, stdout: String, 
     // A concurrent Foundation Process may own Git output pipes or locks.
     // Keep only descriptors installed by our explicit file actions.
     let flags = Int16(POSIX_SPAWN_CLOEXEC_DEFAULT) | (detach ? Int16(POSIX_SPAWN_SETSID) : 0)
-    posix_spawnattr_setflags(&attr, flags)
+    cleanSignals(&attr, flags)
 
     var pid: pid_t = 0
     let cargs = argv.map { strdup($0) } + [nil]
@@ -184,7 +184,7 @@ func spawnDetached(_ argv: [String], log: String) throws -> pid_t {
     var attr: posix_spawnattr_t? = nil
     posix_spawnattr_init(&attr)
     defer { posix_spawnattr_destroy(&attr) }
-    posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSID) | Int16(POSIX_SPAWN_CLOEXEC_DEFAULT))
+    cleanSignals(&attr, Int16(POSIX_SPAWN_SETSID) | Int16(POSIX_SPAWN_CLOEXEC_DEFAULT))
     var pid: pid_t = 0
     let cargs = argv.map { strdup($0) } + [nil]
     defer { cargs.forEach { free($0) } }
@@ -205,4 +205,17 @@ func recoverTurnProcesses(_ turns: inout [Turn], runId: String, store: Store) {
         turns[i].endedAt = Date()
         turns[i].outcome = "interrupted"
     }
+}
+
+/// A child inherits the spawning thread's signal mask and the process's
+/// ignored signals. GCD threads block every signal and the controller
+/// ignores SIGINT and SIGTERM, so without this a command would never see
+/// SIGWINCH or Ctrl-C: start it with nothing blocked and every default.
+private func cleanSignals(_ attr: inout posix_spawnattr_t?, _ flags: Int16) {
+    var none = sigset_t(), all = sigset_t()
+    sigemptyset(&none)
+    sigfillset(&all)
+    posix_spawnattr_setsigmask(&attr, &none)
+    posix_spawnattr_setsigdefault(&attr, &all)
+    posix_spawnattr_setflags(&attr, flags | Int16(POSIX_SPAWN_SETSIGMASK) | Int16(POSIX_SPAWN_SETSIGDEF))
 }

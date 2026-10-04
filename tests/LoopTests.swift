@@ -108,6 +108,25 @@ import Darwin
         expect(reviewer([a, slot("codex", "B", used: 99)], of: ["codex"], avoid: ["codex|A"]) == "codex|A",
                "a lone usable account still gets its review")
 
+        // What the controller starts gets a clean signal state, though it is
+        // started from a GCD thread (every signal blocked) by a process
+        // ignoring SIGINT and SIGTERM: a TUI under test must see SIGWINCH.
+        let probe = NSTemporaryDirectory() + "signals-\(UUID().uuidString)"
+        defer { for f in [probe, probe + ".err"] { try? FileManager.default.removeItem(atPath: f) } }
+        let previous = signal(SIGINT, SIG_IGN)
+        let spawned = DispatchGroup()
+        spawned.enter()
+        DispatchQueue.global().async {
+            _ = try? spawnAndWait(["/usr/bin/python3", "-c", "import signal; print(sorted(int(s) for s in signal.pthread_sigmask(signal.SIG_BLOCK, [])), signal.getsignal(signal.SIGINT) is signal.SIG_IGN)"],
+                                  cwd: "/", stdin: "/dev/null", stdout: probe, stderr: probe + ".err",
+                                  timeout: 30, detach: true, abort: Flag())
+            spawned.leave()
+        }
+        spawned.wait()
+        signal(SIGINT, previous)
+        let seen = (try? String(contentsOfFile: probe, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+        expect(seen == "[] False", "a spawned command starts with no blocked or ignored signals (saw \(seen ?? "nothing"))")
+
         // Workers: strength x quota left, and no slot past 1.5x its fair share.
         let hand: (String, Effort) -> Double = { lab, effort in Double(Adapter.of(lab)!.strength[effort]!) }
         func worker(_ s: [Slot], _ effort: Effort = .standard, assigned: [String: Int] = [:],
