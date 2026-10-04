@@ -3397,6 +3397,10 @@ refute "merged: beta has no mirror-image conflict" "mrg" "$(peer beta fleet sync
 out=$(peer alpha fleet sync now --peer "$B" 2>&1)
 check "merged: a repeated pass is quiet" "noop	skills|Work|claude|skills/mrg/SKILL.md" "$out"
 # A merge is written through the same credential gate as any incoming bytes.
+# Section 30 leaves claude opted in on both peers, so a full run from section 1
+# reaches here sharing claude credentials; this case needs it off.
+peer alpha fleet sync auth disable claude >/dev/null 2>&1
+peer beta  fleet sync auth disable claude >/dev/null 2>&1
 sk="$(slot alpha Merge claude)/CLAUDE.md"; skb="$(slot beta Merge claude)/CLAUDE.md"
 put alpha "$sk" 'guidance'
 peer alpha fleet sync now --peer "$B" >/dev/null 2>&1
