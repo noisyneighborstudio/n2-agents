@@ -16,6 +16,14 @@ enum BusyBarEvent: Equatable {
 struct BusyBarWatch {
     private var known: [String: SlotStatus] = [:]
     private var announced: [String: UsageTier] = [:]
+    private var announcedVersion: String?
+
+    /// A new N2 Agents build, once per version: Sparkle reports it on every
+    /// hourly check until it's installed.
+    mutating func isNewUpdate(_ version: String) -> Bool {
+        defer { announcedVersion = version }
+        return version != announcedVersion
+    }
 
     mutating func update(_ slots: [(id: String, status: SlotStatus)]) -> [BusyBarEvent] {
         var events: [BusyBarEvent] = []
@@ -68,6 +76,11 @@ final class BusyBarAlerts {
     }
 
     private func sync() { queue.async { _ = BusyBarCLI.run(["sync"]) } }
+
+    func updateAvailable(_ version: String) {
+        guard watch.isNewUpdate(version) else { return }
+        queue.async { _ = BusyBarCLI.run(["alert", "update", "N2 Agents \(version)", "--key", "update"]) }
+    }
 
     func update(_ model: PanelModel) {
         guard let data = model.data else { return }

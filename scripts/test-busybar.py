@@ -85,7 +85,8 @@ class BusyBarTests(unittest.TestCase):
     def test_each_kind_maps_to_its_card(self):
         expected = {'half': ('50% LEFT', '#2979FFFF', 60), 'quarter': ('25% LEFT', '#FFD600FF', 60),
                     'low': ('10% LEFT', '#FFAB00FF', 120), 'out': ('OUT', '#FF1744FF', 0),
-                    'signedout': ('SIGNED OUT', '#FF1744FF', 0), 'back': ('BACK', '#00C853FF', 60)}
+                    'signedout': ('SIGNED OUT', '#FF1744FF', 0), 'back': ('BACK', '#00C853FF', 60),
+                    'update': ('UPDATE', '#FFD600FF', 60)}
         self.assertEqual(set(busybar.KINDS), set(expected))
         for kind, (word, color, timeout) in expected.items():
             card = busybar.make_card(kind, 'Work - Claude Code')
