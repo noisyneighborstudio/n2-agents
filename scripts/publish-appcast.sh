@@ -44,6 +44,8 @@ url="https://github.com/${N2_UPDATES_REPO}/releases/download/${tag}/${artifact}"
 size=$(stat -f %z "$artifact") served=0 got=""
 for attempt in {1..60}; do
   got=$(curl -sL -o /dev/null -w '%{http_code} %{size_download}' "$url" || true)
+  # Each check's result sizes this wait from evidence rather than guesswork.
+  echo "download check $attempt: $got (want 200 $size)"
   if [[ $got == "200 $size" ]]; then
     (( ++served >= 3 )) && break
   else
