@@ -513,22 +513,18 @@ else ok "reconcile: revoked peer removed from the roster"; fi
 out=$(peer rc2 fleet ping "$T" 2>&1); rc=$?
 denied "reconcile: the revoked peer can no longer be called" "$out" "$rc"
 
-# A neighbour cannot revoke *us* by putting our id in its list.
-raw rc1 'printf "%s 0\n" "'"$Z"'" >/dev/null'   # no-op: rc1 trusts rc2
-raw rc2 'printf "%s 0\n" "'"$E"'" >> "$fleet_root/revoked"'
-peer rc1 fleet reconcile >/dev/null 2>&1
-if peer rc1 fleet id >/dev/null 2>&1 && ! raw rc1 'fleet_revoked "'"$E"'"'; then
-  ok "reconcile: a peer cannot revoke us through its own list"
-else bad "reconcile: a peer cannot revoke us through its own list" "rc1 revoked itself"; fi
-
-# Undo the synthetic injection. rc2 was never *told* to revoke rc1 — the line
-# was planted to prove rc1 ignores it — but while it sits in rc2's list, rc2's
-# own fleet_call refuses to dial rc1 ("ERR not-approved", client side), which
-# would silently void the premise of every later rc2 -> rc1 assertion.
-raw rc2 'grep -vF "'"$E"'" "$fleet_root/revoked" > "$fleet_root/revoked.t" 2>/dev/null; mv "$fleet_root/revoked.t" "$fleet_root/revoked"'
-if raw rc2 'fleet_approved "'"$E"'"'; then
-  ok "reconcile: clearing the planted entry restores rc2 -> rc1 trust"
-else bad "reconcile: clearing the planted entry restores rc2 -> rc1 trust" "rc2 still refuses rc1"; fi
+# A neighbour cannot revoke *us*, or itself, by putting the id in its list.
+# Only the reply is stubbed: rc2 answering with rc1's own id would make it
+# refuse rc1 first, and the list would never be read.
+out=$(raw rc1 'fleet_call() { [ "$2" = revocations ] && printf "%s\\n" "'"$E"'" "'"$Z"'"; }; fleet_reconcile' 2>&1)
+refute "reconcile: rc1 reads an approved peer's list" "no approved peers" "$out"
+refute "reconcile: nothing in that list is adopted" "revoked" "$out"
+if raw rc1 'fleet_revoked "'"$E"'"'; then
+  bad "reconcile: a peer cannot revoke us through its own list" "rc1 revoked itself"
+else ok "reconcile: a peer cannot revoke us through its own list"; fi
+if raw rc1 'fleet_revoked "'"$Z"'"'; then
+  bad "reconcile: a peer cannot revoke itself through its own list" "rc1 revoked rc2"
+else ok "reconcile: a peer cannot revoke itself through its own list"; fi
 
 # --- 22. host key rotation for an already-approved peer --------------------
 mark "22. host key rotation for an already-approved peer"
