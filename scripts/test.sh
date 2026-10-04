@@ -720,6 +720,7 @@ swiftc -parse-as-library ${(f)"$(ls loop/*.swift | grep -v main.swift)"} tests/L
 # app's binary resources just to exercise the loop engine.
 mkdir -p .build/release
 swiftc -swift-version 5 -O loop/*.swift -o "$PWD/.build/release/n2-loop"
+sh scripts/test-fanout-skill.sh
 n2_root=$PWD
 loop_root="$test_root/loop"
 mkdir -p "$loop_root/home" "$loop_root/bin"

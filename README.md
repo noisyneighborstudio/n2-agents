@@ -276,6 +276,12 @@ option); `agents loop replan <run>` drafts again once an answer differs from
 the recommendation. `approve` refuses, with the next command to run, until
 every question is answered and planned in.
 
+Any agent can do this for you. N2 links its `n2-fanout` skill into every
+profile's Claude Code and Codex skills (each time the app starts), so asking
+the agent you're already using to "fan this out" walks it through planning,
+your questions, your approval and following the run to the end. A skill of
+your own with that name is left alone.
+
 Loops use Claude Code, Codex and Muse. Each runs headless
 with its own scoped approval mode. Grok and Cursor only offer
 approve-everything modes, so the loop doesn't use them. Runs live in
