@@ -292,7 +292,7 @@ agents new Client --vendors codex,grok
 - **Add Vendor…** to give an existing profile another lab
 - Claude Desktop and Codex, opened as any profile, several at once
 - Claude session transfer between profiles
-- Lab alerts on a [BUSY Bar](docs/busy-bar.md): usage at 50, 25 and 10% left, out, back, signed out, and app updates
+- Lab alerts on a [BUSY Bar](docs/busy-bar.md): usage at 50, 25 and 10% left, out, back, signed out, and app updates, plus an hourly usage show
 - Sparkle self-updates on a stable or continuous channel; `agents update` installs the newest build on the same channel from a terminal (`--check` only reports)
 
 ## Troubleshooting

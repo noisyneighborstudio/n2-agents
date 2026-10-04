@@ -6,6 +6,7 @@
     busybar.py --root R alert KIND TITLE [--key K]
     busybar.py --root R clear KEY
     busybar.py --root R sync                      reconnect, and restore the card
+    busybar.py --root R slideshow < slides.json   the hourly usage show
 
 The switch, address and secret live in R/busybar.json (0600). With the switch
 off, alert, clear and sync do nothing. A bar that can't be reached costs one
@@ -226,6 +227,54 @@ def intro_frames(card):
     return frames
 
 
+# --- the hourly usage show ----------------------------------------------------
+#
+# One slide per profile and lab: it comes in from the right, its gauge sweeps
+# up to what is left while the figure counts up, it holds, and it leaves to the
+# left. The gauge is an inline bitmap, redrawn each frame with no upload.
+
+def tone(left):
+    """The gauge's color for what is left, matching the alert cards."""
+    return ('#00C853FF' if left > 50 else '#2979FFFF' if left > 25 else '#FFD600FF' if left > 10
+            else '#FFAB00FF' if left > 0 else '#FF1744FF')
+
+
+def gauge(fraction, color):
+    """A 16x16 ring as XPM2: a dim track, filled clockwise from the top."""
+    rows = []
+    for y in range(16):
+        row = ''
+        for x in range(16):
+            dx, dy = x - 7.5, y - 7.5
+            if 4.6 <= math.hypot(dx, dy) <= 7.9:
+                row += 'f' if (math.degrees(math.atan2(dx, -dy)) + 360) % 360 < fraction * 360 else 't'
+            else:
+                row += '.'
+        rows.append(row)
+    return '\n'.join(['! XPM2', '16 16 3 1', '. c none', 't c #303030', 'f c ' + color[:7]] + rows)
+
+
+def slide(s, x, shown):
+    left, color = s['left'], tone(s['left'])
+    return [{'id': 'gauge', 'type': 'xpmbitmap', 'data': gauge(left / 100 * shown, color), 'x': x, 'y': 0,
+             'z_index': 1},
+            {'id': 'figure', 'type': 'text', 'text': '%d%%' % rnd(left * shown), 'font': 'bold', 'color': color,
+             'align': 'top_left', 'x': x + 19, 'y': -1, 'z_index': 1},
+            {'id': 'title', 'type': 'text', 'text': device_text(s['title']), 'font': 'small', 'color': '#FFFFFFFF',
+             'align': 'bottom_left', 'x': x + 19, 'y': 15, 'width': W - 19, 'scroll_rate': 1500,
+             'scroll_start_delay': 1500, 'z_index': 1}]
+
+
+def slideshow_frames(slides):
+    frames = []
+    for s in slides:
+        frames += [slide(s, lerp(W, 0, ease_out(t)), 0) for t in steps(8)]
+        frames += [slide(s, 0, ease_out(t)) for t in steps(14)]
+        frames += [[] for _ in range(40)]
+        frames += [slide(s, lerp(0, -W, ease_in_out(t)), 1) for t in steps(6)]
+    return frames
+
+
 # --- device ------------------------------------------------------------------
 
 def endpoint(address, token):
@@ -263,27 +312,42 @@ class Bar:
     def clear(self, ids=None):
         self.send('DELETE', '/display/draw', {'application_name': APP, **({'element_ids': ids} if ids else {})})
 
-    def draw(self, card, elements, led=None):
+    def draw(self, elements, timeout, led=None):
         body = {'application_name': APP,
-                'elements': [{'display': 'front', 'timeout': card['timeout'], **e} for e in elements]}
+                'elements': [{'display': 'front', 'timeout': timeout, **e} for e in elements]}
         if led:
             body['led_notification_color'] = led
         self.send('POST', '/display/draw', body)
 
-    def play(self, card):
-        """The intro on its schedule, then the settled card with its LED blink."""
-        self.clear()  # draws add to what is on screen
-        self.send('POST', '/assets/upload?' + urllib.parse.urlencode({'application_name': APP, 'file': LOGO}),
-                  raw=mark_png())
+    def run(self, frames, timeout):
+        """Draws frames on their schedule; an empty frame holds the last one."""
         start = time.monotonic()
-        for i, elements in enumerate(intro_frames(card)):
+        for i, elements in enumerate(frames):
             wait = start + i * FRAME_MS / 1000 - time.monotonic()
             if wait > 0:
                 time.sleep(wait)
             if elements:
-                self.draw(card, elements)
-        self.clear(TRANSIENT)
-        self.draw(card, card_elements(card), led=card['color'])
+                self.draw(elements, timeout)
+
+    def settle(self, card, intro=True):
+        """The card with its LED blink, after its intro unless told otherwise."""
+        self.clear()  # draws add to what is on screen
+        self.send('POST', '/assets/upload?' + urllib.parse.urlencode({'application_name': APP, 'file': LOGO}),
+                  raw=mark_png())
+        if intro:
+            self.run(intro_frames(card), card['timeout'])
+            self.clear(TRANSIENT)
+        self.draw(card_elements(card), card['timeout'], led=card['color'])
+
+    def show_usage(self, slides, after):
+        """The hourly usage show, then the card that should be up (without its
+        intro: it was already announced), or nothing."""
+        self.clear()
+        self.run(slideshow_frames(slides), 5)  # stray slides go on their own
+        if after:
+            self.settle(after, intro=False)
+        else:
+            self.clear()
 
     def probe(self):
         try:
@@ -387,7 +451,7 @@ def sync(store, bar, state):
     state['reached'] = reached
     if reached and state.get('connected') is not True:
         card = current_card(state, time.time())
-        attempt(store, state, 'restore', lambda: bar.play(card) if card else bar.clear())
+        attempt(store, state, 'restore', lambda: bar.settle(card) if card else bar.clear())
 
 
 def status_lines(store):
@@ -405,6 +469,7 @@ def main(argv=None):
     sub = parser.add_subparsers(dest='command', required=True)
     sub.add_parser('status')
     sub.add_parser('sync')
+    sub.add_parser('slideshow', help='JSON slides on stdin: [{"title": ..., "left": 0-100}]')
     for name in ('on', 'off'):
         switch = sub.add_parser(name)
         switch.add_argument('--address')
@@ -437,15 +502,21 @@ def main(argv=None):
         if args.command in ('on', 'off'):
             state['card'] = None
             if config['enabled']:
-                attempt(store, state, 'hello', lambda: bar.play(make_card('hello', 'N2 Agents')))
+                attempt(store, state, 'hello', lambda: bar.settle(make_card('hello', 'N2 Agents')))
             else:
                 attempt(store, state, 'clear', bar.clear)
         elif args.command == 'sync':
             sync(store, bar, state)
+        elif args.command == 'slideshow':
+            slides = [{'title': str(s['title']), 'left': max(0, min(100, int(s['left'])))}
+                      for s in json.loads(sys.stdin.read() or '[]')]
+            card = current_card(state, time.time())
+            if slides:
+                attempt(store, state, 'slideshow', lambda: bar.show_usage(slides, card))
         elif args.command == 'alert':
             # Recorded first, so a bar that is away gets it when it's back.
             state['card'] = {'kind': args.kind, 'title': args.title, 'key': args.key, 'at': time.time()}
-            attempt(store, state, 'alert %s' % args.kind, lambda: bar.play(make_card(args.kind, args.title)))
+            attempt(store, state, 'alert %s' % args.kind, lambda: bar.settle(make_card(args.kind, args.title)))
         else:
             card = state.get('card') or {}
             # Only a card that stays is cleared: a timed one runs out on its own.
