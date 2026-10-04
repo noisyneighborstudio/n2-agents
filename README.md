@@ -115,6 +115,10 @@ functions, so editors, GUI apps and scripts get them too.
 Every one of those isolation levers was verified against the shipped binary
 rather than taken from documentation.
 
+Grok's installer puts the CLI itself inside `~/.grok` (`bin/`, `downloads/`).
+Each profile's Grok slot links those to Default's, so `grok` stays on `PATH`
+whichever profile is active.
+
 Gemini is no longer supported. Gemini CLI stopped serving personal accounts on
 June 18, 2026, and its successor, Antigravity CLI (`agy`), keeps its login in
 the macOS Keychain, where no profile switch can reach it. On first launch after

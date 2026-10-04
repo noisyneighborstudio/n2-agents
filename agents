@@ -289,6 +289,23 @@ cmd_list() {
 
 # --- use -------------------------------------------------------------------
 
+# Link a slot's install parts (vendor_install_parts) to Default's, so the CLI
+# stays on PATH whichever profile is active. Never replaces an existing entry:
+# a lab installed while another profile was active keeps its own copy.
+share_install() {  # profile, vendor
+  [ "$1" = Default ] && return 0
+  si_slot="$root/$1/$(vendor_slot_name "$2")"
+  si_src="$root/Default/$(vendor_slot_name "$2")"
+  [ -d "$si_slot" ] || return 0
+  for si_part in $(vendor_install_parts "$2"); do
+    [ -e "$si_src/$si_part" ] || continue
+    [ -e "$si_slot/$si_part" ] || [ -L "$si_slot/$si_part" ] && continue
+    # A concurrent run may have linked it first; that's the same result.
+    ln -s "$si_src/$si_part" "$si_slot/$si_part" 2>/dev/null || [ -L "$si_slot/$si_part" ] ||
+      die "could not link $si_slot/$si_part to Default's $(vendor_label "$2") install"
+  done
+}
+
 # Point one vendor's dot dir at a profile's slot, migrating the original
 # directory into Default the first time we ever touch that vendor.
 switch_vendor() {  # profile, vendor
@@ -310,6 +327,7 @@ switch_vendor() {  # profile, vendor
   # Default simply gives Default a slot like any other profile.
   sv_target="$root/$sv_profile/$(vendor_slot_name "$sv_vendor")"
   mkdir -p "$sv_target"
+  share_install "$sv_profile" "$sv_vendor"
   mkdir -p "$(dirname "$sv_dot")"
   rm -f "$sv_dot"
   ln -s "$sv_target" "$sv_dot"
@@ -949,6 +967,11 @@ cmd_shims() {
   wanted=""
   if [ "$remove" = 0 ]; then
     [ -x "$src" ] || die "shim script missing: $src"
+    # The app runs this at launch, so slots made before install parts were
+    # shared heal here — before installed vendors are counted.
+    for v in $N2_VENDORS; do
+      for n in $(all_profiles); do share_install "$n" "$v"; done
+    done
     wanted=$(
       for v in $(vendors_installed); do
         echo "$v-as"
@@ -1049,6 +1072,7 @@ cmd_new() {
       mkdir -p "$slot"
       echo "  $v: $slot"
     fi
+    share_install "$name" "$v"
     created="$created $v"
   done
   [ -n "$created" ] || die "nothing created — none of the requested vendors is installed"

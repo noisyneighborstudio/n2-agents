@@ -125,6 +125,16 @@ vendor_slot_name() {
   esac
 }
 
+# Entries of the dot dir that are the lab's INSTALL, not a profile's state.
+# Grok's installer puts the CLI inside ~/.grok (bin/grok -> downloads/grok-<v>),
+# so a slot without them hides the CLI whenever its profile is active. Every
+# slot links these to Default's, which holds the install after migration.
+vendor_install_parts() {
+  case $1 in
+    grok) echo "bin downloads" ;;
+  esac
+}
+
 vendor_desktop() {
   case $1 in
     claude|codex) echo instance ;;
