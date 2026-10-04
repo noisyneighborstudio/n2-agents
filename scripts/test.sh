@@ -839,7 +839,8 @@ quota_proof 8 recovery
 
 # Hold both slots long enough to observe WAITING, then let the real controller
 # retry at the stated reset and finish without a user resume or changed clock.
-new_loop worker-quota-total=2 worker-retry-seconds=30
+# WAITING is observed about 1s after the rejections, so 15s leaves wide margin.
+new_loop worker-quota-total=2 worker-retry-seconds=15
 wait_for WAITING
 wait_for DONE
 quota_proof 2 waiting
