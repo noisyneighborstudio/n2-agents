@@ -35,6 +35,26 @@ import Foundation
 
         // Unmetered labs have nothing to say.
         check(watch.update([("Home|opencode", .unmetered), ("Home|opencode", .unmetered)]), [], "unmetered")
+        // The usage show: slots with a reading, out as 0, the rest left out.
+        let slides = BusyBarSlide.from([("Work", "Claude Code", .ready(left: 82)), ("Work", "Codex", .out(back: nil)),
+                                        ("Home", "Grok", .low(left: 8)), ("Home", "opencode", .unmetered),
+                                        ("Home", "Muse", .signedOut), ("Home", "Cursor", .checking),
+                                        ("Home", "Codex", .checkFailed)])
+        if slides != [BusyBarSlide(profile: "Work", lab: "Claude Code", left: 82),
+                      BusyBarSlide(profile: "Work", lab: "Codex", left: 0),
+                      BusyBarSlide(profile: "Home", lab: "Grok", left: 8)] { fatalError("slides: \(slides)") }
+
+        // On the hour, once: not at :30, not twice in the hour's first minute.
+        var gate = HourlyGate()
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        func at(_ h: Int, _ m: Int, _ s: Int = 0) -> Date {
+            calendar.date(from: DateComponents(year: 2026, month: 10, day: 4, hour: h, minute: m, second: s))!
+        }
+        let ticks = [(at(9, 59, 30), false), (at(10, 0, 5), true), (at(10, 0, 35), false), (at(10, 30), false),
+                     (at(11, 0, 20), true), (at(11, 1), false)]
+        for (date, due) in ticks where gate.due(date, calendar: calendar) != due { fatalError("gate at \(date)") }
+
         // A new build shows once per version, however often Sparkle reports it.
         if !watch.isNewUpdate("1.6.0") { fatalError("first report of a version") }
         if watch.isNewUpdate("1.6.0") { fatalError("same version twice") }
