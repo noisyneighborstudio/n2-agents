@@ -779,6 +779,29 @@ shown=$(loop status "$run")
 [[ $shown == *"DONE"* && $shown == *"✓ has-a"* && $shown == *"✓ grep -q done b.txt"* ]]
 loop list | grep -q "${run[1,8]}  DONE"
 
+# An agent drives a run without a terminal: the plan and its questions as
+# JSON, answers by verb, approval refused until they are answered and
+# planned in.
+loop_fake=$(mktemp -d "$loop_root/fake.XXXXXX"); touch "$loop_fake/ask"
+repo=$(mktemp -d "$loop_root/repo.XXXXXX")
+git -C "$repo" init -q && git -C "$repo" config user.email loop@test && git -C "$repo" config user.name Loop
+echo hi > "$repo/README" && git -C "$repo" add . && git -C "$repo" commit -qm init
+drafted=$(loop plan "write a and b" --budget 1h --cwd "$repo" --json 2>/dev/null)
+run=$(ls -t "$loop_root/runs" | head -1)
+jq_() { python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print(eval(sys.argv[1]))' "$1"; }
+[ "$(print -r -- "$drafted" | jq_ 'd["questions"][0]["id"], d["status"], len(d["chunks"])')" = "('where', 'DRAFT', 2)" ]
+[[ $(print -r -- "$drafted" | jq_ 'd["blocker"]') == *"agents loop answer ${run[1,8]}"* ]]
+! loop approve "$run" >/dev/null 2>&1
+[ "$(field 's["status"]')" = DRAFT ]
+loop answer "$run" where 2 | grep -Fq "agents loop replan ${run[1,8]}"   # c.txt: not the recommendation
+! loop approve "$run" >/dev/null 2>&1
+! loop answer "$run" nosuch 1 >/dev/null 2>&1
+replanned=$(loop replan "$run" --json 2>/dev/null)
+test -f "$loop_fake/replanned-with-c"
+[ "$(print -r -- "$replanned" | jq_ 'd["blocker"], d["questions"][0]["answer"]')" = "(None, 'c.txt')" ]
+loop approve "$run" >/dev/null
+wait_for DONE
+
 # A slot out of quota costs the work nothing: planning and chunks fail over.
 new_loop quota-Home
 wait_for DONE

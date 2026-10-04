@@ -7,6 +7,8 @@ agents loop — fan a goal out across your slots until its definition of done ho
   agents loop "goal" --budget 2h [--file spec.md]…   plan, interview, approve, start
   agents loop plan "goal" --budget 2h                plan and interview; approve later
   agents loop approve <run> [--plan edited.json]     approve a drafted plan and start
+  agents loop answer <run> <question> <answer>       answer a planner's question
+  agents loop replan <run>                           draft the plan again with your answers
   agents loop start --plan plan.json --budget 2h --yes   start a reviewed plan unattended
   agents loop status [run] [--json]                  where it stands, what done means
   agents loop list                                   every run
@@ -20,6 +22,7 @@ Options:
   --file <path>          add a document to the goal; repeatable
   --cwd <dir>            the repository (default: current directory)
   --keep-awake           keep the Mac awake while the run is going
+  --json                 plan, answer, replan, status: the run as JSON on stdout
 
 How it works: a planner splits the goal into chunks and writes the definition
 of done — observable criteria plus exact verification commands — which you
@@ -46,7 +49,7 @@ struct Args {
 
 func parseArgs(_ argv: [String]) throws -> Args {
     var a = Args()
-    let commands: Set = ["start", "plan", "approve", "status", "list", "pause", "resume", "log", "_controller"]
+    let commands: Set = ["start", "plan", "approve", "answer", "replan", "status", "list", "pause", "resume", "log", "_controller"]
     var rest = argv[...]
     if let first = rest.first, commands.contains(first) { a.command = first; rest = rest.dropFirst() }
     func value(_ flag: String) throws -> String {
@@ -78,6 +81,12 @@ func parseArgs(_ argv: [String]) throws -> Args {
 }
 
 let interactive = isatty(0) == 1 && isatty(1) == 1
+/// With --json, stdout carries only the JSON; progress goes to stderr.
+var jsonOut = false
+
+func say(_ line: String) {
+    if jsonOut { FileHandle.standardError.write(Data((line + "\n").utf8)) } else { print(line) }
+}
 
 func ask(_ prompt: String) -> String {
     print(prompt, terminator: "")
@@ -104,7 +113,7 @@ func planOnce(_ s: inout RunState, cli: String, source: SlotSource, cwd: String,
         guard let slot = pick(try source.slots(), effort: .deep, cooldowns: s.cooldowns, busy: [:], avoidSlots: avoid) else {
             throw LoopError("no signed-in slot with quota left to plan with (see: agents list, agents best)")
         }
-        print("planning with \(slot.key)…")
+        say("planning with \(slot.key)…")
         let id = "\(s.turns.count + 1)-planner"
         s.turns.append(Turn(id: id, role: .planner, chunk: nil, slot: slot.key, effort: .deep, startedAt: Date()))
         try Store.standard().save(s)
@@ -146,7 +155,7 @@ func planOnce(_ s: inout RunState, cli: String, source: SlotSource, cwd: String,
         // each remaining slot without spending the invalid-plan allowance.
         if s.turns[i].outcome != "quota" { failedPlans += 1 }
         avoid.insert(slot.key)
-        print("  \(slot.key) \(out.exit == 0 ? "returned no plan" : "failed: " + oneLine(out.tail, 160))\(failedPlans < 4 ? " — trying another slot" : "")")
+        say("  \(slot.key) \(out.exit == 0 ? "returned no plan" : "failed: " + oneLine(out.tail, 160))\(failedPlans < 4 ? " — trying another slot" : "")")
     }
     throw LoopError("four non-quota planner turns failed; see \(Store.standard().dir(s.id))/turns")
 }
@@ -161,11 +170,12 @@ func draft(_ s: inout RunState, cli: String, source: SlotSource, cwd: String) th
             if plan.goal.isEmpty { plan.goal = s.plan.goal }
             s.plan = plan
             let answered = Dictionary(uniqueKeysWithValues: s.questions.compactMap { q in q.answer.map { (q.question, $0) } })
-            s.questions = questions.map { var q = $0; q.answer = answered[q.question]; return q }
+            // The planner saw these answers, so this draft is planned with them.
+            s.questions = questions.map { var q = $0; q.answer = answered[q.question]; q.plannedWith = q.answer; return q }
             return
         }
         errors = problems
-        print("  the plan had \(problems.count) problem(s); asking for a corrected one")
+        say("  the plan had \(problems.count) problem(s); asking for a corrected one")
     }
     throw LoopError("the planner couldn't produce a valid plan:\n  " + errors.joined(separator: "\n  "))
 }
@@ -232,7 +242,7 @@ func newRun(_ a: Args, store: Store) throws -> RunState {
     guard !goal.isEmpty || !sources.isEmpty || a.plan != nil else { throw LoopError("what's the goal? agents loop \"goal\" --budget 2h") }
     let id = UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "")
     if !trackedChanges(root).isEmpty || !git(root, "ls-files", "--others", "--exclude-standard").out.isEmpty {
-        print("note: uncommitted changes in \(root) are not part of the run — it starts from \(base.prefix(10))")
+        say("note: uncommitted changes in \(root) are not part of the run — it starts from \(base.prefix(10))")
     }
     let s = RunState(
         id: id, created: Date(), repo: root, baseCommit: base, branch: "n2/loop-\(id.prefix(8))", sources: sources,
@@ -247,7 +257,7 @@ func newRun(_ a: Args, store: Store) throws -> RunState {
 
 /// Plan in a throwaway worktree of the starting commit: planners read, and
 /// the user's checkout is never where an agent runs.
-func planRun(_ s: inout RunState, store: Store, cli: String) throws {
+func planRun(_ s: inout RunState, store: Store, cli: String, interview asking: Bool = interactive) throws {
     guard let lock = store.lock(s.id) else { throw LoopError("run already has an active planner or controller") }
     defer {
         try? FileManager.default.removeItem(atPath: store.pauseFile(s.id))
@@ -259,7 +269,7 @@ func planRun(_ s: inout RunState, store: Store, cli: String) throws {
     let source = SlotSource(cli: cli)
     try draft(&s, cli: cli, source: source, cwd: dir)
     try store.save(s)
-    if interactive, interview(&s) {
+    if asking, interview(&s) {
         print("\nre-planning with your answers…")
         try draft(&s, cli: cli, source: source, cwd: dir)
     }
@@ -268,6 +278,7 @@ func planRun(_ s: inout RunState, store: Store, cli: String) throws {
 
 func approveAndStart(_ s: inout RunState, store: Store, cli: String) throws {
     guard !store.controllerRunning(s.id) else { throw LoopError("run already has an active planner or controller") }
+    if let blocker = approvalBlocker(s.questions, run: s.shortId) { throw LoopError("not approved: " + blocker) }
     recoverTurnProcesses(&s.turns, runId: s.id, store: store)
     try? FileManager.default.removeItem(atPath: store.pauseFile(s.id))
     _ = try gitOrThrow(s.repo, ["branch", s.branch, s.baseCommit])
@@ -293,6 +304,11 @@ func launchController(_ s: RunState, store: Store) throws {
 }
 
 func confirmOrDraft(_ s: inout RunState, store: Store, cli: String, yes: Bool) throws {
+    if let blocker = approvalBlocker(s.questions, run: s.shortId) {
+        _ = try writePlanFile(s)
+        print("\n" + describePlan(s, slots: nil) + "\nsaved as a draft: " + blocker)
+        return
+    }
     let source = SlotSource(cli: cli)
     print("\n" + describePlan(s, slots: try? source.slots()))
     if yes || (interactive && ask("Approve and start? [y/N] ").lowercased().hasPrefix("y")) {
@@ -303,8 +319,31 @@ func confirmOrDraft(_ s: inout RunState, store: Store, cli: String, yes: Bool) t
     }
 }
 
+/// A draft as an agent reads it: the plan, its questions, and what stands
+/// between it and approval.
+func draftJSON(_ s: RunState) throws -> String {
+    let questions: [[String: Any]] = s.questions.map { q in
+        var o: [String: Any] = ["id": q.id, "question": q.question,
+                                "options": q.options.map { ["label": $0.label, "recommended": $0.recommended] }]
+        o["answer"] = q.answer ?? NSNull()
+        o["changesPlan"] = q.changesPlan
+        return o
+    }
+    let view: [String: Any] = [
+        "run": s.shortId, "status": s.status.rawValue, "goal": s.plan.goal, "budget": human(s.budgetMs),
+        "criteria": s.plan.criteria.map { ["id": $0.id, "description": $0.description, "verification": $0.verification] },
+        "verificationCommands": s.plan.verificationCommands,
+        "chunks": s.plan.chunks.map { ["id": $0.id, "title": $0.title, "paths": $0.paths, "dependsOn": $0.dependsOn,
+                                        "effort": $0.effort.rawValue] },
+        "questions": questions,
+        "blocker": approvalBlocker(s.questions, run: s.shortId) ?? NSNull(),
+    ]
+    return String(decoding: try JSONSerialization.data(withJSONObject: view, options: [.prettyPrinted, .sortedKeys]), as: UTF8.self)
+}
+
 func main() throws {
     let a = try parseArgs(Array(CommandLine.arguments.dropFirst()))
+    jsonOut = a.json
     let store = Store.standard()
     switch a.command {
     case "start", "plan":
@@ -314,8 +353,13 @@ func main() throws {
             try loadPlanFile(file, into: &s)
             try store.save(s)
         } else {
-            print("run \(s.shortId): planning \"\(oneLine(s.plan.goal, 80))\"")
-            try planRun(&s, store: store, cli: cli)
+            say("run \(s.shortId): planning \"\(oneLine(s.plan.goal, 80))\"")
+            try planRun(&s, store: store, cli: cli, interview: interactive && !a.json)
+        }
+        if a.command == "plan" && a.json {
+            _ = try writePlanFile(s)
+            print(try draftJSON(s))
+            return
         }
         if a.command == "plan" {
             print("\n" + describePlan(s, slots: nil))
@@ -331,7 +375,32 @@ func main() throws {
         guard s.status == .draft else { throw LoopError("run \(s.shortId) is \(s.status.rawValue), not a draft") }
         if let file = a.plan { try loadPlanFile(file, into: &s) }
         if let b = a.budget { s.budgetMs = b }
+        if let blocker = approvalBlocker(s.questions, run: s.shortId) { throw LoopError("not approved: " + blocker) }
         try confirmOrDraft(&s, store: store, cli: cli, yes: a.yes || !interactive)
+    case "answer":
+        guard a.positional.count >= 3 else { throw LoopError("usage: agents loop answer <run> <question> <answer>") }
+        var s = try store.load(try store.resolve(a.positional[0]))
+        guard s.status == .draft else { throw LoopError("run \(s.shortId) is \(s.status.rawValue), not a draft") }
+        guard let i = s.questions.firstIndex(where: { $0.id == a.positional[1] }) else {
+            throw LoopError("run \(s.shortId) has no question \"\(a.positional[1])\" (it has: \(s.questions.map(\.id).joined(separator: ", ")))")
+        }
+        let reply = a.positional[2...].joined(separator: " ")
+        let q = s.questions[i]
+        // A number picks an option, as in the interactive interview.
+        s.questions[i].answer = Int(reply).flatMap { $0 >= 1 && $0 <= q.options.count ? q.options[$0 - 1].label : nil } ?? reply
+        s.log("answered", "\(q.id): \(s.questions[i].answer!)")
+        try store.save(s)
+        if a.json { print(try draftJSON(s)) }
+        else { print(approvalBlocker(s.questions, run: s.shortId) ?? "ready to approve: agents loop approve \(s.shortId)") }
+    case "replan":
+        let cli = try agentsCLI()
+        var s = try store.load(try store.resolve(a.positional.first))
+        guard s.status == .draft else { throw LoopError("run \(s.shortId) is \(s.status.rawValue), not a draft") }
+        say("run \(s.shortId): planning again with your answers")
+        try planRun(&s, store: store, cli: cli, interview: false)
+        _ = try writePlanFile(s)
+        if a.json { print(try draftJSON(s)) }
+        else { print("\n" + describePlan(s, slots: nil)); print(approvalBlocker(s.questions, run: s.shortId) ?? "ready to approve: agents loop approve \(s.shortId)") }
     case "status":
         let s = try store.load(try store.resolve(a.positional.first))
         if a.json { print(String(decoding: try Store.encoder.encode(s), as: UTF8.self)) }

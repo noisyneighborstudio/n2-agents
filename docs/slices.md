@@ -19,15 +19,7 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
 Fan-out first: any agent drives `agents loop` through a skill, and work spreads
 across every profile and lab with quota left, reviewed by another lab.
 
-1. **An agent drives a run** (`loop-agent-verbs`).
-   Behavior: `agents loop plan --json` prints the plan and its open questions
-   and exits; `agents loop answer <run> <question> <text>` replaces the
-   interactive interview; `status --json` says when a plan awaits approval.
-   Proof: loop e2e plans, answers and approves without a terminal; a missing
-   answer refuses approval.
-   Scope: no new engine behavior.
-
-2. **Route by strength and quota left, spread enforced** (`loop-routing`).
+1. **Route by strength and quota left, spread enforced** (`loop-routing`).
    Behavior: a worker slot scores lab strength x quota left; no slot takes more
    than 1.5x its fair share of chunks while another usable one has fewer.
    Each reviewed chunk records its lab's outcome (accepted first time,
@@ -37,7 +29,7 @@ across every profile and lab with quota left, reviewed by another lab.
    Proof: LoopTests for scoring, the spread cap and learned strength; loop e2e
    asserts the spread table.
 
-3. **The fan-out skill** (`n2-fanout-skill`).
+2. **The fan-out skill** (`n2-fanout-skill`).
    Behavior: a SKILL.md, linked into each profile's Claude and Codex skills,
    teaches an agent the run: state the goal, answer what it can, bring the
    plan to the user, then follow `status --json` until done or paused. Fleet
@@ -45,7 +37,7 @@ across every profile and lab with quota left, reviewed by another lab.
    Proof: a test links it into an isolated profile and checks every command it
    names exists in `agents loop --help`.
 
-4. **Fan-out trial** (`fanout-trial`).
+3. **Fan-out trial** (`fanout-trial`).
    Behavior: two real slices, started from Claude Code (batched sync fetches)
    and from Codex (a failed fetch's reason and one retry), across Default, N2,
    N2Doug, Expo and ExpoIO with the engine's 5% reserve; the user approves each
@@ -53,7 +45,7 @@ across every profile and lab with quota left, reviewed by another lab.
    interventions, quota spent and wall time.
    Proof: each run's `DONE.md` and spread table; its branch passes CI.
 
-5. **Merge a conflict with an agent, reviewed by another** (`fleet-sync-agent-merge`).
+4. **Merge a conflict with an agent, reviewed by another** (`fleet-sync-agent-merge`).
    Behavior: `fleet sync merge <id>` asks an agent with measured headroom for a
    merged version, then an agent from a different lab reviews it (Claude
    never reviews Claude's merge; a harness counts by its model's lab, and an
@@ -70,7 +62,7 @@ across every profile and lab with quota left, reviewed by another lab.
    the fake agent's recorded input is empty.
    Scope: CLI only; the panel button is the next slice.
 
-6. **"Merge with Agent" in the panel** (`fleet-sync-agent-merge-ui`).
+5. **"Merge with Agent" in the panel** (`fleet-sync-agent-merge-ui`).
    Behavior: each text conflict row offers Merge with Agent beside the two
    existing choices; a sheet shows the diff, the review and Accept or Discard.
    Only that row's button disables while agents work; it is disabled with a
@@ -78,7 +70,7 @@ across every profile and lab with quota left, reviewed by another lab.
    Proof: a Swift test holds the merge read while the rest of the panel renders
    (the AGENTS.md UI rule); accept and discard record the right outcome.
 
-7. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
+6. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
    Behavior: from the QA app, pair two disposable peers (Settings › Fleet),
    sync (with a held profile shared from Fleet settings), send work (the Send
    Work page), show its result (the Task page) and revoke (the Machine page).
@@ -87,7 +79,7 @@ across every profile and lab with quota left, reviewed by another lab.
    per step fails.
    Scope: disposable peers only; no live installation or real machines.
 
-8. **Honor Claude usage rejections** (`usage-claude-backoff`).
+7. **Honor Claude usage rejections** (`usage-claude-backoff`).
    Behavior: after a 429 from Claude usage, no reader asks that account again
    until its `Retry-After` has passed; the row stays `rate-limited` with the
    last reading and its time. Evidence: `docs/audits/claude-usage-rate-limit-spike.md`.
@@ -96,7 +88,7 @@ across every profile and lab with quota left, reviewed by another lab.
    a read after the window calls again. Break the gate once; the test fails.
    Scope: Claude only, one Mac. Codex and peer sharing excluded.
 
-9. **One Claude usage call per account at a time** (`usage-claude-single-flight`).
+8. **One Claude usage call per account at a time** (`usage-claude-single-flight`).
    Behavior: concurrent readers (tray, loop, dispatch) of one account share
    one provider call, and a reading under 60 s old is served from the journal.
    Proof: two concurrent `usage.py` runs against a held fake provider make one
@@ -105,7 +97,7 @@ across every profile and lab with quota left, reviewed by another lab.
    Scope: Claude only, one Mac. The 60 s figure is policy, not a measured
    provider window.
 
-10. **Offer skill updates across the fleet** (`fleet-skill-updates`), later.
+9. **Offer skill updates across the fleet** (`fleet-skill-updates`), later.
    Behavior: N2 notices when an installed skill has a newer version at its
    source and offers one action that updates it on every enrolled Mac; the
    Fleet panel shows which Macs are behind.

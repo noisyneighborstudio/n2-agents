@@ -108,6 +108,19 @@ import Darwin
         expect(reviewer([a, slot("codex", "B", used: 99)], of: ["codex"], avoid: ["codex|A"]) == "codex|A",
                "a lone usable account still gets its review")
 
+        // Approval waits for every answer, and for a plan drafted with any answer that changes it.
+        var q = Question(id: "where", question: "Where?", options: [.init(label: "b", recommended: true), .init(label: "c", recommended: false)])
+        expect(approvalBlocker([q], run: "r1")?.contains("agents loop answer r1") == true, "an open question blocks approval")
+        q.answer = "b"
+        expect(approvalBlocker([q], run: "r1") == nil, "the recommendation is what the plan assumed")
+        q.answer = "c"
+        expect(approvalBlocker([q], run: "r1")?.contains("agents loop replan r1") == true, "another answer needs a new draft")
+        q.plannedWith = "c"
+        expect(approvalBlocker([q], run: "r1") == nil, "a draft planned with the answer can be approved")
+        var open = Question(id: "x", question: "X?", options: [])
+        open.answer = "no preference"
+        expect(approvalBlocker([open], run: "r1") == nil, "no preference on a question without a recommendation changes nothing")
+
         let reserved = slot("claude", "Reserve", used: 96, quota: "local-reserve")
         expect(pick([reserved], effort: .deep, cooldowns: [:], busy: [:]) == nil,
                "N2 reserve stays excluded without a provider-rejection label")

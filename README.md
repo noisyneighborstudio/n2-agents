@@ -261,7 +261,16 @@ It waits by itself when every slot is out of quota until a known reset.
 
 To review a plan before anything runs, use `agents loop plan "goal" --budget
 2h`, edit the saved `plan.json` if you like, then `agents loop approve <run>
---plan plan.json`. Loops use Claude Code, Codex and Muse. Each runs headless
+--plan plan.json`.
+
+An agent can drive a run the same way, with no terminal: `agents loop plan
+"goal" --budget 2h --json` prints the plan and the planner's questions;
+`agents loop answer <run> <question> <answer>` answers one (a number picks an
+option); `agents loop replan <run>` drafts again once an answer differs from
+the recommendation. `approve` refuses, with the next command to run, until
+every question is answered and planned in.
+
+Loops use Claude Code, Codex and Muse. Each runs headless
 with its own scoped approval mode. Grok and Cursor only offer
 approve-everything modes, so the loop doesn't use them. Runs live in
 `~/.n2-agents/loops/`.

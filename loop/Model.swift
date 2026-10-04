@@ -87,6 +87,26 @@ struct Question: Codable {
     var question: String
     var options: [Option]
     var answer: String?
+    /// The answer the current plan was drafted with.
+    var plannedWith: String? = nil
+
+    /// What an empty reply means: the recommendation, else no preference.
+    var defaultAnswer: String { options.first(where: \.recommended)?.label ?? "no preference" }
+    /// Answered with something the current plan hasn't been drafted with.
+    var changesPlan: Bool { answer.map { $0 != defaultAnswer && $0 != plannedWith } ?? false }
+}
+
+/// Why a drafted plan can't be approved yet, or nil when it can.
+func approvalBlocker(_ questions: [Question], run: String) -> String? {
+    let open = questions.filter { $0.answer == nil }.map(\.id)
+    if !open.isEmpty {
+        return "the planner asked \(open.count) question(s) first: \(open.joined(separator: ", ")) — agents loop answer \(run) <question> <answer>"
+    }
+    let changed = questions.filter(\.changesPlan).map(\.id)
+    if !changed.isEmpty {
+        return "your answer to \(changed.joined(separator: ", ")) changes the plan — draft it again: agents loop replan \(run)"
+    }
+    return nil
 }
 
 struct Evidence: Codable {

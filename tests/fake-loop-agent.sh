@@ -8,6 +8,8 @@
 #   slow              workers take a minute (time to pause them)
 #   fail-b-once       the first verification rejects criterion has-b
 #   liar              the sign-off says done whatever the evidence says
+#   ask               the planner asks where b goes; replanned-with-c is
+#                     written when a prompt carries the answer c.txt
 set -eu
 if [ "${LOOP_FAKE_STRUCTURED:-}" = 1 ]; then
   exec /usr/bin/python3 "$(dirname "$0")/fake-loop-protocol.py" "$0" "$@"
@@ -48,6 +50,11 @@ fi
 
 case $role in
   planner)
+    if [ -f "$LOOP_FAKE/ask" ]; then
+      case $prompt in *"→ c.txt"*) touch "$LOOP_FAKE/replanned-with-c" ;; esac
+      echo 'N2_RESULT {"plan":{"goal":"Write a.txt and b.txt","criteria":[{"id":"has-a","description":"a.txt exists","verification":"look for a.txt"},{"id":"has-b","description":"b.txt says done","verification":"read b.txt"}],"verificationCommands":["test -f a.txt","grep -q done b.txt"],"chunks":[{"id":"a","title":"Write a","instructions":"Create a.txt","paths":["a.txt"],"criteria":["has-a"],"dependsOn":[],"effort":"light"},{"id":"b","title":"Write b","instructions":"Create b.txt","paths":["b.txt"],"criteria":["has-b"],"dependsOn":[],"effort":"deep"}]},"questions":[{"id":"where","question":"Where does b go?","options":[{"label":"b.txt","recommended":true},{"label":"c.txt","recommended":false}]}]}'
+      exit 0
+    fi
     cat <<'JSON'
 Planned.
 N2_RESULT {"plan":{"goal":"Write a.txt and b.txt","criteria":[{"id":"has-a","description":"a.txt exists","verification":"look for a.txt"},{"id":"has-b","description":"b.txt says done","verification":"read b.txt"}],"verificationCommands":["test -f a.txt","grep -q done b.txt"],"chunks":[{"id":"a","title":"Write a","instructions":"Create a.txt","paths":["a.txt"],"criteria":["has-a"],"dependsOn":[],"effort":"light"},{"id":"b","title":"Write b","instructions":"Create b.txt","paths":["b.txt"],"criteria":["has-b"],"dependsOn":[],"effort":"deep"}]},"questions":[]}
