@@ -49,6 +49,17 @@ final class Controller {
         self.s = try store.load(id)
         self.slots = SlotSource(cli: cli)
         self.dir = store.dir(id)
+        self.labs = LabRecord(path: store.root + "/lab-outcomes.jsonl")
+    }
+
+    private let labs: LabRecord
+
+    /// A chunk's result for the slot that did it, in the run and the lab record.
+    private func record(_ c: Chunk, score: Double) {
+        guard let slot = c.lastSlot else { return }
+        let o = Outcome(slot: slot, chunk: c.id, effort: c.effort, score: score, at: Date())
+        s.outcomes = (s.outcomes ?? []) + [o]
+        labs.add(o)
     }
 
     private func note(_ kind: String, _ detail: String) {
@@ -202,9 +213,15 @@ final class Controller {
 
     // MARK: - turns
 
-    private func chooseSlot(_ effort: Effort) -> Slot? {
+    /// Work so far per slot: worker turns that weren't turned away by slot trouble.
+    private var assigned: [String: Int] {
+        s.turns.filter { $0.role == .worker && !["quota", "auth", "outage"].contains($0.outcome ?? "") }
+            .reduce(into: [:]) { $0[$1.slot, default: 0] += 1 }
+    }
+
+    private func chooseWorker(_ effort: Effort) -> Slot? {
         guard let all = try? slots.slots() else { return nil }
-        return pick(all, effort: effort, cooldowns: s.cooldowns, busy: busy)
+        return pickWorker(all, effort: effort, cooldowns: s.cooldowns, busy: busy, assigned: assigned, strength: labs.strength)
     }
 
     /// Another lab than the one whose work is under review; see pickReviewer.
@@ -314,7 +331,7 @@ final class Controller {
     // MARK: - workers
 
     private func startWorker(_ id: String) -> Bool {
-        guard var c = s.chunk(id), let slot = chooseSlot(c.effort) else { return false }
+        guard var c = s.chunk(id), let slot = chooseWorker(c.effort) else { return false }
         let resume = c.workspace != nil
         if c.workspace == nil {
             let path = dir + "/work/" + c.id, branch = "n2/\(s.shortId)/\(c.id)"
@@ -443,6 +460,7 @@ final class Controller {
             c.status = .accepted
             c.mergedAs = s.lastMerge
             c.feedback = nil
+            record(c, score: c.revisions == 0 ? 1 : 0.5)
             note("merge", "\(c.id) accepted and merged (\(String(s.lastMerge?.prefix(10) ?? ""))): \(oneLine(reason))")
             return
         }
@@ -622,6 +640,7 @@ final class Controller {
             let repo = s.repo
             for o in reopen {
                 let id = str(o["chunk"])!
+                if let c = s.chunk(id) { record(c, score: 0) }
                 s.update(id) { c in
                     if let ws = c.workspace { _ = git(repo, "worktree", "remove", "--force", ws) }
                     if let b = c.branch { _ = git(repo, "branch", "-D", b) }
@@ -650,6 +669,7 @@ final class Controller {
             doc += "\n## Commands\n\n"
             for r in s.commands where r.candidate == candidate { doc += "- `\(r.command)` → exit \(r.exitCode)\n" }
         }
+        doc += "\n## Who did the work\n\n```\n\(spreadTable(s))```\n"
         try? doc.write(toFile: dir + "/DONE.md", atomically: true, encoding: .utf8)
         for c in s.plan.chunks {
             if let ws = c.workspace { _ = git(s.repo, "worktree", "remove", "--force", ws) }

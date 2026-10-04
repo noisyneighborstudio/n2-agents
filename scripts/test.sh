@@ -773,6 +773,11 @@ git -C "$repo" show "${branch}:b.txt" | grep -q done
 [ ! -e "$repo/a.txt" ] && [ "$(git -C "$repo" rev-parse --abbrev-ref HEAD)" != "$branch" ]
 [ "$(git -C "$repo" worktree list | wc -l | tr -d ' ')" = 1 ]      # scaffolding cleared away
 test -f "$loop_root/runs/$run/DONE.md"
+# Who did the work: both chunks accepted on first review, across both slots,
+# and each outcome lands in the lab record routing learns from.
+grep -Eq '^  codex \(lab\) +[0-9]+ +2 +2 +0$' "$loop_root/runs/$run/DONE.md"
+[ "$(grep -c '^  codex|' "$loop_root/runs/$run/DONE.md")" = 2 ]
+[ "$(grep -c "\"chunk\"" "$loop_root/runs/lab-outcomes.jsonl")" -ge 2 ]
 roles=$(field '" ".join(sorted(set(t["role"] for t in s["turns"])))')
 [ "$roles" = "planner supervisor verifier worker" ]
 shown=$(loop status "$run")

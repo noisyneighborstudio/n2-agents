@@ -220,10 +220,16 @@ agents loop "Add CSV export to the reports page" --file spec.md --budget 2h
    result. It asks about real ambiguities. You approve the plan; after that,
    no agent can change what done means.
 2. **Fan out.** Chunks run in parallel, each in its own git worktree, each on
-   the best slot for its rating: the strongest model for the effort, then the
-   most quota left. A slot that hits its limit, fails sign-in, or has an
+   the slot that scores best for it: the lab's strength for the chunk's effort
+   times the quota left. No slot takes more than 1.5x its fair share of the
+   work while another has less, so every profile and lab with quota pulls its
+   weight. Strength starts from a rating per lab and is then learned: each
+   reviewed chunk records how its lab did (accepted first time, after
+   revisions, or reopened by verification) in
+   `~/.n2-agents/loops/lab-outcomes.jsonl`, and after five chunks at an effort
+   that record decides. A slot that hits its limit, fails sign-in, or has an
    outage is set aside and the chunk moves on. That never counts against the
-   work.
+   work. `status` and `DONE.md` show who did the work and how it went.
 3. **Supervise.** A supervisor reviews every chunk before it is merged. It
    always comes from another lab than the chunk's worker when one is signed
    in: if that lab is out of quota, the chunk waits for it rather than being

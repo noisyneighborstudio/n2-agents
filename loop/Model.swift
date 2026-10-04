@@ -178,6 +178,8 @@ struct RunState: Codable {
     var shortId: String { String(id.prefix(8)) }
     var candidate: String? { plan.chunks.allSatisfy { $0.status == .accepted } ? lastMerge : nil }
     var lastMerge: String?
+    /// How each reviewed chunk went for the slot that did it.
+    var outcomes: [Outcome]? = nil
 
     func chunk(_ id: String) -> Chunk? { plan.chunks.first { $0.id == id } }
 

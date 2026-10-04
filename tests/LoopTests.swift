@@ -108,6 +108,39 @@ import Darwin
         expect(reviewer([a, slot("codex", "B", used: 99)], of: ["codex"], avoid: ["codex|A"]) == "codex|A",
                "a lone usable account still gets its review")
 
+        // Workers: strength x quota left, and no slot past 1.5x its fair share.
+        let hand: (String, Effort) -> Double = { lab, effort in Double(Adapter.of(lab)!.strength[effort]!) }
+        func worker(_ s: [Slot], _ effort: Effort = .standard, assigned: [String: Int] = [:],
+                    strength: @escaping (String, Effort) -> Double = hand) -> String? {
+            pickWorker(s, effort: effort, cooldowns: [:], busy: [:], assigned: assigned, strength: strength)?.key
+        }
+        let roomy = slot("codex", "Roomy", used: 10), tight = slot("claude", "Tight", used: 70)
+        expect(worker([tight, roomy]) == "codex|Roomy", "equal strength: more quota left wins")
+        expect(worker([tight, roomy], strength: { lab, _ in lab == "claude" ? 3 : 1 }) == "claude|Tight",
+               "a much stronger lab beats more quota: 3 x 0.3 > 1 x 0.9")
+        expect(worker([tight, roomy], assigned: ["codex|Roomy": 2]) == "claude|Tight",
+               "past 1.5x its fair share a slot waits while another has less")
+        expect(worker([tight, roomy], assigned: ["codex|Roomy": 2, "claude|Tight": 2]) == "codex|Roomy",
+               "level shares go back to the score")
+        let ten = (0..<10).map { slot($0 < 5 ? "claude" : "codex", "P\($0)", used: Double($0) * 5) }
+        var spread: [String: Int] = [:]
+        for _ in 0..<20 { spread[worker(ten, assigned: spread)!, default: 0] += 1 }
+        expect(spread.count == 10 && spread.values.max()! <= 3, "twenty chunks over ten slots: everyone works, nobody past 3 (\(spread))")
+        expect(worker([slot("codex", "Full", used: 97), slot("claude", "Off", used: 10, signedIn: "no")]) == nil, "unusable slots never work")
+        expect(worker([slot("codex", "Unmetered", used: nil, quota: "no-usage-api"), slot("claude", "Metered", used: 90)]) == "claude|Metered",
+               "measured capacity before unmeasured")
+
+        // Strength is learned from reviewed work once a lab has five outcomes.
+        let recordPath = NSTemporaryDirectory() + "lab-\(UUID().uuidString).jsonl"
+        defer { try? FileManager.default.removeItem(atPath: recordPath) }
+        let record = LabRecord(path: recordPath)
+        for score in [1.0, 1, 0.5, 0] { record.add(Outcome(slot: "codex|A", chunk: "c", effort: .deep, score: score, at: Date())) }
+        expect(record.strength("codex", .deep) == 3, "four outcomes: still the adapter's rating")
+        record.add(Outcome(slot: "codex|B", chunk: "d", effort: .deep, score: 0, at: Date()))
+        expect(abs(record.strength("codex", .deep) - 2.0) < 1e-9, "five outcomes averaging 0.5 measure 2.0")
+        expect(record.strength("codex", .light) == 2, "other efforts keep their rating")
+        expect(LabRecord(path: recordPath).outcomes.count == 5, "the record survives a restart")
+
         // Approval waits for every answer, and for a plan drafted with any answer that changes it.
         var q = Question(id: "where", question: "Where?", options: [.init(label: "b", recommended: true), .init(label: "c", recommended: false)])
         expect(approvalBlocker([q], run: "r1")?.contains("agents loop answer r1") == true, "an open question blocks approval")

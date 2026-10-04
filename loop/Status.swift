@@ -37,6 +37,8 @@ func describeRun(_ s: RunState, controllerAlive: Bool) -> String {
         if let p = c.problem { out += "      problem: \(oneLine(p, 140))\n" }
         else if c.status != .accepted, let f = c.feedback { out += "      next: \(oneLine(f, 140))\n" }
     }
+    let spread = spreadTable(s)
+    if !spread.isEmpty { out += "\nwho did the work:\n" + spread }
     if !live.isEmpty {
         out += "\nnow:\n"
         for t in live {
