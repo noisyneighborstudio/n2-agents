@@ -385,10 +385,7 @@ fleet_verbs=$(awk '/^cmd_fleet\(\)/{d=1} d&&/^}/{d=0} d&&/^    [a-z][a-z|-]*\)/ 
 for v in $fleet_verbs; do
   case $uh in *"
   $v"*|*"
-  $v "*) : ;; *) bad "help: documents the '$v' verb" "$uh" ; continue ;; esac
-  case $(grep -c "^    $v)\|^    $v|\||$v)\|^    $v|" fleet.sh) in 0)
-      bad "help: '$v' is dispatched" "no case arm in fleet.sh" ;;
-    *) ok "help: '$v' is documented and dispatched" ;; esac
+  $v "*) ok "help: documents the '$v' verb" ;; *) bad "help: documents the '$v' verb" "$uh" ;; esac
 done
 
 # every verb is also offered by each shell's completion, so the tab-completed
@@ -754,8 +751,22 @@ check "bootstrap: enrollment hop still verifies the host" "StrictHostKeyChecking
 check "bootstrap: enrollment hop still uses the fleet known_hosts" "UserKnownHostsFile=" "$bopts"
 check "bootstrap: enrollment hop stays non-interactive" "BatchMode=yes" "$bopts"
 check "bootstrap: every later hop pins the fleet key" "IdentitiesOnly=yes" "$nopts"
-check "enroll: the request marks itself as the bootstrap hop" "bootstrap 1" \
-  "$(grep -n 'fleet_meta_set "$b" bootstrap 1' "$repo/fleet.sh" | tr -d '\n' | sed 's/.*fleet_meta_set "\$b" //')"
+# The enrollment request itself must dial as that hop. A recording ssh sees
+# the options a fresh machine's request is sent with.
+mkdir -p "$base/bsbin"
+cat > "$base/bsbin/ssh" <<EOF
+#!/bin/sh
+printf '%s\n' "\$@" > "$base/bsbin/argv"
+exit 255
+EOF
+chmod +x "$base/bsbin/ssh"
+ssh-keygen -q -t ed25519 -N '' -f "$base/bshk" >/dev/null
+peer bsx fleet init --machine bsx >/dev/null
+raw bsx "PATH=\"$base/bsbin:\$PATH\"; fleet_enroll_request ssh 127.0.0.1 nobody /tmp code \
+  '127.0.0.1 $(awk '{print $1" "$2}' "$base/bshk.pub")' 22" >/dev/null 2>&1
+eargv=$(tr '\n' ' ' < "$base/bsbin/argv" 2>/dev/null)
+check  "enroll: the request still verifies the host" "StrictHostKeyChecking=yes" "$eargv"
+refute "enroll: the request does not pin the unissued fleet key" "IdentitiesOnly" "$eargv"
 
 # --- 27. bound-code approval grants inbound access both ways ---------------
 mark "27. bound-code approval grants inbound access both ways"
@@ -850,7 +861,6 @@ check "pending-grant: the peer is still recorded pending, not approved" "pending
   "$(raw kappa "fleet_peer_state '$A'")"
 # alpha holds inbound ssh to kappa, yet every ordinary verb is refused because
 # fleet_verify gates on approval, not on reachability.
-out=$(raw kappa "fleet_peer_state '$A'"); check "pending-grant: reachability is not approval" "pending" "$out"
 for v in ping roster status revoke; do
   pf="$base/pg.$v"; : > "$pf"
   out=$(raw alpha "fleet_envelope '$K' $v '$pf'" 2>/dev/null | raw kappa "fleet_serve" 2>&1); rc=$?
@@ -1668,9 +1678,9 @@ if [ "$reqs" = "$reqs2" ]; then ok "framing: bad framing is refused before any h
 else bad "framing: bad framing is refused before any handler runs" "handler ran ($reqs -> $reqs2)"; fi
 
 # A reply the client cannot decode must not be reported as a successful call.
-out=$(raw fr2 'fleet_call() { :; }; ctmp=$(mktemp -d); printf "OK\n!!not base64!!\n" > $ctmp/rep
-  if tail -n +2 $ctmp/rep | base64 -d > $ctmp/out 2>/dev/null; then echo DECODED; else echo REFUSED; fi' 2>&1)
-check "framing: an undecodable reply body does not decode clean" "REFUSED" "$out"
+out=$(raw fr2 "fleet_carry() { printf 'OK\n!!not base64!!\n'; }; fleet_call '$FR1' ping; echo rc=\$?" 2>&1)
+check "framing: an undecodable reply body is refused" "ERR malformed-reply" "$out"
+check "framing: an undecodable reply is a failed call" "rc=1" "$out"
 
 # --- ssh option isolation --------------------------------------------------
 # The host pin is only exclusive if nothing else can answer for the host key
