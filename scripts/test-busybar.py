@@ -240,7 +240,8 @@ class BusyBarTests(unittest.TestCase):
         self.assertEqual(FakeBar.requests[0][0], 'DELETE')
 
 
-    SLIDES = json.dumps([{'title': 'Work - Claude Code', 'left': 82}, {'title': 'Home - Codex', 'left': 0}])
+    SLIDES = json.dumps([{'profile': 'Work', 'lab': 'Claude Code', 'left': 82},
+                         {'profile': 'Home', 'lab': 'Codex', 'left': 0}])
 
     def test_gauge_fills_in_proportion(self):
         def cells(fraction):

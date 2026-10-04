@@ -255,14 +255,20 @@ def gauge(fraction, color):
 
 
 def slide(s, x, shown):
+    """The gauge, then the profile with the figure at its right, over the lab."""
     left, color = s['left'], tone(s['left'])
+    figure = '%d%%' % rnd(left * shown)
+    figure_width = rnd(4.6 * len(figure)) - 1
+    scroll = {'scroll_rate': 1500, 'scroll_start_delay': 1500, 'z_index': 1}
     return [{'id': 'gauge', 'type': 'xpmbitmap', 'data': gauge(left / 100 * shown, color), 'x': x, 'y': 0,
              'z_index': 1},
-            {'id': 'figure', 'type': 'text', 'text': '%d%%' % rnd(left * shown), 'font': 'bold', 'color': color,
-             'align': 'top_left', 'x': x + 19, 'y': -1, 'z_index': 1},
-            {'id': 'title', 'type': 'text', 'text': device_text(s['title']), 'font': 'small', 'color': '#FFFFFFFF',
-             'align': 'bottom_left', 'x': x + 19, 'y': 15, 'width': W - 19, 'scroll_rate': 1500,
-             'scroll_start_delay': 1500, 'z_index': 1}]
+            {'id': 'profile', 'type': 'text', 'text': device_text(s['profile']).upper(), 'font': 'tiny',
+             'color': '#9E9E9EFF', 'align': 'top_left', 'x': x + 19, 'y': 0,
+             'width': W - 19 - figure_width - 4, **scroll},
+            {'id': 'figure', 'type': 'text', 'text': figure, 'font': 'small', 'color': color,
+             'align': 'top_left', 'x': x + W - 1 - figure_width, 'y': -1, 'z_index': 1},
+            {'id': 'lab', 'type': 'text', 'text': device_text(s['lab']), 'font': 'small', 'color': '#FFFFFFFF',
+             'align': 'bottom_left', 'x': x + 19, 'y': 15, 'width': W - 19, **scroll}]
 
 
 def slideshow_frames(slides):
@@ -469,7 +475,7 @@ def main(argv=None):
     sub = parser.add_subparsers(dest='command', required=True)
     sub.add_parser('status')
     sub.add_parser('sync')
-    sub.add_parser('slideshow', help='JSON slides on stdin: [{"title": ..., "left": 0-100}]')
+    sub.add_parser('slideshow', help='JSON slides on stdin: [{"profile": ..., "lab": ..., "left": 0-100}]')
     for name in ('on', 'off'):
         switch = sub.add_parser(name)
         switch.add_argument('--address')
@@ -508,7 +514,7 @@ def main(argv=None):
         elif args.command == 'sync':
             sync(store, bar, state)
         elif args.command == 'slideshow':
-            slides = [{'title': str(s['title']), 'left': max(0, min(100, int(s['left'])))}
+            slides = [{'profile': str(s['profile']), 'lab': str(s['lab']), 'left': max(0, min(100, int(s['left'])))}
                       for s in json.loads(sys.stdin.read() or '[]')]
             card = current_card(state, time.time())
             if slides:

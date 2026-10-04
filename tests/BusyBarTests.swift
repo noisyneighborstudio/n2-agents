@@ -36,12 +36,13 @@ import Foundation
         // Unmetered labs have nothing to say.
         check(watch.update([("Home|opencode", .unmetered), ("Home|opencode", .unmetered)]), [], "unmetered")
         // The usage show: slots with a reading, out as 0, the rest left out.
-        let slides = BusyBarSlide.from([("Work - Claude Code", .ready(left: 82)), ("Work - Codex", .out(back: nil)),
-                                        ("Home - Grok", .low(left: 8)), ("Home - opencode", .unmetered),
-                                        ("Home - Muse", .signedOut), ("Home - Cursor", .checking),
-                                        ("Home - Codex", .checkFailed)])
-        if slides != [BusyBarSlide(title: "Work - Claude Code", left: 82), BusyBarSlide(title: "Work - Codex", left: 0),
-                      BusyBarSlide(title: "Home - Grok", left: 8)] { fatalError("slides: \(slides)") }
+        let slides = BusyBarSlide.from([("Work", "Claude Code", .ready(left: 82)), ("Work", "Codex", .out(back: nil)),
+                                        ("Home", "Grok", .low(left: 8)), ("Home", "opencode", .unmetered),
+                                        ("Home", "Muse", .signedOut), ("Home", "Cursor", .checking),
+                                        ("Home", "Codex", .checkFailed)])
+        if slides != [BusyBarSlide(profile: "Work", lab: "Claude Code", left: 82),
+                      BusyBarSlide(profile: "Work", lab: "Codex", left: 0),
+                      BusyBarSlide(profile: "Home", lab: "Grok", left: 8)] { fatalError("slides: \(slides)") }
 
         // On the hour, once: not at :30, not twice in the hour's first minute.
         var gate = HourlyGate()

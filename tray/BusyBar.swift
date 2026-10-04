@@ -62,15 +62,16 @@ extension UsageTier {
 
 /// One slide of the hourly usage show.
 struct BusyBarSlide: Codable, Equatable {
-    let title: String
+    let profile: String
+    let lab: String
     let left: Int
 
     /// Every slot with a reading, in panel order. A slot that is out shows 0;
     /// unmetered, signed-out and unknown slots have nothing to show.
-    static func from(_ slots: [(title: String, status: SlotStatus)]) -> [BusyBarSlide] {
-        slots.compactMap { title, status in
-            if case .out = status { return BusyBarSlide(title: title, left: 0) }
-            return status.left.map { BusyBarSlide(title: title, left: $0) }
+    static func from(_ slots: [(profile: String, lab: String, status: SlotStatus)]) -> [BusyBarSlide] {
+        slots.compactMap { profile, lab, status in
+            if case .out = status { return BusyBarSlide(profile: profile, lab: lab, left: 0) }
+            return status.left.map { BusyBarSlide(profile: profile, lab: lab, left: $0) }
         }
     }
 }
@@ -117,12 +118,12 @@ final class BusyBarAlerts {
 
     func update(_ model: PanelModel) {
         guard let data = model.data else { return }
-        var titles: [String: String] = [:], shown: [(title: String, status: SlotStatus)] = []
+        var titles: [String: String] = [:], shown: [(profile: String, lab: String, status: SlotStatus)] = []
         let slots = data.profiles.flatMap { p in
             data.slotted(p).map { v -> (id: String, status: SlotStatus) in
                 let id = "\(p.name)|\(v.id)", status = model.status(p.name, v).status
                 titles[id] = "\(p.name) - \(v.label)"
-                shown.append((titles[id]!, status))
+                shown.append((p.name, v.label, status))
                 if case .out(let back?) = status {
                     titles[id]! += ", back \(SlotStatus.day(back)) \(back.formatted(.dateTime.hour().minute()))"
                 }

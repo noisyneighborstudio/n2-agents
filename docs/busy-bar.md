@@ -24,8 +24,9 @@ on the bar dismisses it.
 ## Every hour
 
 On the hour, the bar plays a usage show: one slide per profile and lab with a
-reading, in panel order. Each slides in, its ring sweeps up to what is left
-while the figure counts up, holds about two seconds, and slides out. The ring's
+reading, in panel order: the ring, the profile with the figure at its right,
+and the lab below. Each slides in, its ring sweeps up to what is left while the
+figure counts up, holds about two seconds, and slides out. The ring's
 color matches the cards: green above 50%, blue to 25%, yellow to 10%, amber
 below that, red when out. Unmetered, signed-out and unchecked slots are left
 out. Afterwards, a standing OUT or SIGNED OUT card comes back without its
