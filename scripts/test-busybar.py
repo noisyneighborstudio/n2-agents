@@ -24,9 +24,13 @@ busybar.FRAME_MS = 0  # the schedule is the device's frame rate, not behavior un
 class FakeBar(http.server.BaseHTTPRequestHandler):
     requests = []
     reply = 200
+    unplugged = False
 
     def handle_any(self):
         body = self.rfile.read(int(self.headers.get('Content-Length') or 0))
+        if FakeBar.unplugged:  # the connection drops with no reply
+            self.close_connection = True
+            return
         FakeBar.requests.append((self.command, self.path, dict(self.headers), body))
         payload = b'{"api_semver":"27.5.0"}' if self.path.endswith('/version') else b'{}'
         self.send_response(FakeBar.reply)
@@ -55,6 +59,7 @@ class BusyBarTests(unittest.TestCase):
         self.root = tempfile.mkdtemp()
         FakeBar.requests = []
         FakeBar.reply = 200
+        FakeBar.unplugged = False
 
     def run_cli(self, *args, stdin=''):
         out = io.StringIO()
@@ -161,7 +166,66 @@ class BusyBarTests(unittest.TestCase):
         self.run_cli('alert', 'out', 'Work - Codex', '--key', 'Work|codex')
         log = Path(self.root, 'busybar.log').read_text()
         self.assertIn('hello failed', log)
-        self.assertIn('alert out failed', log)
+        self.assertNotIn('alert out failed', log, 'one line per outage, not one per alert')
+
+    def log(self):
+        return Path(self.root, 'busybar.log').read_text().splitlines()
+
+    def test_a_card_missed_while_unplugged_goes_up_on_reconnect(self):
+        self.turn_on()
+        FakeBar.unplugged = True
+        self.run_cli('alert', 'out', 'Work - Codex', '--key', 'Work|codex')
+        self.run_cli('sync')
+        self.run_cli('sync')
+        self.assertEqual([l.split(' ', 1)[1].split(':')[0] for l in self.log()], ['alert out failed', 'unreachable'])
+        FakeBar.unplugged = False
+        self.run_cli('sync')
+        self.assertTrue(self.log()[-1].endswith(' reconnected'))
+        card = self.draws()[-1]
+        self.assertEqual((card['elements'][1]['text'], card['elements'][1]['timeout'], card['led_notification_color']),
+                         ('OUT', 0, '#FF1744FF'))
+        FakeBar.requests = []
+        self.run_cli('sync')
+        self.assertEqual([(m, p) for m, p, _, _ in FakeBar.requests], [('GET', '/api/version')], 'nothing to redo')
+
+    def age_card(self, seconds):
+        path = Path(self.root, 'busybar.state')
+        state = json.loads(path.read_text())
+        state['card']['at'] -= seconds
+        path.write_text(json.dumps(state))
+
+    def test_a_timed_card_comes_back_for_what_is_left_of_its_time(self):
+        self.turn_on()
+        FakeBar.unplugged = True
+        self.run_cli('alert', 'low', 'Work - Codex', '--key', 'Work|codex')
+        self.age_card(100)
+        FakeBar.unplugged = False
+        self.run_cli('sync')
+        self.assertEqual(self.draws()[-1]['elements'][0]['timeout'], 20)
+
+    def test_a_card_that_ran_out_while_away_is_cleared_not_replayed(self):
+        self.turn_on()
+        FakeBar.unplugged = True
+        self.run_cli('alert', 'low', 'Work - Codex', '--key', 'Work|codex')
+        self.age_card(130)
+        FakeBar.unplugged = False
+        FakeBar.requests = []
+        self.run_cli('sync')
+        self.assertEqual([m for m, _, _, _ in FakeBar.requests], ['GET', 'DELETE'])
+
+    def test_signing_in_while_unplugged_leaves_nothing_to_restore(self):
+        self.turn_on()
+        FakeBar.unplugged = True
+        self.run_cli('alert', 'signedout', 'Home - Claude Code', '--key', 'Home|claude')
+        self.run_cli('clear', 'Home|claude')
+        FakeBar.unplugged = False
+        FakeBar.requests = []
+        self.run_cli('sync')
+        self.assertEqual([m for m, _, _, _ in FakeBar.requests], ['GET', 'DELETE'], 'the stale card is cleared')
+
+    def test_sync_does_nothing_while_off(self):
+        self.run_cli('sync')
+        self.assertEqual(FakeBar.requests, [])
 
     def test_a_rejected_secret_reads_unauthorized(self):
         self.turn_on()

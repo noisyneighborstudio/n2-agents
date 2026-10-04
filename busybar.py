@@ -5,10 +5,13 @@
     busybar.py --root R on|off [--address A] [--token-stdin]
     busybar.py --root R alert KIND TITLE [--key K]
     busybar.py --root R clear KEY
+    busybar.py --root R sync                      reconnect, and restore the card
 
 The switch, address and secret live in R/busybar.json (0600). With the switch
-off, alert and clear do nothing. A bar that can't be reached costs one request
-timeout; the failure goes to R/busybar.log and the caller carries on.
+off, alert, clear and sync do nothing. A bar that can't be reached costs one
+request timeout and the caller carries on: the card waits in R/busybar.state
+and `sync` (the app runs it every 30 s) puts it up when the bar answers again.
+Dropping and returning are each logged once to R/busybar.log.
 """
 import argparse
 import fcntl
@@ -291,9 +294,22 @@ class Bar:
             return 'unreachable', ''
 
 
-def make_card(kind, title_text):
-    word, color, timeout = HELLO if kind == 'hello' else KINDS[kind]
-    return {'label': word, 'color': color, 'timeout': timeout, 'title': device_text(title_text)}
+def make_card(kind, title_text, timeout=None):
+    word, color, default = HELLO if kind == 'hello' else KINDS[kind]
+    return {'label': word, 'color': color, 'timeout': default if timeout is None else timeout,
+            'title': device_text(title_text)}
+
+
+def current_card(state, now):
+    """The card that should be on screen now, with what is left of its time."""
+    card = state.get('card')
+    if not card:
+        return None
+    timeout = KINDS[card['kind']][2]
+    left = timeout - (now - card['at'])
+    if timeout and left < 1:
+        return None
+    return make_card(card['kind'], card['title'], math.ceil(left) if timeout else 0)
 
 
 # --- state -------------------------------------------------------------------
@@ -302,7 +318,7 @@ class Store:
     def __init__(self, root):
         self.root = root
         self.config_path = os.path.join(root, 'busybar.json')
-        # The persistent card on screen, so only its own resolution clears it.
+        # The card that should be on screen, and whether the bar last answered.
         self.state_path = os.path.join(root, 'busybar.state')
 
     def config(self):
@@ -314,31 +330,25 @@ class Store:
         return {'enabled': value.get('enabled') is True, 'address': str(value.get('address', '')),
                 'token': str(value.get('token', ''))}
 
-    def save(self, config):
+    def save(self, config, path=None):
         os.makedirs(self.root, exist_ok=True)
         fd, temporary = tempfile.mkstemp(dir=self.root)
         try:
             os.fchmod(fd, 0o600)
             with os.fdopen(fd, 'w') as f:
                 json.dump(config, f)
-            os.replace(temporary, self.config_path)
+            os.replace(temporary, path or self.config_path)
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)
 
-    def showing(self):
+    def state(self):
         try:
             with open(self.state_path) as f:
-                return f.read().strip()
-        except OSError:
-            return ''
-
-    def show(self, key):
-        if key:
-            with open(self.state_path, 'w') as f:
-                f.write(key)
-        elif os.path.exists(self.state_path):
-            os.unlink(self.state_path)
+                value = json.load(f)
+        except (OSError, ValueError):
+            value = {}
+        return value if isinstance(value, dict) else {}
 
     def lock(self):
         """One sequence at a time, or two alerts would interleave their frames."""
@@ -352,14 +362,31 @@ class Store:
             f.write('%s %s\n' % (time.strftime('%Y-%m-%dT%H:%M:%S'), message))
 
 
-def attempt(store, what, action):
-    """Runs one device sequence; a failure is logged, never raised."""
+def attempt(store, state, what, action):
+    """Runs one device sequence. `connected` records whether the screen shows
+    what the state says; only the first failure after it did is logged."""
     try:
         action()
-        return True
+        ok = True
     except (OSError, ValueError) as e:
-        store.log('%s failed: %s' % (what, e))
-        return False
+        if state.get('connected') is not False:
+            store.log('%s failed: %s' % (what, e))
+        ok = False
+    state['connected'] = ok
+    return ok
+
+
+def sync(store, bar, state):
+    """Checks the bar. While the screen is behind (the bar was away, or refused
+    a draw during a focus session), puts back the card that should be up with
+    what is left of its time, or clears ours when none should be."""
+    reached = bar.probe()[0] == 'connected'
+    if reached != state.get('reached') and (state.get('reached') is not None or not reached):
+        store.log('reconnected' if reached else 'unreachable')
+    state['reached'] = reached
+    if reached and state.get('connected') is not True:
+        card = current_card(state, time.time())
+        attempt(store, state, 'restore', lambda: bar.play(card) if card else bar.clear())
 
 
 def status_lines(store):
@@ -376,6 +403,7 @@ def main(argv=None):
     parser.add_argument('--root', required=True)
     sub = parser.add_subparsers(dest='command', required=True)
     sub.add_parser('status')
+    sub.add_parser('sync')
     for name in ('on', 'off'):
         switch = sub.add_parser(name)
         switch.add_argument('--address')
@@ -392,35 +420,41 @@ def main(argv=None):
     if args.command == 'status':
         print('\n'.join(status_lines(store)))
         return 0
+    config = store.config()
     if args.command in ('on', 'off'):
-        config = store.config()
         config['enabled'] = args.command == 'on'
         if args.address is not None:
             config['address'] = args.address.strip()
         if args.token_stdin:
             config['token'] = sys.stdin.readline().strip()
         store.save(config)
-        with store.lock():
-            bar = Bar(config)
-            store.show('')
-            if config['enabled']:
-                attempt(store, 'hello', lambda: bar.play(make_card('hello', 'N2 Agents')))
-            else:
-                attempt(store, 'clear', bar.clear)
-        print('\n'.join(status_lines(store)))
-        return 0
-
-    config = store.config()
-    if not config['enabled']:
+    elif not config['enabled']:
         return 0
     bar = Bar(config)
     with store.lock():
-        if args.command == 'alert':
-            card = make_card(args.kind, args.title)
-            if attempt(store, 'alert %s' % args.kind, lambda: bar.play(card)):
-                store.show(args.key if card['timeout'] == 0 else '')
-        elif store.showing() == args.key and attempt(store, 'clear', bar.clear):
-            store.show('')
+        state = store.state()
+        if args.command in ('on', 'off'):
+            state['card'] = None
+            if config['enabled']:
+                attempt(store, state, 'hello', lambda: bar.play(make_card('hello', 'N2 Agents')))
+            else:
+                attempt(store, state, 'clear', bar.clear)
+        elif args.command == 'sync':
+            sync(store, bar, state)
+        elif args.command == 'alert':
+            # Recorded first, so a bar that is away gets it when it's back.
+            state['card'] = {'kind': args.kind, 'title': args.title, 'key': args.key, 'at': time.time()}
+            attempt(store, state, 'alert %s' % args.kind, lambda: bar.play(make_card(args.kind, args.title)))
+        else:
+            card = state.get('card') or {}
+            # Only a card that stays is cleared: a timed one runs out on its own.
+            if card.get('key') == args.key and KINDS[card['kind']][2] == 0:
+                state['card'] = None
+                if state.get('connected') is not False:
+                    attempt(store, state, 'clear', bar.clear)
+        store.save(state, store.state_path)
+    if args.command in ('on', 'off'):
+        print('\n'.join(status_lines(store)))
     return 0
 
 

@@ -16,7 +16,7 @@ chmod +x "$probe_root/login-shell"
 swiftc -swift-version 5 -O -target "$(uname -m)-apple-macosx13.0" \
   tray/SettingsWindowView.swift "${1:-tray/FleetSyncSettings.swift}" \
   tray/FleetSettingsLoader.swift tray/BusyBarSettings.swift tray/GlassWindow.swift tray/Motion.swift tray/Ink.swift \
-  tray/UpdateChannel.swift tray/ShellPath.swift tests/FleetSettingsUITests.swift \
+  tray/UpdateChannel.swift tray/ShellPath.swift tray/FleetModel.swift tests/FleetSettingsUITests.swift \
   -o "$app/Contents/MacOS/SettingsProbe"
 echo "Fixture app: $app"
 SHELL="$probe_root/login-shell" N2_SETTINGS_TEST_DIR="$probe_root" \

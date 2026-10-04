@@ -27,7 +27,8 @@ finishes or waits on you.
 
 Turn on **Settings › BUSY Bar › Send events to BUSY Bar**, or run
 `agents busybar on`. Over USB that's all: the bar plays a hello, and the line
-under the switch says whether it was reached.
+under the switch says whether it's connected. Plugging the bar in later is
+fine: the app connects on its own.
 
 For Wi-Fi or the cloud, open **Connection**, enter an address and secret, and
 save. From a terminal, `agents busybar on --address <address> --token-stdin`
@@ -50,12 +51,21 @@ cards, the device calls and the intro animation; the settings live in
 `~/.n2-agents/busybar.json` (mode 0600). Nothing runs inside any lab or
 profile config.
 
-The bar can't be reached, rejects the secret, or refuses a draw during a BUSY
-focus session: the failure is appended to `~/.n2-agents/busybar.log` and the
-app carries on. Each request times out after 3 s, and a sequence stops at its
-first failure.
-
 Device facts this relies on (API 27.5.0): a draw adds to the screen, so each
 card clears the app's elements first; element timeouts are whole seconds, so
 the intro is one draw per 50 ms frame; elements are mounted hidden in z-order
 before anything moves, since one added mid-sequence draws on top for a frame.
+
+## When the bar isn't there
+
+The switch can stay on whether or not a bar is attached. Every 30 s the app
+checks for it (`agents busybar sync`). A card that comes up while the bar is
+unplugged, asleep, off the network, or refusing draws during a BUSY focus
+session waits in `~/.n2-agents/busybar.state`. When the bar answers again, the
+card goes up for whatever time it has left; OUT and SIGNED OUT stay up until
+they're resolved. If nothing should be showing, any stale N2 card is cleared.
+Settings shows "Not connected" until the bar answers, and refreshes every 10 s.
+
+Each request times out after 3 s, and a sequence stops at its first failure.
+`~/.n2-agents/busybar.log` gets one line when the bar drops and one when it
+returns, not one per card.
