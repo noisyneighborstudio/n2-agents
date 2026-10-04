@@ -57,6 +57,7 @@ JSON
   worker)
     if [ -f "$LOOP_FAKE/slow" ]; then
       trap 'echo "$chunk" >> "$LOOP_FAKE/terminated"; exit 143' TERM
+      : > "$LOOP_FAKE/trapped-$chunk"   # a pause from here on reaches the trap
       sleep 60
     fi
     n=$(( $(cat "$LOOP_FAKE/n" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$LOOP_FAKE/n"

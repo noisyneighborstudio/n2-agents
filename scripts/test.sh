@@ -847,7 +847,9 @@ quota_proof 2 waiting
 
 # Pause stops running agents at once and keeps their work; resume finishes.
 new_loop slow
-for _ in {1..100}; do [ "$(field 'len([t for t in s["turns"] if t["role"] == "worker" and not t.get("endedAt") and t.get("pgid")])')" = 2 ] && break; sleep 0.2; done
+# A worker's group exists before its shell sets the TERM trap; pause only once
+# both have, or a TERM in that window kills one without a record.
+for _ in {1..100}; do [ "$(field 'len([t for t in s["turns"] if t["role"] == "worker" and not t.get("endedAt") and t.get("pgid")])')" = 2 ] && [ -e "$loop_fake/trapped-a" ] && [ -e "$loop_fake/trapped-b" ] && break; sleep 0.2; done
 pgids=(${(f)"$(field '"\n".join(str(t["pgid"]) for t in s["turns"] if t["role"] == "worker")')"})
 loop pause "$run" >/dev/null
 [ "$(field 's["status"]')" = PAUSED ]
