@@ -81,6 +81,10 @@ struct SettingsWindowView: View {
                         }
                     }
 
+                    section("BUSY BAR", subtitle: "Show usage running low, running out, coming back and lost sign-ins on a BUSY Bar.") {
+                        BusyBarSettings()
+                    }
+
                     section("COMMAND LINE", subtitle: "Use agents and profile commands from any terminal.") {
                         HStack(spacing: 12) {
                             VStack(alignment: .leading, spacing: 2) {
