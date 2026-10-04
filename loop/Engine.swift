@@ -134,6 +134,7 @@ final class Controller {
     private var reserveMs: Int { min(30 * 60_000, s.budgetMs / 4) }
 
     private func tick() {
+        reviewWait = []
         if s.status == .waiting {
             guard let at = s.retryAt, Date() >= at else { return }
             s.status = .running
@@ -147,11 +148,11 @@ final class Controller {
 
         for c in s.plan.chunks where room() && c.problem != nil && !chunkJobs.contains(c.id) {
             guard remainingMs > 0 else { break }
-            if startTurn(.supervisor, chunk: c.id, effort: .deep, avoid: c.lastSlot) { started = true } else { starved = true }
+            if startTurn(.supervisor, chunk: c.id, effort: .deep, of: c.lastSlot) { started = true } else { starved = true }
         }
         for c in s.plan.chunks where room() && c.problem == nil && c.status == .reviewing && !chunkJobs.contains(c.id) {
             guard remainingMs > 0 else { break }
-            if startTurn(.supervisor, chunk: c.id, effort: .deep, avoid: c.lastSlot) { started = true } else { starved = true }
+            if startTurn(.supervisor, chunk: c.id, effort: .deep, of: c.lastSlot) { started = true } else { starved = true }
         }
         var working = s.plan.chunks.filter { $0.status == .working || chunkJobs.contains($0.id) }
         for c in s.plan.chunks where room() && c.problem == nil && c.status == .pending && !chunkJobs.contains(c.id) {
@@ -180,7 +181,10 @@ final class Controller {
     /// Nothing usable right now. Wait for the earliest cooldown if there is
     /// one; otherwise a human has to sign something in.
     private func waitForCapacity() {
-        let all = (try? slots.slots(fresh: true)) ?? []
+        var all = (try? slots.slots(fresh: true)) ?? []
+        // A review waits for its lab only, though others are free.
+        let review = reviewWait.sorted().joined(separator: " or ")
+        if !reviewWait.isEmpty { all = all.filter { reviewWait.contains($0.vendor) } }
         // The refresh may observe recovery after selection used a cached
         // restriction. Let the next tick select from this fresh reading.
         if pick(all, effort: .standard, cooldowns: s.cooldowns, busy: [:]) != nil { return }
@@ -188,19 +192,32 @@ final class Controller {
         if let next {
             s.status = .waiting
             s.retryAt = next
-            note("capacity", "every usable slot is out of quota or cooling down; retrying at \(iso.string(from: next))")
+            note("capacity", (review.isEmpty ? "every usable slot is" : "a review needs \(review), which is")
+                 + " out of quota or cooling down; retrying at \(iso.string(from: next))")
         } else {
-            s.pause("no signed-in slot with quota left (see: agents list, agents best)")
+            s.pause(review.isEmpty ? "no signed-in slot with quota left (see: agents list, agents best)"
+                                   : "a review needs \(review) and no \(review) slot has quota left; no lab reviews its own work (see: agents best)")
         }
     }
 
     // MARK: - turns
 
-    private func chooseSlot(_ effort: Effort, avoid: String?) -> Slot? {
+    private func chooseSlot(_ effort: Effort) -> Slot? {
         guard let all = try? slots.slots() else { return nil }
-        let vendors: Set<String> = avoid.map { [String($0.split(separator: "|")[0])] } ?? []
-        return pick(all, effort: effort, cooldowns: s.cooldowns, busy: busy, avoidVendors: vendors)
+        return pick(all, effort: effort, cooldowns: s.cooldowns, busy: busy)
     }
+
+    /// Another lab than the one whose work is under review; see pickReviewer.
+    private func chooseReviewer(_ effort: Effort, of slotKeys: [String]) -> Slot? {
+        guard let all = try? slots.slots() else { return nil }
+        let labs = Set(slotKeys.compactMap { $0.split(separator: "|").first.map(String.init) })
+        let slot = pickReviewer(all, effort: effort, cooldowns: s.cooldowns, busy: busy, notFrom: labs, avoidSlots: Set(slotKeys))
+        if slot == nil { reviewWait.formUnion(reviewLabs(all, notFrom: labs)) }
+        return slot
+    }
+
+    /// Labs a review is waiting on this tick: their capacity, not anyone's, ends the wait.
+    private var reviewWait: Set<String> = []
 
     private func newTurn(_ role: Role, chunk: String?, slot: Slot, effort: Effort) -> Turn {
         let id = "\(s.turns.count + 1)-\(role.rawValue)\(chunk.map { "-" + $0 } ?? "")"
@@ -297,7 +314,7 @@ final class Controller {
     // MARK: - workers
 
     private func startWorker(_ id: String) -> Bool {
-        guard var c = s.chunk(id), let slot = chooseSlot(c.effort, avoid: nil) else { return false }
+        guard var c = s.chunk(id), let slot = chooseSlot(c.effort) else { return false }
         let resume = c.workspace != nil
         if c.workspace == nil {
             let path = dir + "/work/" + c.id, branch = "n2/\(s.shortId)/\(c.id)"
@@ -363,8 +380,8 @@ final class Controller {
 
     // MARK: - supervisor
 
-    private func startTurn(_ role: Role, chunk id: String, effort: Effort, avoid: String?) -> Bool {
-        guard let c = s.chunk(id), let ws = c.workspace, let slot = chooseSlot(effort, avoid: avoid) else { return false }
+    private func startTurn(_ role: Role, chunk id: String, effort: Effort, of worker: String?) -> Bool {
+        guard let c = s.chunk(id), let ws = c.workspace, let slot = chooseReviewer(effort, of: worker.map { [$0] } ?? []) else { return false }
         if let problem = c.problem {
             launch(.supervisor, chunk: id, slot: slot, effort: effort, cwd: ws,
                    prompt: diagnosePrompt(s, c, problem: problem), timeout: Limits.review) { t, out in
@@ -515,7 +532,9 @@ final class Controller {
             }
             return true
         }
-        guard let slot = chooseSlot(.deep, avoid: nil) else { return false }
+        // The sign-off comes from another lab than the verifier's, so two labs agree on done.
+        let verifiers = evidence.values.compactMap { e in s.turns.first { $0.id == e.turn }?.slot }
+        guard let slot = chooseReviewer(.deep, of: verifiers) else { return false }
         launch(.supervisor, chunk: nil, slot: slot, effort: .deep, cwd: path,
                prompt: signoffPrompt(s, candidate: candidate, evidence: Array(evidence.values).sorted { $0.criterion < $1.criterion }, results: results),
                timeout: Limits.review) { t, out in

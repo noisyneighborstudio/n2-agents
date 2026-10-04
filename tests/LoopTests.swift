@@ -91,6 +91,23 @@ import Darwin
         expect(pick([slot("claude", "A", used: 10), slot("claude", "B", used: 10)], effort: .standard, cooldowns: [:], busy: ["claude|A": 1])?.key == "claude|B",
                "work spreads across equal slots")
 
+        // Review: another lab whenever one is signed in, and a wait rather than self-review.
+        let claude = slot("claude", "Work", used: 10), codex = slot("codex", "Home", used: 50)
+        func reviewer(_ s: [Slot], of labs: Set<String>, avoid: Set<String> = []) -> String? {
+            pickReviewer(s, effort: .deep, cooldowns: [:], busy: [:], notFrom: labs, avoidSlots: avoid)?.key
+        }
+        expect(reviewer([claude, codex], of: ["claude"]) == "codex|Home", "Claude's work goes to Codex, though Claude has more quota")
+        expect(reviewer([claude, slot("codex", "Home", used: 97)], of: ["claude"]) == nil,
+               "another lab out of quota means waiting, never self-review")
+        expect(reviewer([claude, codex], of: ["codex"]) == "claude|Work", "a sign-off goes to the lab that didn't verify")
+        expect(reviewLabs([claude, slot("codex", "Home", used: 97)], notFrom: ["claude"]) == ["codex"], "the wait names the lab it needs")
+        expect(reviewer([claude, slot("codex", "Home", used: 10, signedIn: "no")], of: ["claude"]) == "claude|Work",
+               "a lab that isn't signed in can't review; one lab reviews within itself")
+        let a = slot("codex", "A", used: 10), b = slot("codex", "B", used: 60)
+        expect(reviewer([a, b], of: ["codex"], avoid: ["codex|A"]) == "codex|B", "within one lab, another account reviews")
+        expect(reviewer([a, slot("codex", "B", used: 99)], of: ["codex"], avoid: ["codex|A"]) == "codex|A",
+               "a lone usable account still gets its review")
+
         let reserved = slot("claude", "Reserve", used: 96, quota: "local-reserve")
         expect(pick([reserved], effort: .deep, cooldowns: [:], busy: [:]) == nil,
                "N2 reserve stays excluded without a provider-rejection label")

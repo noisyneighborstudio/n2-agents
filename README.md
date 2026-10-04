@@ -224,14 +224,17 @@ agents loop "Add CSV export to the reports page" --file spec.md --budget 2h
    most quota left. A slot that hits its limit, fails sign-in, or has an
    outage is set aside and the chunk moves on. That never counts against the
    work.
-3. **Supervise.** A supervisor, on a different lab where one is signed in,
-   reviews every chunk before it is merged. It accepts it, sends it back with
+3. **Supervise.** A supervisor reviews every chunk before it is merged. It
+   always comes from another lab than the chunk's worker when one is signed
+   in: if that lab is out of quota, the chunk waits for it rather than being
+   reviewed by its own lab. With one lab signed in, another account reviews. It accepts it, sends it back with
    specific feedback, or stops for you. A chunk that stalls gets a diagnosis:
    a new approach, extra chunks, or a question for you. A repeat is never a
    new approach.
 4. **Done.** Once everything is merged, the loop runs the commands, then a
-   fresh verifier checks every criterion on that exact commit, and the
-   supervisor signs off. A failed criterion reopens only the chunks behind
+   fresh verifier checks every criterion on that exact commit, and a
+   supervisor from another lab than the verifier's signs off, so two labs
+   agree on done. A failed criterion reopens only the chunks behind
    it. The run is `DONE` only when every criterion and every command passed
    on the final commit. Nobody's claim of "finished" counts, the
    supervisor's included.
