@@ -68,7 +68,16 @@ final class Controller {
         fflush(stdout)
     }
 
-    private func save() { try? store.save(s) }
+    /// Every status change reaches the controller log, pauses and their reasons included.
+    private var loggedStatus: RunStatus?
+    private func save() {
+        if s.status != loggedStatus {
+            loggedStatus = s.status
+            print("[\(iso.string(from: Date()))] status: \(s.status.rawValue)\(s.reason.map { " — " + $0 } ?? "")")
+            fflush(stdout)
+        }
+        try? store.save(s)
+    }
 
     // MARK: - lifecycle
 

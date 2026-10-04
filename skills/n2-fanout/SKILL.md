@@ -63,11 +63,14 @@ agents loop approve <run> [--plan <edited plan.json>] [--budget 3h]
 ## 4. Follow it
 
 ```sh
-agents loop status <run> --json   # status: RUNNING, WAITING, PAUSED or DONE
+agents loop wait <run> --json     # blocks until a merge, repair, wait, pause or DONE
 agents loop status <run>          # readable: criteria, chunks, who did the work
 ```
 
-Check every few minutes; tell the user when chunks merge, not every poll.
+Run `wait` again after each answer; it returns `status` (RUNNING, WAITING,
+PAUSED or DONE), `reason` and the new `events`. Tell the user when chunks
+merge or a repair starts, not on every return. If `controllerRunning` is
+false while RUNNING, `agents loop resume <run>`.
 
 - `WAITING`: every usable slot is out of quota until `retryAt`. It resumes on
   its own; say when.

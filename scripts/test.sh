@@ -783,6 +783,9 @@ roles=$(field '" ".join(sorted(set(t["role"] for t in s["turns"])))')
 [ "$roles" = "planner supervisor verifier worker" ]
 shown=$(loop status "$run")
 [[ $shown == *"DONE"* && $shown == *"✓ has-a"* && $shown == *"✓ grep -q done b.txt"* ]]
+# A finished run answers wait at once, and the log says how it ended.
+[ "$(loop wait "$run" --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')" = DONE ]
+grep -q '] status: DONE' "$loop_root/runs/$run/controller.log"
 loop list | grep -q "${run[1,8]}  DONE"
 
 # An agent drives a run without a terminal: the plan and its questions as
@@ -877,7 +880,18 @@ quota_proof 2 waiting
 new_loop slow
 for _ in {1..100}; do [ "$(field 'len([t for t in s["turns"] if t["role"] == "worker" and not t.get("endedAt") and t.get("pgid")])')" = 2 ] && break; sleep 0.2; done
 pgids=(${(f)"$(field '"\n".join(str(t["pgid"]) for t in s["turns"] if t["role"] == "worker")')"})
+# Whoever is waiting on the run hears about the pause, with its reason.
+loop wait "$run" --json --timeout 2m > "$loop_root/waited.json" &
+waiter=$!
 loop pause "$run" >/dev/null
+wait $waiter
+python3 - "$loop_root/waited.json" <<'PYWAIT'
+import json,sys
+w=json.load(open(sys.argv[1]))
+assert w["status"]=="PAUSED" and w["reason"].startswith("paused by you"), w
+assert any(e["kind"]=="paused" for e in w["events"]), w
+PYWAIT
+grep -q '] status: PAUSED — paused by you' "$loop_root/runs/$run/controller.log"
 [ "$(field 's["status"]')" = PAUSED ]
 [[ "$(field 's["reason"]')" == "paused by you"* ]]
 [ "$(field '{t["outcome"] for t in s["turns"] if t["role"] == "worker"}')" = "{'interrupted'}" ] || { field '[{k: t.get(k) for k in ("id", "role", "outcome", "note", "startedAt", "endedAt", "pgid")} for t in s["turns"] if t["role"] == "worker"]' >&2; exit 1; }

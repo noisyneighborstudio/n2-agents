@@ -250,7 +250,8 @@ agents loop status [run]           # what done means, and how far along each chu
 agents loop pause [run]            # stops running agents now; their work stays in the worktrees
 agents loop resume [run]           # carries on from exactly there
 agents loop resume [run] --budget 4h   # …with a larger total budget
-agents loop log [run] -f           # the controller's log
+agents loop wait [run]             # blocks until something happens: a merge, a repair, a pause, done
+agents loop log [run] -f           # the controller's log, every status change included
 agents loop list
 ```
 

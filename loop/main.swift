@@ -11,6 +11,7 @@ agents loop — fan a goal out across your slots until its definition of done ho
   agents loop replan <run>                           draft the plan again with your answers
   agents loop start --plan plan.json --budget 2h --yes   start a reviewed plan unattended
   agents loop status [run] [--json]                  where it stands, what done means
+  agents loop wait [run] [--timeout 30m] [--json]    block until a merge, repair, pause, wait or done
   agents loop list                                   every run
   agents loop pause [run]                            stop turns now; all work is kept
   agents loop resume [run] [--budget 4h]             continue; --budget sets a new total
@@ -22,7 +23,8 @@ Options:
   --file <path>          add a document to the goal; repeatable
   --cwd <dir>            the repository (default: current directory)
   --keep-awake           keep the Mac awake while the run is going
-  --json                 plan, answer, replan, status: the run as JSON on stdout
+  --json                 plan, answer, replan, status, wait: JSON on stdout
+  --timeout <duration>   wait: return after this long with nothing new (default 30m)
 
 How it works: a planner splits the goal into chunks and writes the definition
 of done — observable criteria plus exact verification commands — which you
@@ -45,11 +47,12 @@ struct Args {
     var yes = false
     var json = false
     var follow = false
+    var timeout: Int?
 }
 
 func parseArgs(_ argv: [String]) throws -> Args {
     var a = Args()
-    let commands: Set = ["start", "plan", "approve", "answer", "replan", "status", "list", "pause", "resume", "log", "_controller"]
+    let commands: Set = ["start", "plan", "approve", "answer", "replan", "status", "wait", "list", "pause", "resume", "log", "_controller"]
     var rest = argv[...]
     if let first = rest.first, commands.contains(first) { a.command = first; rest = rest.dropFirst() }
     func value(_ flag: String) throws -> String {
@@ -66,6 +69,7 @@ func parseArgs(_ argv: [String]) throws -> Args {
             a.concurrency = n
         case "--file": a.files.append(try value(arg))
         case "--plan": a.plan = try value(arg)
+        case "--timeout": a.timeout = try parseDuration(try value(arg))
         case "--cwd": a.cwd = try value(arg)
         case "--keep-awake": a.keepAwake = true
         case "--yes": a.yes = true
@@ -341,6 +345,47 @@ func draftJSON(_ s: RunState) throws -> String {
     return String(decoding: try JSONSerialization.data(withJSONObject: view, options: [.prettyPrinted, .sortedKeys]), as: UTF8.self)
 }
 
+/// The events worth telling someone about: work merged, a repair, a wait
+/// for quota, a pause, done.
+func newsworthy(_ e: Event) -> Bool {
+    ["merge", "done", "paused", "capacity"].contains(e.kind) || (e.kind == "supervisor" && e.detail.hasPrefix("repair"))
+}
+
+/// Block until the run has news, then print it: the events since the call,
+/// and where the run stands. A paused, finished or orphaned run answers at once.
+func waitForNews(store: Store, id: String, timeoutMs: Int, json: Bool) throws {
+    let first = try store.load(id)
+    let mark = first.events.last
+    let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1000)
+    var s = first
+    var news: [Event] = []
+    while true {
+        let alive = store.controllerRunning(id)
+        let tail: ArraySlice<Event>
+        if let mark, let i = s.events.lastIndex(where: { $0.at == mark.at && $0.kind == mark.kind && $0.detail == mark.detail }) {
+            tail = s.events[(i + 1)...]
+        } else {
+            tail = s.events[...]
+        }
+        news = tail.filter(newsworthy)
+        let settled = [.paused, .done, .draft].contains(s.status) || ([.running, .waiting].contains(s.status) && !alive)
+        if settled || !news.isEmpty || s.status != first.status || Date() >= deadline { break }
+        usleep(1_000_000)
+        s = try store.load(id)
+    }
+    let orphaned = [.running, .waiting].contains(s.status) && !store.controllerRunning(id)
+    if json {
+        var o: [String: Any] = ["run": s.shortId, "status": s.status.rawValue, "controllerRunning": store.controllerRunning(id),
+                                "events": news.map { ["at": iso.string(from: $0.at), "kind": $0.kind, "detail": $0.detail] }]
+        o["reason"] = s.reason ?? NSNull()
+        o["retryAt"] = s.retryAt.map { iso.string(from: $0) } ?? NSNull()
+        print(String(decoding: try JSONSerialization.data(withJSONObject: o, options: [.prettyPrinted, .sortedKeys]), as: UTF8.self))
+    } else {
+        for e in news { print("\(iso.string(from: e.at)) \(e.kind): \(e.detail)") }
+        print("status: \(s.status.rawValue)\(s.reason.map { " — " + $0 } ?? "")\(orphaned ? " (controller not running — agents loop resume \(s.shortId))" : "")")
+    }
+}
+
 func main() throws {
     let a = try parseArgs(Array(CommandLine.arguments.dropFirst()))
     jsonOut = a.json
@@ -405,6 +450,8 @@ func main() throws {
         let s = try store.load(try store.resolve(a.positional.first))
         if a.json { print(String(decoding: try Store.encoder.encode(s), as: UTF8.self)) }
         else { print(describeRun(s, controllerAlive: store.controllerRunning(s.id)), terminator: "") }
+    case "wait":
+        try waitForNews(store: store, id: try store.resolve(a.positional.first), timeoutMs: a.timeout ?? 30 * 60_000, json: a.json)
     case "list":
         print(listRuns(store))
     case "pause":
