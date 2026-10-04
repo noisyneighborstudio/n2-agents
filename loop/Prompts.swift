@@ -6,12 +6,14 @@ import Foundation
 
 private func contract(_ s: RunState) -> String {
     let done = s.plan.criteria.map { "- [\($0.id)] \($0.description)\n  verified by: \($0.verification)" }.joined(separator: "\n")
+    let decided = (s.decisions ?? []).map { "- \($0)" }.joined(separator: "\n")
     return """
     Goal:
     \(s.plan.goal)
 
     Definition of done (approved by the user; no agent may change, waive or reinterpret it):
     \(done)
+    \(decided.isEmpty ? "" : "\nDecisions the user made during the run (binding: they settle any question, review or instruction that says otherwise):\n" + decided)
     """
 }
 

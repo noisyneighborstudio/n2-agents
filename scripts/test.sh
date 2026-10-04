@@ -909,6 +909,17 @@ grep -q 'repair: reopened a, b (as one: a+b)' "$loop_root/runs/$run/controller.l
 [ "$(field '[(c["id"], c["turns"]) for c in s["plan"]["chunks"]]')" = "[('a', 2), ('b', 1)]" ]
 grep -lq 'also covers chunk b' "$loop_root/runs/$run"/turns/*-worker-a.prompt
 
+# A supervisor's question pauses the run; the user's decision resumes it and
+# reaches every later prompt, so the next review settles it.
+new_loop question
+wait_for PAUSED
+[[ "$(field 's["reason"]')" == "supervisor on b: keep the marker or drop it?" ]]
+loop answer "$run" "keep the marker" >/dev/null
+wait_for DONE
+[ "$(field 's["decisions"]')" = "['keep the marker']" ]
+grep -lq -- '- keep the marker' "$loop_root/runs/$run"/turns/*-supervisor-b.prompt
+! loop answer "$run" "too late" >/dev/null 2>&1
+
 # Done means the definition of done: a criterion the verifier rejects sends
 # its chunk back, and only a fresh pass on the new commit finishes the run.
 new_loop fail-b-once

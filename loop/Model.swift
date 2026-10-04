@@ -180,6 +180,8 @@ struct RunState: Codable {
     var lastMerge: String?
     /// How each reviewed chunk went for the slot that did it.
     var outcomes: [Outcome]? = nil
+    /// The user's answers to a paused run, in order; every later prompt carries them.
+    var decisions: [String]? = nil
 
     func chunk(_ id: String) -> Chunk? { plan.chunks.first { $0.id == id } }
 

@@ -8,6 +8,7 @@ agents loop — fan a goal out across your slots until its definition of done ho
   agents loop plan "goal" --budget 2h                plan and interview; approve later
   agents loop approve <run> [--plan edited.json]     approve a drafted plan and start
   agents loop answer <run> <question> <answer>       answer a planner's question
+  agents loop answer <run> "<decision>"              answer a paused run's question and resume
   agents loop replan <run>                           draft the plan again with your answers
   agents loop start --plan plan.json --budget 2h --yes   start a reviewed plan unattended
   agents loop status [run] [--json]                  where it stands, what done means
@@ -386,6 +387,27 @@ func waitForNews(store: Store, id: String, timeoutMs: Int, json: Bool) throws {
     }
 }
 
+/// Continue a paused or orphaned run from where it stopped.
+func resumeRun(store: Store, id: String, budget: Int?) throws {
+    var s = try store.load(id)
+    guard !store.controllerRunning(id) else { throw LoopError("run \(s.shortId) is already running") }
+    guard s.status != .done else { throw LoopError("run \(s.shortId) is done — its result is on branch \(s.branch)") }
+    guard s.status != .draft else { throw LoopError("run \(s.shortId) is a draft — approve it: agents loop approve \(s.shortId)") }
+    if let b = budget {
+        guard b > s.usedMs else { throw LoopError("the new total must exceed the \(human(s.usedMs)) already used") }
+        s.budgetMs = b
+    }
+    s.status = .running
+    s.reason = nil
+    s.retryAt = nil
+    // A human resuming is the material change: fresh chances for what had stalled.
+    s.signatures = s.signatures.filter { !$0.key.hasPrefix("unusable:") && $0.key != "slot-failures" }
+    s.log("resumed", "budget \(human(s.budgetMs)), \(human(s.usedMs)) used")
+    try store.save(s)
+    try launchController(s, store: store)
+    print("resumed loop \(s.shortId) — agents loop status \(s.shortId)")
+}
+
 func main() throws {
     let a = try parseArgs(Array(CommandLine.arguments.dropFirst()))
     jsonOut = a.json
@@ -422,8 +444,24 @@ func main() throws {
         if let b = a.budget { s.budgetMs = b }
         if let blocker = approvalBlocker(s.questions, run: s.shortId) { throw LoopError("not approved: " + blocker) }
         try confirmOrDraft(&s, store: store, cli: cli, yes: a.yes || !interactive)
+    case "answer" where a.positional.count == 2:
+        let id = try store.resolve(a.positional[0])
+        var s = try store.load(id)
+        guard s.status == .paused, !store.controllerRunning(id) else {
+            throw LoopError("run \(s.shortId) is \(s.status.rawValue); a decision answers a paused run (a draft's questions take: answer <run> <question> <answer>)")
+        }
+        let decision = a.positional[1].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !decision.isEmpty else { throw LoopError("the decision is empty") }
+        s.decisions = (s.decisions ?? []) + [decision]
+        s.log("decided", decision)
+        // The decision is the material change: a chunk stopped at the revision cap gets one more try.
+        for i in s.plan.chunks.indices where s.plan.chunks[i].status != .accepted && s.plan.chunks[i].revisions >= Limits.maxRevisions {
+            s.plan.chunks[i].revisions = Limits.maxRevisions - 1
+        }
+        try store.save(s)
+        try resumeRun(store: store, id: id, budget: a.budget)
     case "answer":
-        guard a.positional.count >= 3 else { throw LoopError("usage: agents loop answer <run> <question> <answer>") }
+        guard a.positional.count >= 3 else { throw LoopError("usage: agents loop answer <run> <question> <answer>, or for a paused run: agents loop answer <run> \"<decision>\"") }
         var s = try store.load(try store.resolve(a.positional[0]))
         guard s.status == .draft else { throw LoopError("run \(s.shortId) is \(s.status.rawValue), not a draft") }
         guard let i = s.questions.firstIndex(where: { $0.id == a.positional[1] }) else {
@@ -475,26 +513,8 @@ func main() throws {
         }
         print(describeRun(try store.load(id), controllerAlive: false), terminator: "")
     case "resume":
-        let cli = try agentsCLI()
-        _ = cli
-        let id = try store.resolve(a.positional.first)
-        var s = try store.load(id)
-        guard !store.controllerRunning(id) else { throw LoopError("run \(s.shortId) is already running") }
-        guard s.status != .done else { throw LoopError("run \(s.shortId) is done — its result is on branch \(s.branch)") }
-        guard s.status != .draft else { throw LoopError("run \(s.shortId) is a draft — approve it: agents loop approve \(s.shortId)") }
-        if let b = a.budget {
-            guard b > s.usedMs else { throw LoopError("the new total must exceed the \(human(s.usedMs)) already used") }
-            s.budgetMs = b
-        }
-        s.status = .running
-        s.reason = nil
-        s.retryAt = nil
-        // A human resuming is the material change: fresh chances for what had stalled.
-        s.signatures = s.signatures.filter { !$0.key.hasPrefix("unusable:") && $0.key != "slot-failures" }
-        s.log("resumed", "budget \(human(s.budgetMs)), \(human(s.usedMs)) used")
-        try store.save(s)
-        try launchController(s, store: store)
-        print("resumed loop \(s.shortId) — agents loop status \(s.shortId)")
+        _ = try agentsCLI()
+        try resumeRun(store: store, id: try store.resolve(a.positional.first), budget: a.budget)
     case "log":
         let id = try store.resolve(a.positional.first)
         let log = store.controllerLog(id)

@@ -9,6 +9,8 @@
 #   fail-b-once       the first verification rejects criterion has-b
 #   liar              the sign-off says done whatever the evidence says
 #   coupled           b depends on a, and the first sign-off reopens both
+#   question          b's reviewer pauses with a question until a decision
+#                     reaches its prompt
 #   ask               the planner asks where b goes; replanned-with-c is
 #                     written when a prompt carries the answer c.txt
 set -eu
@@ -73,7 +75,12 @@ JSON
     ;;
   supervisor)
     case $prompt in
-      *"Review one chunk"*) echo 'N2_RESULT {"decision":"accept","summary":"looks right"}' ;;
+      *"Review one chunk"*)
+        if [ -f "$LOOP_FAKE/question" ] && [ "$chunk" = b ] && [ "${prompt#*Decisions the user made}" = "$prompt" ]; then
+          echo 'N2_RESULT {"decision":"pause","summary":"keep the marker or drop it?","feedback":"keep the marker or drop it?"}'
+        else
+          echo 'N2_RESULT {"decision":"accept","summary":"looks right"}'
+        fi ;;
       *"answer for the result"*)
         if [ -f "$LOOP_FAKE/coupled" ] && [ ! -f "$LOOP_FAKE/coupled-repaired" ]; then
           touch "$LOOP_FAKE/coupled-repaired"

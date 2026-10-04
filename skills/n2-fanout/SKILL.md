@@ -76,8 +76,10 @@ false while RUNNING, `agents loop resume <run>`.
   its own; say when.
 - `PAUSED`: read `reason`. Budget spent: ask the user for more, then
   `agents loop resume <run> --budget <new total>`. A question from the
-  supervisor or a failure that keeps repeating: bring it to the user, then
-  `agents loop resume <run>`.
+  supervisor: answer it if the user already settled it, otherwise ask them,
+  then `agents loop answer <run> "<decision>"`, which records it for every
+  later worker and reviewer and resumes. A failure that keeps repeating:
+  bring it to the user, then `agents loop resume <run>`.
 - To stop: `agents loop pause <run>`. Work so far is kept.
 
 ## 5. Report
