@@ -9,6 +9,7 @@ struct FleetPage: View {
     @ObservedObject var model: PanelModel
     let actions: PanelActions
     let data: PanelData
+    @FocusState private var focusedCard: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,8 +32,10 @@ struct FleetPage: View {
                         VStack(spacing: 8) {
                             ForEach(data.profiles, id: \.name) { p in
                                 ProfileCard(profile: p, data: data, model: model, actions: actions)
+                                    .focused($focusedCard, equals: p.name)
                             }
                         }
+                        .arrowFocus(data.profiles.map(\.name), $focusedCard)
                         .padding(.horizontal, 12).padding(.vertical, 2)
                         RecentSection(model: model, actions: actions)
                             .padding(.horizontal, 12).padding(.top, 10)
@@ -58,6 +61,7 @@ private struct AppHeader: View {
     @ObservedObject var model: PanelModel
     let actions: PanelActions
     let data: PanelData
+    @State private var activeMenu = MenuAnchor()
 
     var body: some View {
         let tally = model.tally
@@ -79,7 +83,11 @@ private struct AppHeader: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help(String(localized: "Choose the profile new sessions use", comment: "App header: Active switch help"))
+                .menuAnchor(activeMenu)
+                .help(ActiveMenu.title(data.snapshot) == nil
+                      ? String(localized: "Labs use different profiles: each card says which labs it is active for. Choose a profile to use it for every lab.",
+                               comment: "App header: Mixed explained")
+                      : String(localized: "Choose the profile new sessions use", comment: "App header: Active switch help"))
             }
             Spacer(minLength: 8)
             HStack(spacing: 10) {
@@ -108,7 +116,7 @@ private struct AppHeader: View {
         .frame(height: 56)
     }
 
-    /// Per profile, then a submenu per lab; the native menu, popped at the pointer.
+    /// Per profile, then a submenu per lab; the native menu, under the switch.
     private func popUpActive() {
         let menu = ActiveMenu(snapshot: data.snapshot, profiles: data.profiles)
         var items: [NSMenuItem] = menu.profiles.map { c in
@@ -124,7 +132,7 @@ private struct AppHeader: View {
                 })
             }
         }
-        popUp(items)
+        popUp(items, under: activeMenu)
     }
 
     private func pair(_ symbol: String, _ count: Int, _ ink: Color, _ label: String) -> some View {
@@ -150,6 +158,7 @@ private struct NextBestButton: View {
     @ObservedObject var model: PanelModel
     let data: PanelData
     let actions: PanelActions
+    @State private var anytimeMenu = MenuAnchor()
 
     var body: some View {
         switch pick {
@@ -159,11 +168,12 @@ private struct NextBestButton: View {
                     if let v = data.snapshot.vendor(vendorID) {
                         LabMark(vendor: v, size: 14).foregroundStyle(Ink.logo)
                     }
-                    Text(verbatim: detail(profile, vendorID))
+                    Text(verbatim: detail(profile, vendorID, lab: false))
                         .font(.system(size: 12)).monospacedDigit().foregroundStyle(Ink.secondary).lineLimit(1)
                 }
             }
             .buttonStyle(PressableStyle(radius: 11, scale: 0.97))
+            .accessibilityLabel(String(localized: "Open next best, \(detail(profile, vendorID))", comment: "Open next best: VoiceOver"))
             .help(String(localized: "The next signed-in slot with room, in rotation — no lab is favoured",
                          comment: "Open next best help"))
         case .allMaxed(let firstBack)?:
@@ -175,7 +185,7 @@ private struct NextBestButton: View {
                             actions.openSession(profile: p.name, vendor: v.id, terminal: nil)
                         }
                     }
-                })
+                }, under: anytimeMenu)
             } label: {
                 shape(symbol: "hourglass", fill: Ink.amber, title: String(localized: "Everything is out", comment: "Open next best when every lab is out")) {
                     if let firstBack {
@@ -185,6 +195,7 @@ private struct NextBestButton: View {
                 }
             }
             .buttonStyle(PressableStyle(radius: 11, scale: 0.97))
+            .menuAnchor(anytimeMenu)
         case .usageUnavailable?:
             Button { actions.retryUsage() } label: {
                 shape(symbol: "arrow.clockwise", fill: Ink.secondary, title: String(localized: "Usage unavailable", comment: "Open next best when nothing could be read")) {
@@ -202,12 +213,15 @@ private struct NextBestButton: View {
     }
 
     /// "Cursor · Default · 100%": the lab, where, and what's left when known.
-    private func detail(_ profile: String, _ vendorID: String) -> String {
+    /// On screen the logo already names the lab; a lab name and a profile
+    /// don't both fit beside the title.
+    private func detail(_ profile: String, _ vendorID: String, lab: Bool = true) -> String {
         let label = data.snapshot.vendor(vendorID)?.label ?? vendorID
+        let parts = (lab ? [label] : []) + [profile]
         guard let v = data.snapshot.vendor(vendorID), let left = model.status(profile, v).status.left else {
-            return "\(label) · \(profile)"
+            return parts.joined(separator: " · ")
         }
-        return "\(label) · \(profile) · \(SlotStatus.percent(left))"
+        return (parts + [SlotStatus.percent(left)]).joined(separator: " · ")
     }
 
     private func shape<Trailing: View>(symbol: String, fill: Color,
@@ -238,6 +252,7 @@ private struct MachineHeader: View {
     @ObservedObject var model: PanelModel
     let actions: PanelActions
     let profiles: Int
+    @State private var addMenu = MenuAnchor()
 
     var body: some View {
         HStack(spacing: 7) {
@@ -254,12 +269,13 @@ private struct MachineHeader: View {
                 popUp([ClosureItem(String(localized: "New Profile…", comment: "Add menu"), symbol: "person.badge.plus") { actions.newProfile() },
                        ClosureItem(String(localized: "Add a Mac…", comment: "Add menu: pair another Mac, in Settings"), symbol: "desktopcomputer") {
                            actions.showSettings()
-                       }])
+                       }], under: addMenu)
             } label: {
                 Image(systemName: "plus").font(.system(size: 12, weight: .semibold))
                     .frame(width: 22, height: 22).contentShape(Rectangle())
             }
             .buttonStyle(PressableStyle(radius: 6))
+            .menuAnchor(addMenu)
             .help(String(localized: "New profile or another Mac", comment: "Machine header: add menu"))
             .accessibilityLabel(String(localized: "Add", comment: "Machine header: add menu"))
         }
@@ -302,6 +318,13 @@ private struct ProfileCard: View {
     let actions: PanelActions
 
     private var isActive: Bool { data.snapshot.active == profile.name }
+    /// "Active for 5 labs" names them on hover.
+    private var badgeHelp: String {
+        let labs = ActiveMenu.activeLabs(profile, data.snapshot)
+        guard !isActive, labs.count > 1 else { return "" }
+        return String(localized: "New \(labs.map(\.label).formatted(.list(type: .and))) sessions start in \(profile.name)",
+                      comment: "Profile card while labs differ: which labs it is active for")
+    }
     private var addable: Bool { data.snapshot.installedVendors.contains { profile.slots[$0.id] == nil } }
 
     var body: some View {
@@ -311,11 +334,12 @@ private struct ProfileCard: View {
                 HStack(spacing: 8) {
                     ProfileDot(name: profile.name)
                     Text(verbatim: profile.name).font(.system(size: 14, weight: .semibold)).tracking(-0.14).lineLimit(1)
-                    if isActive {
-                        Text("Active", comment: "The profile new sessions use")
-                            .font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Ink.secondary)
+                    if let badge = ActiveMenu.badge(profile, data.snapshot) {
+                        Text(verbatim: badge)
+                            .font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Ink.secondary).lineLimit(1)
                             .padding(.horizontal, 6).frame(height: 16)
                             .background(RoundedRectangle(cornerRadius: 5).fill(Ink.Tone.neutral.wash(dark: 0.08, light: 0.06)))
+                            .help(badgeHelp)
                     }
                     Spacer(minLength: 6)
                     Text(verbatim: note.text).font(.system(size: 11.5)).foregroundStyle(note.ink).lineLimit(1)
@@ -329,20 +353,26 @@ private struct ProfileCard: View {
             .contentShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(PressableStyle(radius: 12, fill: Ink.surface, card: true))
-        .accessibilityLabel(String(localized: "\(profile.name) profile, \(note.text)", comment: "Profile card"))
+        .opens { model.push(.profile(profile.name)) }
+        .accessibilityLabel(([String(localized: "\(profile.name) profile", comment: "Profile card"),
+                              ActiveMenu.badge(profile, data.snapshot), note.text] as [String?]).compactMap { $0 }.joined(separator: ", "))
+        // Every item names the profile: the menu opens at the pointer, which
+        // may have left the card it came from by the time you read it.
         .contextMenu {
             if !isActive {
                 Button { actions.setActive(profile: profile.name, vendor: nil) } label: {
-                    Label("Make Active for All Labs", systemImage: "checkmark.circle")
+                    Label("Make “\(profile.name)” Active for All Labs", systemImage: "checkmark.circle")
                 }
             }
             if addable {
-                Button { actions.addVendor(profile: profile.name) } label: { Label("Add Lab…", systemImage: "plus") }
+                Button { actions.addVendor(profile: profile.name) } label: {
+                    Label("Add a Lab to “\(profile.name)”…", systemImage: "plus")
+                }
             }
             if !profile.isDefault {
                 Divider()
                 Button(role: .destructive) { actions.deleteProfile(profile.name) } label: {
-                    Label("Delete Profile…", systemImage: "trash")
+                    Label("Delete “\(profile.name)”…", systemImage: "trash")
                 }
             }
         }
@@ -424,10 +454,11 @@ private struct FleetFooter: View {
             icon("arrow.clockwise", String(localized: "Refresh", comment: "Footer: re-read usage"), turning: model.usageLoading) {
                 actions.retryUsage()
             }
-            TimelineView(.periodic(from: .now, by: 30)) { _ in
+            // A fixed origin: a schedule started at .now restarts on every
+            // re-render, and the label never moves while the panel is busy.
+            TimelineView(.periodic(from: .distantPast, by: 15)) { context in
                 if let at = model.refreshedAt {
-                    Text("Updated \(at, format: .relative(presentation: .numeric, unitsStyle: .wide))",
-                         comment: "Footer: when usage was last read")
+                    Text(verbatim: updatedAgo(at, now: context.date))
                 } else if model.usageLoading {
                     Text("Reading usage…", comment: "Footer: first usage read running")
                 }

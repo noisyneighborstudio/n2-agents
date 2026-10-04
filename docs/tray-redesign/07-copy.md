@@ -70,9 +70,7 @@
 | config.files / config / appData | FILES / Config / App data |
 | config.reveal / copy / copied | Reveal in Finder / Copy / Copied |
 | config.signInAgain / signOut | Sign in again… / Sign out of {provider} |
-| toast.half | {provider} · half left |
-| toast.quarter | {provider} · 25% left |
-| toast.low | {provider} · 10% left |
+| toast.left | {provider} · {n}% left (half, quarter and low tiers; n is what is actually left) |
 | toast.out | {provider} is out |
 | toast.pace.lasts | At this pace it lasts until the reset, {time}. |
 | toast.pace.ahead | You're ahead of pace. At this rate it runs out {time}. |

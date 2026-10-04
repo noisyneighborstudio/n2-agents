@@ -89,16 +89,24 @@ Blocked on authorization:
 
 ## Noticed
 
+- Making a profile Active for all labs (`agents use Work`, the Active menu and
+  the card menu) gives it a slot for every lab it didn't hold: in the
+  walkthrough fixture, Work gained Cursor, opencode and Muse, two of them
+  signed out, and its card turned to "2 signed out". Decide whether `use`
+  should only switch the labs the profile holds.
+
+- AXShowMenu on a profile card (VoiceOver's "show menu") opens its context
+  menu near the top of the panel, not at the card; a right-click opens it at
+  the pointer as expected. SwiftUI's `.contextMenu` places it.
+
+- The panel's scroll area refuses AXScrollDownByPage / AXScrollUpByPage and
+  exposes no vertical scroll bar (`.scrollIndicators(.never)`), so assistive
+  tools can't page it; wheel and trackpad scrolling work. Check with
+  VoiceOver before changing it.
+
 - Sync still spends about 30 ms of shell forks per address in sync_scope_ok on
   each side (1,500 files: 103 s dry run). Moving scope evaluation into the
   manifest process would remove most of it.
-
-- The menu bar icon still gauges the lowest measured slot across every
-  profile; the redesign wants the worst slot of the active profile in the
-  status inks (docs/tray-redesign/03-states.md). No slice owns it yet.
-
-- Arrow keys don't yet move between Fleet cards or Profile rows (Tab and
-  Return do). docs/tray-redesign/02-screens.md asks for it.
 
 - Open next best can still pick an unmetered slot when nothing metered has
   room: it mirrors the CLI's rotation. The redesign's acceptance list says it
@@ -141,7 +149,7 @@ Blocked on authorization:
   and make the app treat a running account reset as finished.
 
 - test-fleet-auth-manage.py's SIGINT cancel case allows 5s for exit and failed
-  twice (2026-09-28, 2026-09-29) with three test groups running on one Mac; it
+  three times (2026-09-28, 2026-09-29, 2026-10-02) with other work on the Mac; it
   passes alone. Runners share each Mac, so capture exit receipts if it recurs in CI.
 
 - The inherited full-suite quota fixture fails intermittently (main saw it at

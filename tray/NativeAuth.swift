@@ -124,7 +124,9 @@ struct NativeAuthView: View {
 #if canImport(SwiftTerm)
             AuthConsole(session: session)
                 .id(ObjectIdentifier(session))
+                .padding(10)
                 .frame(height: 240)
+                .background(Color.black)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             Button("Paste code") { session.pasteCode() }
                 .disabled(!session.isRunning)

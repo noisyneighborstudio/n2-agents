@@ -91,25 +91,80 @@ struct FittingScroll<Content: View>: View {
     @ViewBuilder let content: Content
     @State private var contentHeight: CGFloat = 0
 
+    /// How far the content has scrolled up, in points.
+    @State private var scrolled: CGFloat = 0
+
+    /// The fade over the last points of a list that runs on below.
+    static var fade: CGFloat { 28 }
+
     var body: some View {
         let measured = content.background(GeometryReader { g in
             Color.clear.preference(key: ContentHeight.self, value: g.size.height)
+                .preference(key: ScrollOffset.self, value: -g.frame(in: .named(Self.space)).minY)
         })
         Group {
             if contentHeight > maxHeight {
                 // No scroller gutter: legacy scrollers would narrow every card.
-                ScrollView(.vertical) { measured }.frame(height: maxHeight).scrollIndicators(.never)
+                // With more below, the bottom edge fades out rather than
+                // cutting a row in half against the footer.
+                let more = contentHeight - scrolled > maxHeight + 1
+                ScrollView(.vertical) { measured }
+                    .coordinateSpace(name: Self.space)
+                    .frame(height: maxHeight).scrollIndicators(.never)
+                    .mask {
+                        VStack(spacing: 0) {
+                            Rectangle()
+                            LinearGradient(colors: [.black, .black.opacity(more ? 0 : 1)], startPoint: .top, endPoint: .bottom)
+                                .frame(height: Self.fade)
+                        }
+                    }
+                    .onPreferenceChange(ScrollOffset.self) { scrolled = $0 }
             } else {
                 measured
             }
         }
         .onPreferenceChange(ContentHeight.self) { contentHeight = $0 }
     }
+
+    private static var space: String { "fitting-scroll" }
+}
+
+extension View {
+    /// Up and Down move keyboard focus along a list's rows (Fleet's cards, a
+    /// profile's labs) without stopping at each control between them, as Tab
+    /// does. Space activates the focused row, and Return does too (`opens`).
+    func arrowFocus<ID: Hashable>(_ ids: [ID], _ focus: FocusState<ID?>.Binding) -> some View {
+        onMoveCommand { direction in
+            guard let current = focus.wrappedValue, let i = ids.firstIndex(of: current) else { return }
+            switch direction {
+            case .up where i > 0: focus.wrappedValue = ids[i - 1]
+            case .down where i < ids.count - 1: focus.wrappedValue = ids[i + 1]
+            default: break
+            }
+        }
+    }
+}
+
+extension View {
+    /// Return activates a focused row, as Space does for any button. Before
+    /// macOS 14 there is no key handler, and Space alone opens it.
+    @ViewBuilder func opens(_ action: @escaping () -> Void) -> some View {
+        if #available(macOS 14.0, *) {
+            onKeyPress(.return) { action(); return .handled }
+        } else {
+            self
+        }
+    }
 }
 
 private struct ContentHeight: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+private struct ScrollOffset: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
 // Indeterminate progress: a 40%-wide highlight crossing its track every
@@ -290,40 +345,4 @@ private struct Pressable<Content: View>: View {
             .animation(Motion.hover, value: hovering)
             .onHover { hovering = $0 }
     }
-}
-
-// MARK: - AppKit menus
-
-// SwiftUI's Menu flattens custom labels on macOS, so the panel's menus are
-// plain NSMenus popped at the pointer.
-final class ClosureItem: NSMenuItem {
-    private let handler: () -> Void
-
-    init(_ title: String, symbol: String? = nil, checked: Bool = false,
-         handler: @escaping () -> Void) {
-        self.handler = handler
-        super.init(title: title, action: #selector(fire), keyEquivalent: "")
-        target = self
-        state = checked ? .on : .off
-        if let symbol { image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) }
-    }
-
-    required init(coder: NSCoder) { fatalError("init(coder:) is not used") }
-
-    @objc private func fire() { handler() }
-}
-
-func submenu(_ title: String, symbol: String? = nil, _ items: [NSMenuItem]) -> NSMenuItem {
-    let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-    if let symbol { item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) }
-    let menu = NSMenu()
-    items.forEach(menu.addItem)
-    item.submenu = menu
-    return item
-}
-
-func popUp(_ items: [NSMenuItem]) {
-    let menu = NSMenu()
-    items.forEach(menu.addItem)
-    menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
 }

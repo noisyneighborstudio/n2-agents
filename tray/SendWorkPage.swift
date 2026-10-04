@@ -7,8 +7,16 @@ import SwiftUI
 struct SendWorkPage: View {
     @ObservedObject var model: PanelModel
     let actions: FleetActions
+    /// The task's text laid out at the box's width; the box grows to it.
+    @State private var taskHeight: CGFloat = 0
 
     private var draft: WorkDraft { model.workDraft }
+    /// Sent work isn't sent again by a second click; any edit makes a new draft.
+    private var sent: Bool {
+        if case .sent = draft.state { return true }
+        return false
+    }
+    private static let taskBox: ClosedRange<CGFloat> = 64...160
 
     /// Any edit returns the page to editing: a plan is only true of the draft it was made for.
     private func edit<T>(_ key: WritableKeyPath<WorkDraft, T>) -> Binding<T> {
@@ -34,10 +42,19 @@ struct SendWorkPage: View {
                     }
                     .pickerStyle(.segmented).labelsHidden()
                     field(d.shell ? String(localized: "Command", comment: "Send Work field") : String(localized: "Task", comment: "Send Work field")) {
+                        // Grows with what's typed, and scrolls (with a scroller)
+                        // only once it is taller than the box can be.
+                        let font = Font.system(size: 12.5, design: d.shell ? .monospaced : .default)
                         TextEditor(text: edit(\.task))
-                            .font(.system(size: 12.5, design: d.shell ? .monospaced : .default))
+                            .font(font)
                             .scrollContentBackground(.hidden)
-                            .frame(height: 76)
+                            .scrollIndicators(taskHeight > Self.taskBox.upperBound ? .automatic : .never)
+                            .frame(height: min(max(taskHeight, Self.taskBox.lowerBound), Self.taskBox.upperBound))
+                            .background(alignment: .topLeading) {
+                                Text(verbatim: d.task + "\n").font(font).padding(.horizontal, 5)
+                                    .fixedSize(horizontal: false, vertical: true).hidden()
+                                    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { taskHeight = $0 }
+                            }
                             .padding(6)
                             .background(RoundedRectangle(cornerRadius: 8).fill(Ink.surface))
                             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Ink.cardEdge, lineWidth: 0.5))
@@ -45,15 +62,15 @@ struct SendWorkPage: View {
                     }
                     field(String(localized: "Workspace", comment: "Send Work field")) {
                         TextField(String(localized: "Optional folder; uncommitted changes go too", comment: "Send Work placeholder"), text: edit(\.workspace))
-                            .textFieldStyle(.roundedBorder).font(.system(size: 12, design: .monospaced))
+                            .textFieldStyle(.roundedBorder).font(.system(size: 12, design: d.workspace.isEmpty ? .default : .monospaced))
                     }
                     field(String(localized: "Context file", comment: "Send Work field")) {
                         TextField(String(localized: "Optional file of decisions and progress", comment: "Send Work placeholder"), text: edit(\.contextFile))
-                            .textFieldStyle(.roundedBorder).font(.system(size: 12, design: .monospaced))
+                            .textFieldStyle(.roundedBorder).font(.system(size: 12, design: d.contextFile.isEmpty ? .default : .monospaced))
                     }
                     field(String(localized: "Required tools", comment: "Send Work field")) {
                         TextField(String(localized: "Optional: node,git", comment: "Send Work placeholder"), text: edit(\.requirements))
-                            .textFieldStyle(.roundedBorder).font(.system(size: 12, design: .monospaced))
+                            .textFieldStyle(.roundedBorder).font(.system(size: 12, design: d.requirements.isEmpty ? .default : .monospaced))
                     }
                     HStack(spacing: 8) {
                         pin(String(localized: "Fastest eligible Mac", comment: "Send Work: no machine pin"), selection: edit(\.machine),
@@ -75,7 +92,7 @@ struct SendWorkPage: View {
                             if let spec = d.spec { actions.fleetDispatch(spec) }
                         }
                         .buttonStyle(WideButton(prominent: true))
-                        .disabled(d.spec == nil || d.state == .sending)
+                        .disabled(d.spec == nil || d.state == .sending || sent)
                     }
                 }
                 .padding(.horizontal, 16).padding(.top, 6).padding(.bottom, 16)
@@ -108,14 +125,14 @@ struct SendWorkPage: View {
                     }
                 }
                 ForEach(plan.excluded.prefix(3), id: \.self) { line in
-                    Text(verbatim: line).font(.system(size: 11, design: .monospaced)).foregroundStyle(Ink.tertiary).lineLimit(1)
+                    Text(verbatim: FleetWords.exclusion(line)).font(.system(size: 11.5)).foregroundStyle(Ink.tertiary).lineLimit(1)
                 }
             }
             .font(.system(size: 12.5))
             .padding(10)
             .background(RoundedRectangle(cornerRadius: 10).fill(Ink.surface))
         case .sent(let receipt):
-            Label { Text(receipt.isEmpty ? String(localized: "Sent.", comment: "Send Work: done") : receipt) }
+            Label { Text(receipt.isEmpty ? String(localized: "Sent.", comment: "Send Work: done") : FleetWords.receipt(receipt)) }
                 icon: { Image(systemName: "checkmark.circle.fill").foregroundStyle(Ink.green) }
                 .font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
         case .failed(let message):

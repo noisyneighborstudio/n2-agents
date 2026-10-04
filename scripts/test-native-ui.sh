@@ -76,6 +76,18 @@ if grep -qE 'announcedNotices|firstRead' tray/FleetControl.swift tray/main.swift
   echo "FAIL the old empty-set-means-unread gate is back"; fail=$((fail+1))
 else echo "ok no untested seen-set is left in the app delegate"; fi
 
+# Panel menus open under the control that owns them (MenuAnchor), so keyboard
+# and VoiceOver presses don't open them wherever the pointer was left.
+if grep -n 'NSEvent.mouseLocation, in: nil' tray/*.swift; then
+  echo "FAIL a panel menu pops at the pointer again — use popUp(_:under:)"; fail=$((fail+1))
+else echo "ok every panel menu opens under its control"; fi
+
+# A session's age reads the same in the panel and the Sessions window ("26m ago").
+if grep -q 'sessionAge(session.mtime)' tray/RecentSessions.swift && grep -q 'sessionAge(session.mtime)' tray/SessionsWindow.swift \
+   && ! grep -q 'DateComponentsFormatter' tray/SessionsWindow.swift; then
+  echo "ok session ages share one format"
+else echo "FAIL the panel and the Sessions window format session ages differently"; fail=$((fail+1)); fi
+
 # `fleet task reconcile` re-probes workers and can APPEND notices; the CLI has
 # no verb that discards the feed. A button labelled "Clear" promised the
 # opposite of what it does, so the label has to name the reconcile.

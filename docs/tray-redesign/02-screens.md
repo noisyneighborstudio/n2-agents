@@ -61,7 +61,9 @@ Order, top to bottom:
    (`Ink.chip` at 14%), 0.5 pt blue stroke at 45%.
    - Leading: 24 pt blue circle with `bolt.fill` in white.
    - "Open next best" 13 semibold.
-   - Trailing: `LabMark` 14, "Cursor · Default · 100%" at 12 secondary, then `chevron.right`.
+   - Trailing: `LabMark` 14, "Default · 100%" at 12 secondary, then `chevron.right`.
+     The logo names the lab; at 360 pt a lab name and a profile don't both fit
+     beside the title. VoiceOver still reads "Cursor · Default · 100%".
    - It keeps the existing `NextBestButton` behavior for the `.allMaxed` /
      `.usageUnavailable` / `.nothingSignedIn` cases, re-skinned to this shape.
 4. For each machine:
@@ -74,8 +76,11 @@ Order, top to bottom:
      8 pt gap between cards):
      - Row 1 (20): 9 pt profile-color dot with a 3 pt halo (color at 20%), then
        the name at 14 semibold. An "Active" capsule appears if active (10.5
-       semibold, fill 8%). Then a spacer, a one-line **profile note** (below),
-       and `chevron.right` 10.
+       semibold, fill 8%). While labs use different profiles (the header's
+       "Mixed"), the capsule names what this profile is active for instead:
+       "Active for Codex", or "Active for 5 labs" with the labs on hover; a
+       profile active for no lab has none. Then a spacer, a one-line
+       **profile note** (below), and `chevron.right` 10.
      - Row 2: **CapacityStrip**. One segment per slotted provider, 54 wide with
        8 between. A segment is a 22 tile with a value to its right (11 semibold,
        monospaced), and below it a 3 pt bar spanning the segment (fill = remaining %).
@@ -86,6 +91,8 @@ Order, top to bottom:
    - **Profile note**, first match wins: "N signed out" (red), "N out · M
      unchecked" (amber), "N running low" (amber), "All ready" (secondary).
 5. **Footer** (40, hairline above): "Updated 2 min ago" at 11.5 secondary.
+   A page taller than the screen scrolls above the footer, and while more
+   lies below, its last 28 pt fade out instead of cutting a row in half.
    Trailing are three 28 pt icon buttons: `arrow.clockwise` (refresh, spins while
    refreshing), `plus` (new profile), `slider.horizontal.3` (settings).
 

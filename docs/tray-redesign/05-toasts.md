@@ -27,14 +27,16 @@ enum UsageTier: Int, Comparable {
 
 | Tier | Accent ink | Title | Sub-line | Extra | Dismissal |
 |---|---|---|---|---|---|
-| half | `Ink.info` | "{Provider} · half left" | Pace sentence (below) | none | Auto after **5.2 s**, with a 2 pt drain bar at the bottom |
-| quarter | `Ink.yellow` | "{Provider} · 25% left" | Pace sentence | Pace bar | Auto after **8 s** |
-| low | `Ink.amber` | "{Provider} · 10% left" | "About {duration} of work left at this pace." | Pace bar + suggestion row | Stays until dismissed or clicked |
+| half | `Ink.info` | "{Provider} · {n}% left" | Pace sentence (below) | none | Auto after **5.2 s**, with a 2 pt drain bar at the bottom |
+| quarter | `Ink.yellow` | "{Provider} · {n}% left" | Pace sentence | Pace bar | Auto after **8 s** |
+| low | `Ink.amber` | "{Provider} · {n}% left" | "About {duration} of work left at this pace." | Pace bar + suggestion row | Stays until dismissed or clicked |
 | out | `Ink.amber` | "{Provider} is out" | "Back {day} at {time} · in {countdown}" | Suggestion row + buttons "Start anyway" / "Notify when back" | Stays; breathing glow on its border |
 
 When more than one profile holds this provider, the title gets the profile:
-"{Provider} in {Profile} · 25% left". Tier numbers in titles are the tier
-thresholds, but the ring shows the **actual** remaining value.
+"{Provider} in {Profile} · 14% left". `{n}` is the **actual** remaining value,
+the one the ring shows; the tier only decides when the toast fires, its ink
+and its dismissal. (Titles once named the tier's threshold, which put "25%
+left" over a ring at 14%.)
 
 ### Pace sentence and pace bar (quarter / low)
 - It needs the window start and reset (`Usage.Window.durationSeconds` + `resets`).

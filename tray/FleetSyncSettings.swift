@@ -11,6 +11,7 @@ struct FleetSyncSettings: View {
     @State private var providers: [(String, String, Bool)]?
     @State private var machines: String?
     @State private var service: String?
+    @State private var serviceLoaded: Bool?
     @State private var conflicts: [(String, String)]?
     @State private var held: [String]?
     @State private var hasIdentity: Bool?
@@ -58,24 +59,29 @@ struct FleetSyncSettings: View {
             if let providers {
                 ForEach(providers, id: \.0) { vendor, support, enabled in
                     let args = ["sync", "auth", enabled ? "disable" : "enable", vendor]
-                    Toggle("\(vendor.capitalized) credentials · \(support)", isOn: Binding(get: { enabled }, set: { _ in perform(args) }))
+                    Toggle(FleetWords.credentials(vendor, support), isOn: Binding(get: { enabled }, set: { _ in perform(args) }))
                         .disabled(running.contains(vendor) || support == "unsupported" || categories?["auth"] == false)
                 }
             } else {
                 loading("Loading credential providers…", read: 1)
             }
             HStack {
-                action("Sync now", ["sync", "now"])
-                action("Enable background sync", ["sync", "service", "install", "--interval", "60"])
-                action("Stop", ["sync", "service", "uninstall"])
+                action("Sync Now", ["sync", "now"])
+                // One of the two, by what the service says it is doing.
+                if serviceLoaded != true {
+                    action("Turn On Background Sync", ["sync", "service", "install", "--interval", "60"])
+                }
+                if serviceLoaded != false {
+                    action("Turn Off Background Sync", ["sync", "service", "uninstall"])
+                }
             }
-            Button("Refresh status") { Task { await load() } }
+            Button("Refresh Status") { Task { await load() } }
             status(machines, loading: "Loading machines…", read: 2)
             status(service, loading: "Loading background sync…", read: 3)
             if let conflicts {
                 ForEach(conflicts, id: \.0) { id, address in
                     VStack(alignment: .leading) {
-                        Text(address).font(.system(size: 11)).textSelection(.enabled)
+                        Text(FleetWords.resource(address)).font(.system(size: 12)).textSelection(.enabled)
                         HStack {
                             action("Keep this Mac’s version", ["sync", "resolve", id, "--local"])
                             action("Use peer’s version", ["sync", "resolve", id, "--remote"])
@@ -115,7 +121,7 @@ struct FleetSyncSettings: View {
 
     @ViewBuilder private func status(_ value: String?, loading text: String, read index: Int) -> some View {
         if let value {
-            Text(value).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+            Text(value).font(.system(size: 11.5)).foregroundStyle(Ink.secondary).textSelection(.enabled)
         } else {
             loading(text, read: index)
         }
@@ -154,9 +160,12 @@ struct FleetSyncSettings: View {
                 providers = rows(value).compactMap { f in f.count >= 3 ? (f[0], f[1], f[2] == "opted-in") : nil }
             case 2:
                 hasIdentity = FleetSettingsLoader.hasIdentity(value)
-                machines = rows(value).compactMap { f in f.count >= 5 ? "\(f[1]): \(f[4])" : nil }.joined(separator: "\n")
+                machines = rows(value).compactMap { f in
+                    f.count >= 5 ? (f[4] == "self" ? "\(f[1]) · this Mac" : "\(f[1]) · \(f[4])") : nil
+                }.joined(separator: "\n")
             case 3:
-                service = value
+                service = FleetWords.service(value, now: Date())
+                serviceLoaded = rows(value).contains { $0.count >= 2 && $0[0] == "loaded" && $0[1] == "yes" }
             case 4:
                 conflicts = rows(value).compactMap { f in f.count >= 2 ? (f[0], f[1]) : nil }
             default:

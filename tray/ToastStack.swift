@@ -122,7 +122,9 @@ struct ToastStack: View {
         }
         .frame(width: 360, height: height, alignment: .top)
         .animation(Motion.nav(reduce: reduceMotion), value: fanned)
-        .onHover { feed.hover($0) }
+        // Fanning grows the window under the pointer; a short grace on exit
+        // keeps that from reading as a leave and folding the stack straight back.
+        .background(AlwaysHover(exitDelay: 0.3) { feed.hover($0) })
         // Room for each card's shadow inside the window.
         .padding(.horizontal, 24).padding(.bottom, 40)
     }
@@ -263,5 +265,55 @@ enum IconPulse {
         CATransaction.setCompletionBlock { window.orderOut(nil) }
         ring.add(group, forKey: "pulse")
         CATransaction.commit()
+    }
+}
+
+/// Hover for a window that is never key. SwiftUI's onHover follows the key
+/// window, and a toast never becomes key (nor is a menu bar app usually active),
+/// so its cards would never see the pointer.
+struct AlwaysHover: NSViewRepresentable {
+    var exitDelay: TimeInterval = 0
+    let changed: (Bool) -> Void
+
+    func makeNSView(context: Context) -> TrackingView { TrackingView() }
+    func updateNSView(_ view: TrackingView, context: Context) {
+        view.changed = changed
+        view.exitDelay = exitDelay
+    }
+
+    final class TrackingView: NSView {
+        var changed: (Bool) -> Void = { _ in }
+        var exitDelay: TimeInterval = 0
+        private var inside = false
+        private var pendingExit: DispatchWorkItem?
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                           owner: self))
+        }
+
+        override func mouseEntered(with event: NSEvent) {
+            pendingExit?.cancel()
+            pendingExit = nil
+            set(true)
+        }
+
+        override func mouseExited(with event: NSEvent) {
+            guard exitDelay > 0 else { return set(false) }
+            let work = DispatchWorkItem { [weak self] in self?.set(false) }
+            pendingExit = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + exitDelay, execute: work)
+        }
+
+        // Tracking only: clicks go to the views above.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        private func set(_ on: Bool) {
+            guard on != inside else { return }
+            inside = on
+            changed(on)
+        }
     }
 }
