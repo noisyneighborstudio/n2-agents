@@ -7,8 +7,12 @@
 # this file is a synthetic string invented for the test.
 set -u
 repo=${N2_SYNC_REPO:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}
-# Independent credential-gate regressions use disposable peers and homes.
-sh "$repo/scripts/test-embedded-credentials.sh" || exit 1
+# Independent credential-gate regressions use disposable peers and homes. They
+# run once per full suite: a shard or resumed run (and the trimmed copy it
+# re-execs, which repeats this preamble) leaves them to the run from section 1.
+if [ -z "${N2_SYNC_FRESH_FROM:-}${N2_SYNC_START_AT:-}" ]; then
+  sh "$repo/scripts/test-embedded-credentials.sh" || exit 1
+fi
 # N2_SYNC_START_AT=<n> runs sections <n>..end against a fixture an earlier
 # bounded run left behind (N2_SYNC_BASE + N2_SYNC_KEEP). Sections build forward
 # on fixture state, so they cannot simply be skipped in place: the run re-execs
