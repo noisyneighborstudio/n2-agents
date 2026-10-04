@@ -18,7 +18,10 @@ artifact="N2Agents-${channel}-${version}.zip"
 [[ -f $artifact ]] || { echo "✗ missing $artifact — prepare did not run" >&2; exit 1 }
 
 # Key via stdin: never on disk, never in argv.
-signature=$(printf '%s' "$SPARKLE_PRIVATE_KEY" | .build/artifacts/sparkle/Sparkle/bin/sign_update -f - -p "$artifact")
+# With CI's prebuilt binaries this checkout never resolved Sparkle; the tool
+# travels with them.
+sign_update=${N2_PREBUILT_BIN:-.build/artifacts/sparkle/Sparkle/bin}/sign_update
+signature=$(printf '%s' "$SPARKLE_PRIVATE_KEY" | "$sign_update" -f - -p "$artifact")
 # A key that doesn't match the app's SUPublicEDKey makes every client reject
 # the update — check it the way the app will, before anything is published.
 public_key=$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "tray/build/N2 Agents.app/Contents/Info.plist")

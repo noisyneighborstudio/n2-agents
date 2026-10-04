@@ -32,6 +32,11 @@ checkout = workflow.index('ref: ${{ github.event.workflow_run.head_sha }}')
 assert checkout < workflow.index('- name: Import Developer ID') < workflow.index('- name: Release')
 assert workflow.count('if:') == 2 and 'if: always()' in workflow  # the gate, and credential cleanup
 assert 'continue-on-error' not in workflow and 'push:' not in workflow
+# The release compile is a CI gate, and publish ships that run's binaries:
+# it fetches them from the run that passed, before the release step.
+assert 'scripts/release-binaries.sh "$RUNNER_TEMP/release-binaries"' in ci and 'name: release-binaries' in ci
+fetch = workflow.index('run-id: ${{ github.event.workflow_run.id }}')
+assert checkout < fetch < workflow.index('N2_PREBUILT_BIN=') < workflow.index('- name: Release')
 
 def run(failure, source=verify):
     with tempfile.TemporaryDirectory(prefix='n2-release-gates-') as tmp:

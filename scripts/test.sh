@@ -75,7 +75,7 @@ if in_group cli; then
 python3 tests/ReonboardTests.py
 sh -n agents vendors.sh fleet.sh fleet-sync.sh fleet-exec.sh scripts/test-fleet-spike.sh scripts/test-exec.sh scripts/test-sync-review.sh scripts/test-sync-status.sh scripts/test-sync-scan.sh scripts/test-archive-guard.sh scripts/test-update.sh scripts/test-native-ui.sh shell/agent-as
 zsh -n install.sh uninstall.sh tray/build.sh \
-  scripts/release-build.sh scripts/make-appcast.sh scripts/release-prepare.sh \
+  scripts/release-build.sh scripts/release-binaries.sh scripts/make-appcast.sh scripts/release-prepare.sh \
   scripts/publish-appcast.sh shell/agents.zsh
 bash -n shell/agents.bash
 command -v fish >/dev/null && fish -n shell/agents.fish
@@ -106,7 +106,7 @@ python3 scripts/test-native-fleet-ordering.py
 python3 scripts/test-native-notification.py
 sh scripts/test-owner-auth-status.sh
 sh scripts/test-profile-setup.sh
-swift test -c release --filter NativeAuthTests
+swift test --filter NativeAuthTests
 swiftc -typecheck scripts/make-icon.swift
 swiftc -typecheck scripts/verify-signature.swift
 channel_test=$(mktemp -d "$TMPDIR/channel.XXXXXX")/update-channel-tests
