@@ -114,3 +114,23 @@ func describePlan(_ s: RunState, slots: [Slot]?) -> String {
     out += "\nBudget: \(human(s.budgetMs)) of agent time. Work happens on branch \(s.branch) in worktrees; your checkout is untouched and nothing is pushed.\n"
     return out
 }
+
+/// Reopened chunks that must change together: linked by dependsOn, directly
+/// or through each other. Split, the dependent waits for the other's merge
+/// while that one's review fails on tests the dependent owns.
+/// Each group's root, the one depending on no other in the group, does the
+/// whole repair; the rest stay accepted. Returns root id -> absorbed ids.
+func coupledRepairs(_ reopened: [Chunk]) -> [String: [String]] {
+    let ids = Set(reopened.map(\.id))
+    var group = Dictionary(uniqueKeysWithValues: reopened.map { ($0.id, $0.id) })
+    func find(_ x: String) -> String { group[x] == x ? x : find(group[x]!) }
+    for c in reopened { for d in c.dependsOn where ids.contains(d) { group[find(c.id)] = find(d) } }
+    var out: [String: [String]] = [:]
+    for members in Dictionary(grouping: reopened.map(\.id), by: find).values where members.count > 1 {
+        let inGroup = Set(members)
+        let roots = reopened.filter { inGroup.contains($0.id) && !$0.dependsOn.contains(where: inGroup.contains) }
+        let root = roots.first?.id ?? members[0]
+        out[root] = reopened.map(\.id).filter { inGroup.contains($0) && $0 != root }
+    }
+    return out
+}

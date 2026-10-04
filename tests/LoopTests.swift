@@ -127,6 +127,19 @@ import Darwin
         let seen = (try? String(contentsOfFile: probe, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
         expect(seen == "[] False", "a spawned command starts with no blocked or ignored signals (saw \(seen ?? "nothing"))")
 
+        // A repair keeps coupled chunks together: the trial's tui and pty-smoke
+        // deadlocked split (pty-smoke waited on tui; tui's review failed on its test).
+        func chunk(_ id: String, _ deps: [String] = []) -> Chunk {
+            Chunk(id: id, title: id, instructions: "", paths: [id], criteria: [], dependsOn: deps, effort: .standard)
+        }
+        let model = chunk("model"), tui = chunk("tui", ["model", "layout"]), pty = chunk("pty-smoke", ["tui"]),
+            tests = chunk("arithmetic-tests", ["model"]), docs = chunk("docs")
+        expect(coupledRepairs([tui, pty]) == ["tui": ["pty-smoke"]], "a reopened chunk and its reopened dependent run as one, rooted at the dependency")
+        expect(coupledRepairs([model, tests, tui, pty]) == ["model": ["arithmetic-tests", "tui", "pty-smoke"]],
+               "links through each other join one group")
+        expect(coupledRepairs([tui, docs]).isEmpty, "unrelated reopened chunks stay apart and run in parallel")
+        expect(coupledRepairs([pty]).isEmpty, "a dependency that wasn't reopened couples nothing")
+
         // Workers: strength x quota left, and no slot past 1.5x its fair share.
         let hand: (String, Effort) -> Double = { lab, effort in Double(Adapter.of(lab)!.strength[effort]!) }
         func worker(_ s: [Slot], _ effort: Effort = .standard, assigned: [String: Int] = [:],

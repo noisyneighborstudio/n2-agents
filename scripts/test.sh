@@ -901,6 +901,14 @@ loop resume "$run" >/dev/null
 wait_for DONE
 [ "$(field 'min(c["turns"] for c in s["plan"]["chunks"])')" = 2 ]
 
+# A repair reopening a chunk and its dependent runs them as one chunk, so
+# neither waits on the other: the root does both fixes, the dependent stays merged.
+new_loop coupled
+wait_for DONE
+grep -q 'repair: reopened a, b (as one: a+b)' "$loop_root/runs/$run/controller.log"
+[ "$(field '[(c["id"], c["turns"]) for c in s["plan"]["chunks"]]')" = "[('a', 2), ('b', 1)]" ]
+grep -lq 'also covers chunk b' "$loop_root/runs/$run"/turns/*-worker-a.prompt
+
 # Done means the definition of done: a criterion the verifier rejects sends
 # its chunk back, and only a fresh pass on the new commit finishes the run.
 new_loop fail-b-once

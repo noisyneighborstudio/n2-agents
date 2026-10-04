@@ -241,7 +241,8 @@ agents loop "Add CSV export to the reports page" --file spec.md --budget 2h
    fresh verifier checks every criterion on that exact commit, and a
    supervisor from another lab than the verifier's signs off, so two labs
    agree on done. A failed criterion reopens only the chunks behind
-   it. The run is `DONE` only when every criterion and every command passed
+   it. A repair that reopens a chunk and one depending on it runs them as one
+   chunk, so neither waits on the other. The run is `DONE` only when every criterion and every command passed
    on the final commit. Nobody's claim of "finished" counts, the
    supervisor's included.
 

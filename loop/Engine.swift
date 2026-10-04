@@ -659,8 +659,23 @@ final class Controller {
                     c.feedback = "Independent verification found: \(str(o["feedback"]) ?? "")"
                 }
             }
+            // Coupled chunks repair as one: the root takes the others' paths,
+            // criteria and fixes, and they stay merged as they were.
+            var together: [String] = []
+            for (root, absorbed) in coupledRepairs(reopen.compactMap { s.chunk(str($0["chunk"]) ?? "") }).sorted(by: { $0.key < $1.key }) {
+                for id in absorbed {
+                    guard let a = s.chunk(id) else { continue }
+                    s.update(root) { c in
+                        c.paths = Array(Set(c.paths + a.paths)).sorted()
+                        c.criteria = Array(Set(c.criteria + a.criteria)).sorted()
+                        c.feedback = (c.feedback ?? "") + "\n\nThis repair also covers chunk \(id) (\(a.title)), whose paths are yours for it: \(a.feedback ?? "")"
+                    }
+                    s.update(id) { c in c.status = .accepted; c.revisions -= 1; c.feedback = nil }
+                }
+                together.append(([root] + absorbed).joined(separator: "+"))
+            }
             s.plan.chunks += added
-            note("supervisor", "repair: reopened \(reopen.compactMap { str($0["chunk"]) }.joined(separator: ", "))\(added.isEmpty ? "" : "; added \(added.map(\.id).joined(separator: ", "))")")
+            note("supervisor", "repair: reopened \(reopen.compactMap { str($0["chunk"]) }.joined(separator: ", "))\(together.isEmpty ? "" : " (as one: \(together.joined(separator: ", ")))")\(added.isEmpty ? "" : "; added \(added.map(\.id).joined(separator: ", "))")")
         case "pause":
             s.pause("supervisor: \(str(r["reason"]) ?? str(r["summary"]) ?? "needs a human")")
         default:
