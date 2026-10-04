@@ -413,6 +413,7 @@ private struct CapacityStrip: View {
 // One lab at depth 1: its logo, the value that says where it stands (what's
 // left, the day it's back, or why nothing is known) and a bar of what's left.
 // Unknown, failed and signed-out slots never show a percentage or a full bar.
+// Crowded, what's left drops its sign, then its number: the bar still says it.
 private struct CapacitySegment: View {
     let profile: String
     let vendor: Vendor
@@ -424,16 +425,29 @@ private struct CapacitySegment: View {
                 LogoTile(vendor: vendor, status: status)
                     .frame(width: 22, height: 22)
                     .glyph(.strip, profile: profile, vendor: vendor.id)
-                Text(verbatim: status.stripValue)
-                    .font(.system(size: 11, weight: .semibold)).monospacedDigit()
-                    .foregroundStyle(status.left != nil ? Color.primary.opacity(0.75) : status.ink)
-                    .lineLimit(1).minimumScaleFactor(0.75)
+                if let number = status.stripNumber {
+                    ViewThatFits(in: .horizontal) {
+                        value(status.stripValue)
+                        // 2 pt off the logo's gap lets "100" fit six labs to a card.
+                        value(number).padding(.leading, -2)
+                        Color.clear.frame(width: 0, height: 0)
+                    }
+                } else {
+                    value(status.stripValue).minimumScaleFactor(0.75)
+                }
             }
             StatusBar(status: status)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(vendor.label), \(status.label)")
         .help("\(vendor.label) · \(status.label)")
+    }
+
+    private func value(_ text: String) -> some View {
+        Text(verbatim: text)
+            .font(.system(size: 11, weight: .semibold)).monospacedDigit()
+            .foregroundStyle(status.left != nil ? Color.primary.opacity(0.75) : status.ink)
+            .lineLimit(1)
     }
 }
 

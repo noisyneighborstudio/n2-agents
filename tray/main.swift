@@ -1,9 +1,10 @@
 import AppKit
 import Combine
 import SwiftUI
+import UserNotifications
 #if canImport(Sparkle)
 import Sparkle
-typealias UpdaterDelegateProtocol = SPUUpdaterDelegate
+protocol UpdaterDelegateProtocol: SPUUpdaterDelegate, SPUStandardUserDriverDelegate {}
 #else
 protocol UpdaterDelegateProtocol {}
 #endif
@@ -67,7 +68,7 @@ let terminalSpecs: [TerminalSpec] = [
     }),
 ]
 
-final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtocol, PanelActions, FleetActions, SetupHost {
+final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtocol, UNUserNotificationCenterDelegate, PanelActions, FleetActions, SetupHost {
     var statusItem: NSStatusItem!
     let model = PanelModel()
     var announcer = FleetAnnouncer()
@@ -117,7 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     }
 #if canImport(Sparkle)
     private lazy var updaterController = SPUStandardUpdaterController(
-        startingUpdater: true, updaterDelegate: self, userDriverDelegate: nil
+        startingUpdater: true, updaterDelegate: self, userDriverDelegate: self
     )
 #endif
 
@@ -212,6 +213,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
             updaterController.updater.automaticallyChecksForUpdates = true
         }
 #endif
+        // Clicking the update banner opens the update; needs a bundle id.
+        if Bundle.main.bundleIdentifier != nil { UNUserNotificationCenter.current().delegate = self }
     }
 
     // The icon is a gauge of quota left, and anything newly low gets a toast.
@@ -579,7 +582,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
         updateStatus = .available
     }
+
+    // A menu bar app is never frontmost, so Sparkle's own alert for a
+    // scheduled check opens behind every other window and goes unseen. It
+    // keeps the alert only when it would take focus (just after launch);
+    // otherwise the arrow by the icon and a desktop banner say so, and
+    // either opens the alert in front.
+    var supportsGentleScheduledUpdateReminders: Bool { true }
+
+    func standardUserDriverShouldHandleShowingScheduledUpdate(_ update: SUAppcastItem,
+                                                              andInImmediateFocus immediateFocus: Bool) -> Bool {
+        immediateFocus
+    }
+
+    func standardUserDriverWillHandleShowingUpdate(_ handleShowingUpdate: Bool, forUpdate update: SUAppcastItem,
+                                                   state: SPUUserUpdateState) {
+        guard !handleShowingUpdate, Bundle.main.bundleIdentifier != nil else { return }
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = String(localized: "N2 Agents update available", comment: "Update banner title")
+            content.body = String(localized: "Version \(update.displayVersionString) is ready. Click to install.",
+                                  comment: "Update banner body")
+            center.add(UNNotificationRequest(identifier: Self.updateBanner, content: content, trigger: nil))
+        }
+    }
+
+    func standardUserDriverDidReceiveUserAttention(forUpdate update: SUAppcastItem) {
+        clearUpdateBanner()
+    }
+
+    func standardUserDriverWillFinishUpdateSession() {
+        clearUpdateBanner()
+    }
+
+    private func clearUpdateBanner() {
+        guard Bundle.main.bundleIdentifier != nil else { return }
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [Self.updateBanner])
+    }
 #endif
+
+    private static let updateBanner = "update-available"
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        if response.notification.request.identifier == Self.updateBanner {
+            DispatchQueue.main.async { self.checkForUpdates() }
+        }
+        completionHandler()
+    }
 
     // MARK: - Actions
 

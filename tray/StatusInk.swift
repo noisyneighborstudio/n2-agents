@@ -138,6 +138,14 @@ enum SlotStatus: Equatable {
         }
     }
 
+    /// What's left without its sign, for a segment too narrow for the percentage.
+    var stripNumber: String? {
+        switch self {
+        case .ready(let left), .low(let left): return left.formatted()
+        default: return nil
+        }
+    }
+
     /// The Provider page's headline.
     func headline(monthly: Bool) -> String {
         switch self {

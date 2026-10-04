@@ -18,6 +18,8 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>3600</integer>
 	<key>SUPublicEDKey</key>
 	<string>jL5WemMvOsQ1aLHhC1EYNI6DQD3pxP9AHkBzynOarVg=</string>
 	<key>LSMinimumSystemVersion</key>

@@ -684,6 +684,11 @@ grep -Fq '@executable_path/../Frameworks' Package.swift
 grep -Fq 'push --quiet "$remote" HEAD:appcasts' scripts/publish-appcast.sh
 grep -Fq 'allowedChannels' tray/main.swift
 grep -Fq 'UpdateChannel.preferenceKey' tray/main.swift
+# A menu bar app's scheduled update alert opens behind other windows: hourly
+# checks, and a banner instead of the buried alert.
+[ "$(/usr/libexec/PlistBuddy -c 'Print :SUScheduledCheckInterval' tray/Info.plist)" = 3600 ]
+grep -Fq 'supportsGentleScheduledUpdateReminders: Bool { true }' tray/main.swift
+grep -Fq 'userDriverDelegate: self' tray/main.swift
 
 # The tray must not re-implement profile discovery: it parses the CLI instead.
 grep -Fq 'Snapshot.parse' tray/main.swift

@@ -107,12 +107,14 @@ struct StatusIcon {
         NSGraphicsContext.restoreGraphicsState()
     }
 
-    /// A profile needs signing in: the system warning triangle, bottom right.
+    /// A profile needs signing in: the system warning triangle, bottom right,
+    /// at the symbol's own proportions (it's wider than tall).
     private static func drawWarning(in rect: NSRect) {
         guard let symbol = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)?
             .withSymbolConfiguration(.preferringMulticolor()) else { return }
-        let side = rect.width / 2
-        symbol.draw(in: NSRect(x: rect.maxX - side, y: rect.minY, width: side, height: side))
+        let width = rect.width / 2
+        symbol.draw(in: NSRect(x: rect.maxX - width, y: rect.minY, width: width,
+                               height: width * symbol.size.height / symbol.size.width))
     }
 
     /// A QA build's icon carries an orange "QA" tag, so it can't be mistaken
