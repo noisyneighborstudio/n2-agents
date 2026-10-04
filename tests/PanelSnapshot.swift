@@ -199,7 +199,7 @@ enum Fixture {
         let vendors = [vendor("claude", "Claude Code", desktop: "Claude"), vendor("codex", "Codex", desktop: "Codex"),
                        vendor("cursor", "Cursor", long: "mo"), vendor("opencode", "opencode", usage: "none"),
                        vendor("muse", "Muse"), vendor("grok", "Grok")]
-        let slots: [String: [String]] = ["Default": ["claude", "codex", "cursor", "opencode", "muse"],
+        let slots: [String: [String]] = ["Default": ["claude", "codex", "cursor", "opencode", "muse", "grok"],
                                          "Expo": ["claude", "codex", "grok"], "Work": ["claude", "codex", "cursor"]]
         let order = ["Default", "Expo", "Work"]
         let rows = order.map { name in
@@ -241,6 +241,7 @@ enum Fixture {
             "codex": ["Default": out,
                       "Expo": reading(used: 45, resets: 6 * day + 7 * hour),
                       "Work": reading(used: 10, resets: 7 * hour)],
+            "grok": ["Default": reading(used: 0, resets: 5 * day)],
             "cursor": ["Default": reading(used: 0, resets: 22 * day, scope: "mo", duration: 30 * day),
                        "Work": reading(used: 36, resets: 15 * day, scope: "mo", duration: 30 * day)],
             "muse": ["Default": failed],

@@ -70,6 +70,10 @@ import Foundation
         // Labels and strip values say what's left, never what's used.
         check(SlotStatus.ready(left: 32).stripValue == SlotStatus.percent(32), "strip shows the remaining percent")
         check(SlotStatus.checkFailed.stripValue == "?" && SlotStatus.unmetered.stripValue == "—", "unknowns have no figure")
+        check(SlotStatus.ready(left: 100).stripNumber == 100.formatted() && SlotStatus.low(left: 9).stripNumber == 9.formatted(),
+              "a crowded strip keeps what's left as a bare number")
+        check(SlotStatus.signedOut.stripNumber == nil && SlotStatus.out(back: nil).stripNumber == nil
+              && SlotStatus.checkFailed.stripNumber == nil, "only what's left drops its sign; words stay whole")
         check(!SlotStatus.low(left: 12).label.contains("used"), "rows say left, not used")
         // Profile note: first match wins, and failed checks are never "All ready".
         let back = Date()
