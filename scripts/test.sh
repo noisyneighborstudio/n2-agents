@@ -853,6 +853,9 @@ loop pause "$run" >/dev/null
 [[ "$(field 's["reason"]')" == "paused by you"* ]]
 [ "$(field '{t["outcome"] for t in s["turns"] if t["role"] == "worker"}')" = "{'interrupted'}" ] || { field '[{k: t.get(k) for k in ("id", "role", "outcome", "note", "startedAt", "endedAt", "pgid")} for t in s["turns"] if t["role"] == "worker"]' >&2; exit 1; }
 for g in $pgids; do ! kill -0 -"$g" 2>/dev/null; done
+# They were asked to stop: TERM reached each agent, not just the KILL after its
+# grace. The controller ignores TERM itself, which its children must not inherit.
+[ "$(sort "$loop_fake/terminated" 2>/dev/null | tr '\n' ' ')" = "a b " ]
 rm "$loop_fake/slow"
 loop resume "$run" >/dev/null
 wait_for DONE
