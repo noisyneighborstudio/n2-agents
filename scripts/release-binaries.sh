@@ -17,3 +17,5 @@ rm -rf "$out"; mkdir -p "$out"
 cp "$bin/N2AgentsTray" "$bin/n2-loop" "$out/"
 ditto "$bin/SwiftTerm_SwiftTerm.bundle" "$out/SwiftTerm_SwiftTerm.bundle"
 ditto "$sparkle" "$out/Sparkle.framework"
+# Publish signs the update with the same pinned Sparkle's tool.
+cp .build/artifacts/sparkle/Sparkle/bin/sign_update "$out/"
