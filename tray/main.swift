@@ -581,6 +581,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
 
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
         updateStatus = .available
+        busyBar.updateAvailable(item.displayVersionString)
     }
 
     // A menu bar app is never frontmost, so Sparkle's own alert for a

@@ -43,6 +43,7 @@ KINDS = {
     'out':       ('OUT', '#FF1744FF', 0),
     'signedout': ('SIGNED OUT', '#FF1744FF', 0),
     'back':      ('BACK', '#00C853FF', 60),
+    'update':    ('UPDATE', '#FFD600FF', 60),
 }
 HELLO = ('CONNECTED', '#FFFFFFFF', 5)
 

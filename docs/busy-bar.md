@@ -2,7 +2,7 @@
 
 N2 Agents can show lab health on a [BUSY Bar](https://busy.app), the 72×16 LED
 desk display. It shows the same changes the menu bar toasts announce, for every
-profile and every lab:
+profile and every lab, and a new N2 Agents build:
 
 | Card       | When                                             | Stays            |
 |------------|--------------------------------------------------|------------------|
@@ -12,6 +12,7 @@ profile and every lab:
 | OUT        | it runs out, or the provider refuses work        | until it's back  |
 | BACK       | an exhausted slot has capacity again             | 60 s             |
 | SIGNED OUT | a slot loses its sign-in                         | until signed in  |
+| UPDATE     | a new N2 Agents build is available (once each)   | 60 s             |
 
 Each card plays a short intro with the N2 mark, then shows the word over the
 profile and lab (for example `Work - Codex, back Mon 3:40 PM`), and the LED

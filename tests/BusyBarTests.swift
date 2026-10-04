@@ -35,6 +35,10 @@ import Foundation
 
         // Unmetered labs have nothing to say.
         check(watch.update([("Home|opencode", .unmetered), ("Home|opencode", .unmetered)]), [], "unmetered")
+        // A new build shows once per version, however often Sparkle reports it.
+        if !watch.isNewUpdate("1.6.0") { fatalError("first report of a version") }
+        if watch.isNewUpdate("1.6.0") { fatalError("same version twice") }
+        if !watch.isNewUpdate("1.6.1") { fatalError("next version") }
         print("BusyBarTests passed")
     }
 }
