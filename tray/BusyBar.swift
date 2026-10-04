@@ -55,9 +55,19 @@ extension UsageTier {
 /// Sends the watch's events through `agents busybar`, which does nothing while
 /// the switch is off. One serial queue keeps cards in order; nothing here
 /// waits on the bar, and an unreachable bar only costs that queue a timeout.
+/// A sync at launch and every 30 s connects to a bar plugged in later and
+/// puts back the card it missed.
 final class BusyBarAlerts {
     private var watch = BusyBarWatch()
     private let queue = DispatchQueue(label: "dev.sethwebster.n2agents.busybar")
+    private var timer: Timer?
+
+    init() {
+        sync()
+        timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in self?.sync() }
+    }
+
+    private func sync() { queue.async { _ = BusyBarCLI.run(["sync"]) } }
 
     func update(_ model: PanelModel) {
         guard let data = model.data else { return }

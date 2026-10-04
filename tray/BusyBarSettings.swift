@@ -35,7 +35,13 @@ struct BusyBarSettings: View {
         .padding(13)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Ink.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .task { await load() }
+        // The line follows the bar being plugged in or out while Settings is open.
+        .task {
+            while !Task.isCancelled {
+                await load()
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+            }
+        }
     }
 
     @ViewBuilder private var connectionLine: some View {
@@ -46,7 +52,7 @@ struct BusyBarSettings: View {
             case ("connected", "cloud"): Text("Connected through BUSY Cloud")
             case ("connected", _): Text("Connected over Wi-Fi")
             case ("unauthorized", _): Text("The BUSY Bar at \(host) refused the password or token")
-            default: Text("Can’t reach a BUSY Bar at \(host)")
+            default: Text("Not connected. Alerts go to the BUSY Bar at \(host) once it’s reachable.")
             }
         } else if timedOut {
             Text("Couldn’t check the BUSY Bar in time.")

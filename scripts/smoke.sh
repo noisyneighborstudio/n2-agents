@@ -18,10 +18,13 @@ unset CODEX_HOME CLAUDE_CONFIG_DIR OPENAI_API_KEY
 grep -Fq 'agents loop' "$smoke_root/help"
 ./agents run Fixture --vendor codex --version > "$smoke_root/route"
 test "$(cat "$smoke_root/route")" = "$HOME/.n2-agents/Fixture/codex"
-# A BUSY Bar that isn't there is reported and logged; alerts still return.
+# A BUSY Bar that isn't there is reported and logged; alerts still return,
+# and the card waits for it.
 ./agents busybar on --address 127.0.0.1:9 | grep -qx 'state	unreachable'
 ./agents busybar alert out 'Fixture - Codex' --key 'Fixture|codex'
-grep -q 'alert out failed' "$HOME/.n2-agents/busybar.log"
+./agents busybar sync
+grep -q 'hello failed' "$HOME/.n2-agents/busybar.log"
+grep -q '"kind": "out"' "$HOME/.n2-agents/busybar.state"
 )
 echo 'Smoke: real CLI routes to isolated profile and survives a missing BUSY Bar.'
 # The behaviors a real run depends on (AGENTS.md "Smoke run"). Full suites run

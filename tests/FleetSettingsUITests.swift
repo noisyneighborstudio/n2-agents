@@ -114,7 +114,9 @@ final class PanelActions {
                 .split(separator: "\n").map(String.init) ?? []
             let expected = ["fleet sync categories", "fleet sync auth list", "fleet peers",
                             "fleet sync service status", "fleet sync conflicts", "fleet sync review"]
-            let complete = commands.sorted() == expected.sorted() &&
+            // The BUSY Bar section reads its own status, and again every 10 s.
+            let complete = commands.filter { $0 != "busybar status" }.sorted() == expected.sorted() &&
+                commands.contains("busybar status") &&
                 files.fileExists(atPath: directory + "/peers-finished")
             let passed = maxGap < 0.5 && scrollDistance > 100 && pendingTicks >= 10 && complete
             let loginCalls = (try? String(contentsOfFile: directory + "/login-calls"))?
