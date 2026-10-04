@@ -9,6 +9,8 @@
 #   fail-b-once       the first verification rejects criterion has-b
 #   liar              the sign-off says done whatever the evidence says
 #   coupled           b depends on a, and the first sign-off reopens both
+#   impossible        the verifier always fails has-b; the sign-off asks to
+#                     waive it
 #   question          b's reviewer pauses with a question until a decision
 #                     reaches its prompt
 #   ask               the planner asks where b goes; replanned-with-c is
@@ -82,7 +84,9 @@ JSON
           echo 'N2_RESULT {"decision":"accept","summary":"looks right"}'
         fi ;;
       *"answer for the result"*)
-        if [ -f "$LOOP_FAKE/coupled" ] && [ ! -f "$LOOP_FAKE/coupled-repaired" ]; then
+        if [ -f "$LOOP_FAKE/impossible" ] && [ "${prompt#*does NOT hold}" != "$prompt" ]; then
+          echo 'N2_RESULT {"decision":"waive","criterion":"has-b","reason":"b.txt cannot say done at 1x1","summary":"impossible"}'
+        elif [ -f "$LOOP_FAKE/coupled" ] && [ ! -f "$LOOP_FAKE/coupled-repaired" ]; then
           touch "$LOOP_FAKE/coupled-repaired"
           echo 'N2_RESULT {"decision":"repair","summary":"a and b disagree","reopen":[{"chunk":"a","feedback":"a.txt must name b"},{"chunk":"b","feedback":"b.txt must name a"}]}'
         elif [ -f "$LOOP_FAKE/liar" ] || [ "${prompt#*does NOT hold}" = "$prompt" ]; then
@@ -96,6 +100,7 @@ JSON
   verifier)
     b=true
     if [ -f "$LOOP_FAKE/fail-b-once" ]; then b=false; rm "$LOOP_FAKE/fail-b-once"; fi
+    [ -f "$LOOP_FAKE/impossible" ] && b=false
     echo "N2_RESULT {\"criteria\":[{\"id\":\"has-a\",\"passed\":true,\"evidence\":\"a.txt present\"},{\"id\":\"has-b\",\"passed\":$b,\"evidence\":\"b.txt checked\"}],\"summary\":\"checked\"}"
     ;;
   *) echo "unknown role" >&2; exit 2 ;;

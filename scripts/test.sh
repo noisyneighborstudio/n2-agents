@@ -909,6 +909,18 @@ grep -q 'repair: reopened a, b (as one: a+b)' "$loop_root/runs/$run/controller.l
 [ "$(field '[(c["id"], c["turns"]) for c in s["plan"]["chunks"]]')" = "[('a', 2), ('b', 1)]" ]
 grep -lq 'also covers chunk b' "$loop_root/runs/$run"/turns/*-worker-a.prompt
 
+# A criterion the sign-off judges impossible pauses for the user instead of
+# another repair round; only the user's waiver lets the run finish.
+new_loop impossible
+wait_for PAUSED
+[[ "$(field 's["reason"]')" == "the sign-off judges criterion has-b impossible as written"*"agents loop waive"* ]]
+[ "$(field 'sum(1 for t in s["turns"] if t["role"] == "worker")')" = 2 ]
+! loop waive "$run" nosuch "why" >/dev/null 2>&1
+loop waive "$run" has-b "a 1x1 terminal can't show it" >/dev/null
+wait_for DONE
+[ "$(field 's["status"]')" = DONE ]
+grep -A1 '^- \*\*has-b\*\*' "$loop_root/runs/$run/DONE.md" | grep -q "waived by the user: a 1x1 terminal can't show it"
+
 # A supervisor's question pauses the run; the user's decision resumes it and
 # reaches every later prompt, so the next review settles it.
 new_loop question

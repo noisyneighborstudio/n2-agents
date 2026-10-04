@@ -9,6 +9,7 @@ agents loop — fan a goal out across your slots until its definition of done ho
   agents loop approve <run> [--plan edited.json]     approve a drafted plan and start
   agents loop answer <run> <question> <answer>       answer a planner's question
   agents loop answer <run> "<decision>"              answer a paused run's question and resume
+  agents loop waive <run> <criterion> "<why>"        waive a criterion the sign-off judged impossible, and resume
   agents loop replan <run>                           draft the plan again with your answers
   agents loop start --plan plan.json --budget 2h --yes   start a reviewed plan unattended
   agents loop status [run] [--json]                  where it stands, what done means
@@ -53,7 +54,7 @@ struct Args {
 
 func parseArgs(_ argv: [String]) throws -> Args {
     var a = Args()
-    let commands: Set = ["start", "plan", "approve", "answer", "replan", "status", "wait", "list", "pause", "resume", "log", "_controller"]
+    let commands: Set = ["start", "plan", "approve", "answer", "waive", "replan", "status", "wait", "list", "pause", "resume", "log", "_controller"]
     var rest = argv[...]
     if let first = rest.first, commands.contains(first) { a.command = first; rest = rest.dropFirst() }
     func value(_ flag: String) throws -> String {
@@ -458,6 +459,19 @@ func main() throws {
         for i in s.plan.chunks.indices where s.plan.chunks[i].status != .accepted && s.plan.chunks[i].revisions >= Limits.maxRevisions {
             s.plan.chunks[i].revisions = Limits.maxRevisions - 1
         }
+        try store.save(s)
+        try resumeRun(store: store, id: id, budget: a.budget)
+    case "waive":
+        guard a.positional.count >= 3 else { throw LoopError("usage: agents loop waive <run> <criterion> \"<why>\"") }
+        let id = try store.resolve(a.positional[0])
+        var s = try store.load(id)
+        guard s.status == .paused, !store.controllerRunning(id) else { throw LoopError("run \(s.shortId) is \(s.status.rawValue); only a paused run's criterion can be waived") }
+        let criterion = a.positional[1], why = a.positional[2...].joined(separator: " ")
+        guard s.plan.criteria.contains(where: { $0.id == criterion }) else {
+            throw LoopError("run \(s.shortId) has no criterion \"\(criterion)\" (it has: \(s.plan.criteria.map(\.id).joined(separator: ", ")))")
+        }
+        s.waived = (s.waived ?? [:]).merging([criterion: why]) { $1 }
+        s.log("waived", "\(criterion): \(why)")
         try store.save(s)
         try resumeRun(store: store, id: id, budget: a.budget)
     case "answer":

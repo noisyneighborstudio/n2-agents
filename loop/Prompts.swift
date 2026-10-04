@@ -145,7 +145,9 @@ func verifierPrompt(_ s: RunState, candidate: String, results: [CommandResult]) 
 }
 
 func signoffPrompt(_ s: RunState, candidate: String, evidence: [Evidence], results: [CommandResult]) -> String {
-    let ev = evidence.map { "- \($0.criterion): \($0.passed ? "PASS" : "FAIL") — \($0.detail)" }.joined(separator: "\n")
+    let ev = evidence.map { e in
+        "- \(e.criterion): \(e.passed ? "PASS" : s.waived?[e.criterion].map { "WAIVED by the user (\($0))" } ?? "FAIL") — \(e.detail)"
+    }.joined(separator: "\n")
     let cmds = results.map { "- \($0.command): exit \($0.exitCode)" }.joined(separator: "\n")
     let chunks = s.plan.chunks.map { "- \($0.id) (\($0.paths.joined(separator: ", "))): \($0.title) — serves \($0.criteria.joined(separator: ", "))" }.joined(separator: "\n")
     let holds = s.definitionOfDoneHolds(on: candidate)
@@ -163,9 +165,9 @@ func signoffPrompt(_ s: RunState, candidate: String, evidence: [Evidence], resul
 
     \(holds
       ? "Every criterion passed and every command succeeded. Decide whether you stand behind this as done. Answer repair if you find a real defect the criteria should have caught."
-      : "The definition of done does NOT hold yet. Plan the repair: reopen the chunks responsible for each failure with specific feedback, or add chunks for work nobody owns. If a verification command or the environment itself is broken (not the work), pause and say what a human must fix — never rewrite correct code to satisfy a broken check.")
+      : "The definition of done does NOT hold yet. Plan the repair: reopen the chunks responsible for each failure with specific feedback, or add chunks for work nobody owns. If a verification command or the environment itself is broken (not the work), pause and say what a human must fix — never rewrite correct code to satisfy a broken check. If a failed criterion cannot be met as written (it asks for the impossible), answer waive with that criterion and why: only the user can waive it, and the run waits for them.")
     Inspect read-only. Do not edit anything.
     \(rules)
-    \(answer(#"{"decision":"done"|"repair"|"pause","summary":"…","reopen":[{"chunk":"…","feedback":"…"}],"chunks":[{"id":"…","title":"…","instructions":"…","paths":["…"],"criteria":["…"],"dependsOn":[],"effort":"standard"}],"reason":"for pause"}"#))
+    \(answer(#"{"decision":"done"|"repair"|"pause"|"waive","summary":"…","criterion":"for waive","reopen":[{"chunk":"…","feedback":"…"}],"chunks":[{"id":"…","title":"…","instructions":"…","paths":["…"],"criteria":["…"],"dependsOn":[],"effort":"standard"}],"reason":"for pause"}"#))
     """
 }

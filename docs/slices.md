@@ -21,17 +21,11 @@ across every profile and lab with quota left, reviewed by another lab. The
 first trial (calculator, run 3deef8ab) lost 45 of 126 minutes to engine
 faults; these slices remove them, then a second trial on a new goal compares.
 
-1. **A sign-off can waive an impossible criterion** (`loop-waive`).
-   Behavior: the sign-off may waive a failed criterion with a reason; a
-   waiver pauses with the question instead of another repair round. Proof:
-   e2e where the verifier fails a criterion and the sign-off waives it pauses
-   with the waiver as the question.
-
-2. **Second fan-out trial** (`fanout-trial-2`): a goal the user provides,
+1. **Second fan-out trial** (`fanout-trial-2`): a goal the user provides,
    same slots and reserve; compare wall time, interventions and quota with
    run 3deef8ab.
 
-3. **Merge a conflict with an agent, reviewed by another** (`fleet-sync-agent-merge`).
+2. **Merge a conflict with an agent, reviewed by another** (`fleet-sync-agent-merge`).
    Behavior: `fleet sync merge <id>` asks an agent with measured headroom for a
    merged version, then an agent from a different lab reviews it (Claude
    never reviews Claude's merge; a harness counts by its model's lab, and an
@@ -48,7 +42,7 @@ faults; these slices remove them, then a second trial on a new goal compares.
    the fake agent's recorded input is empty.
    Scope: CLI only; the panel button is the next slice.
 
-4. **"Merge with Agent" in the panel** (`fleet-sync-agent-merge-ui`).
+3. **"Merge with Agent" in the panel** (`fleet-sync-agent-merge-ui`).
    Behavior: each text conflict row offers Merge with Agent beside the two
    existing choices; a sheet shows the diff, the review and Accept or Discard.
    Only that row's button disables while agents work; it is disabled with a
@@ -56,7 +50,7 @@ faults; these slices remove them, then a second trial on a new goal compares.
    Proof: a Swift test holds the merge read while the rest of the panel renders
    (the AGENTS.md UI rule); accept and discard record the right outcome.
 
-5. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
+4. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
    Behavior: from the QA app, pair two disposable peers (Settings › Fleet),
    sync (with a held profile shared from Fleet settings), send work (the Send
    Work page), show its result (the Task page) and revoke (the Machine page).
@@ -65,7 +59,7 @@ faults; these slices remove them, then a second trial on a new goal compares.
    per step fails.
    Scope: disposable peers only; no live installation or real machines.
 
-6. **Honor Claude usage rejections** (`usage-claude-backoff`).
+5. **Honor Claude usage rejections** (`usage-claude-backoff`).
    Behavior: after a 429 from Claude usage, no reader asks that account again
    until its `Retry-After` has passed; the row stays `rate-limited` with the
    last reading and its time. Evidence: `docs/audits/claude-usage-rate-limit-spike.md`.
@@ -74,7 +68,7 @@ faults; these slices remove them, then a second trial on a new goal compares.
    a read after the window calls again. Break the gate once; the test fails.
    Scope: Claude only, one Mac. Codex and peer sharing excluded.
 
-7. **One Claude usage call per account at a time** (`usage-claude-single-flight`).
+6. **One Claude usage call per account at a time** (`usage-claude-single-flight`).
    Behavior: concurrent readers (tray, loop, dispatch) of one account share
    one provider call, and a reading under 60 s old is served from the journal.
    Proof: two concurrent `usage.py` runs against a held fake provider make one
@@ -83,7 +77,7 @@ faults; these slices remove them, then a second trial on a new goal compares.
    Scope: Claude only, one Mac. The 60 s figure is policy, not a measured
    provider window.
 
-8. **Offer skill updates across the fleet** (`fleet-skill-updates`), later.
+7. **Offer skill updates across the fleet** (`fleet-skill-updates`), later.
    Behavior: N2 notices when an installed skill has a newer version at its
    source and offers one action that updates it on every enrolled Mac; the
    Fleet panel shows which Macs are behind.

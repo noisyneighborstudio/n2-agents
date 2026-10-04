@@ -678,6 +678,13 @@ final class Controller {
             note("supervisor", "repair: reopened \(reopen.compactMap { str($0["chunk"]) }.joined(separator: ", "))\(together.isEmpty ? "" : " (as one: \(together.joined(separator: ", ")))")\(added.isEmpty ? "" : "; added \(added.map(\.id).joined(separator: ", "))")")
         case "pause":
             s.pause("supervisor: \(str(r["reason"]) ?? str(r["summary"]) ?? "needs a human")")
+        case "waive":
+            let failing = s.plan.criteria.map(\.id).filter { s.evidence(for: candidate)[$0]?.passed != true && s.waived?[$0] == nil }
+            guard let id = str(r["criterion"]), failing.contains(id) else {
+                note("supervisor", "\(t.id) asked to waive \"\(str(r["criterion"]) ?? "")\", which isn't a failing criterion")
+                return unusable(t, "the sign-off")
+            }
+            s.pause("the sign-off judges criterion \(id) impossible as written: \(str(r["reason"]) ?? str(r["summary"]) ?? "") — waive it: agents loop waive \(s.shortId) \(id) \"<why>\"; or keep it: agents loop answer \(s.shortId) \"<what to do instead>\"")
         default:
             note("supervisor", "\(t.id) returned an unknown decision \"\(decision)\"")
             unusable(t, "the sign-off")
@@ -688,7 +695,9 @@ final class Controller {
     private func finish(_ candidate: String, summary: String) {
         var doc = "# \(s.plan.goal)\n\nDone on branch `\(s.branch)` at `\(candidate)`.\n\n\(summary)\n\n## Definition of done\n\n"
         let ev = s.evidence(for: candidate)
-        for c in s.plan.criteria { doc += "- **\(c.id)** — \(c.description)\n  - \(ev[c.id]?.detail ?? "")\n" }
+        for c in s.plan.criteria {
+            doc += "- **\(c.id)** — \(c.description)\n  - \(s.waived?[c.id].map { "waived by the user: " + $0 } ?? ev[c.id]?.detail ?? "")\n"
+        }
         if !s.plan.verificationCommands.isEmpty {
             doc += "\n## Commands\n\n"
             for r in s.commands where r.candidate == candidate { doc += "- `\(r.command)` → exit \(r.exitCode)\n" }

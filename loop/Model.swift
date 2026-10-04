@@ -182,6 +182,8 @@ struct RunState: Codable {
     var outcomes: [Outcome]? = nil
     /// The user's answers to a paused run, in order; every later prompt carries them.
     var decisions: [String]? = nil
+    /// Criteria the user waived after a sign-off judged them impossible as written: id -> reason.
+    var waived: [String: String]? = nil
 
     func chunk(_ id: String) -> Chunk? { plan.chunks.first { $0.id == id } }
 
@@ -211,7 +213,7 @@ struct RunState: Codable {
     /// exited 0, on this exact commit. Nothing else counts as done.
     func definitionOfDoneHolds(on candidate: String) -> Bool {
         let ev = evidence(for: candidate)
-        let criteriaPass = plan.criteria.allSatisfy { ev[$0.id]?.passed == true }
+        let criteriaPass = plan.criteria.allSatisfy { ev[$0.id]?.passed == true || waived?[$0.id] != nil }
         let results = commands.filter { $0.candidate == candidate }
         let commandsPass = plan.verificationCommands.allSatisfy { cmd in
             results.last(where: { $0.command == cmd })?.exitCode == 0

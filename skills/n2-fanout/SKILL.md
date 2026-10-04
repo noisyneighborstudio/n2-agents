@@ -78,7 +78,9 @@ false while RUNNING, `agents loop resume <run>`.
   `agents loop resume <run> --budget <new total>`. A question from the
   supervisor: answer it if the user already settled it, otherwise ask them,
   then `agents loop answer <run> "<decision>"`, which records it for every
-  later worker and reviewer and resumes. A failure that keeps repeating:
+  later worker and reviewer and resumes. A sign-off that judges a criterion
+  impossible as written pauses for the user: never waive it yourself; if the
+  user agrees, `agents loop waive <run> <criterion> "<why>"`. A failure that keeps repeating:
   bring it to the user, then `agents loop resume <run>`.
 - To stop: `agents loop pause <run>`. Work so far is kept.
 

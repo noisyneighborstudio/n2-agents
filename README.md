@@ -252,6 +252,7 @@ agents loop pause [run]            # stops running agents now; their work stays 
 agents loop resume [run]           # carries on from exactly there
 agents loop resume [run] --budget 4h   # …with a larger total budget
 agents loop answer <run> "decision"    # answer a paused run's question; every later agent sees it
+agents loop waive <run> <criterion> "why"   # waive a criterion the sign-off judged impossible
 agents loop wait [run]             # blocks until something happens: a merge, a repair, a pause, done
 agents loop log [run] -f           # the controller's log, every status change included
 agents loop list
