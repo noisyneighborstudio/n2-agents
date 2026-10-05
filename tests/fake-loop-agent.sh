@@ -9,6 +9,13 @@
 #                     LOOP_FAKE_STRUCTURED the wrapper records the TERM
 #   fail-b-once       the first verification rejects criterion has-b
 #   liar              the sign-off says done whatever the evidence says
+#   coupled           b depends on a, and the first sign-off reopens both
+#   impossible        the verifier always fails has-b; the sign-off asks to
+#                     waive it
+#   question          b's reviewer pauses with a question until a decision
+#                     reaches its prompt
+#   ask               the planner asks where b goes; replanned-with-c is
+#                     written when a prompt carries the answer c.txt
 set -eu
 if [ "${LOOP_FAKE_STRUCTURED:-}" = 1 ]; then
   exec /usr/bin/python3 "$(dirname "$0")/fake-loop-protocol.py" "$0" "$@"
@@ -49,6 +56,20 @@ fi
 
 case $role in
   planner)
+    if [ -f "$LOOP_FAKE/coupled" ]; then
+      echo 'N2_RESULT {"plan":{"goal":"Write a.txt and b.txt","criteria":[{"id":"has-a","description":"a.txt exists","verification":"look for a.txt"},{"id":"has-b","description":"b.txt says done","verification":"read b.txt"}],"verificationCommands":["grep -q \"names b\" a.txt","grep -q \"names a\" b.txt"],"chunks":[{"id":"a","title":"Write a","instructions":"Create a.txt","paths":["a.txt"],"criteria":["has-a"],"dependsOn":[],"effort":"light"},{"id":"b","title":"Write b","instructions":"Create b.txt","paths":["b.txt"],"criteria":["has-b"],"dependsOn":["a"],"effort":"deep"}]},"questions":[]}'
+      exit 0
+    fi
+    if [ -f "$LOOP_FAKE/ask" ]; then
+      case $prompt in *"→ c.txt"*)
+        # The answer changes the plan: b's work lands in c.txt instead.
+        touch "$LOOP_FAKE/replanned-with-c"
+        echo 'N2_RESULT {"plan":{"goal":"Write a.txt and c.txt","criteria":[{"id":"has-a","description":"a.txt exists","verification":"look for a.txt"},{"id":"has-b","description":"c.txt says done","verification":"read c.txt"}],"verificationCommands":["test -f a.txt","grep -q done c.txt","test ! -e b.txt"],"chunks":[{"id":"a","title":"Write a","instructions":"Create a.txt","paths":["a.txt"],"criteria":["has-a"],"dependsOn":[],"effort":"light"},{"id":"c","title":"Write c","instructions":"Create c.txt","paths":["c.txt"],"criteria":["has-b"],"dependsOn":[],"effort":"deep"}]},"questions":[{"id":"where","question":"Where does b go?","options":[{"label":"b.txt","recommended":true},{"label":"c.txt","recommended":false}]}]}'
+        exit 0 ;;
+      esac
+      echo 'N2_RESULT {"plan":{"goal":"Write a.txt and b.txt","criteria":[{"id":"has-a","description":"a.txt exists","verification":"look for a.txt"},{"id":"has-b","description":"b.txt says done","verification":"read b.txt"}],"verificationCommands":["test -f a.txt","grep -q done b.txt"],"chunks":[{"id":"a","title":"Write a","instructions":"Create a.txt","paths":["a.txt"],"criteria":["has-a"],"dependsOn":[],"effort":"light"},{"id":"b","title":"Write b","instructions":"Create b.txt","paths":["b.txt"],"criteria":["has-b"],"dependsOn":[],"effort":"deep"}]},"questions":[{"id":"where","question":"Where does b go?","options":[{"label":"b.txt","recommended":true},{"label":"c.txt","recommended":false}]}]}'
+      exit 0
+    fi
     cat <<'JSON'
 Planned.
 N2_RESULT {"plan":{"goal":"Write a.txt and b.txt","criteria":[{"id":"has-a","description":"a.txt exists","verification":"look for a.txt"},{"id":"has-b","description":"b.txt says done","verification":"read b.txt"}],"verificationCommands":["test -f a.txt","grep -q done b.txt"],"chunks":[{"id":"a","title":"Write a","instructions":"Create a.txt","paths":["a.txt"],"criteria":["has-a"],"dependsOn":[],"effort":"light"},{"id":"b","title":"Write b","instructions":"Create b.txt","paths":["b.txt"],"criteria":["has-b"],"dependsOn":[],"effort":"deep"}]},"questions":[]}
@@ -57,14 +78,28 @@ JSON
   worker)
     [ -f "$LOOP_FAKE/slow" ] && sleep 60
     n=$(( $(cat "$LOOP_FAKE/n" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$LOOP_FAKE/n"
-    echo "done by $profile, turn $n" > "$chunk.txt"
+    case $prompt in
+      *"also covers chunk b"*)   # the coupled repair: both files, each naming the other
+        echo "done, names b" > a.txt; echo "done, names a" > b.txt ;;
+      *) echo "done by $profile, turn $n" > "$chunk.txt" ;;
+    esac
     echo "N2_RESULT {\"status\":\"done\",\"summary\":\"wrote $chunk.txt\"}"
     ;;
   supervisor)
     case $prompt in
-      *"Review one chunk"*) echo 'N2_RESULT {"decision":"accept","summary":"looks right"}' ;;
+      *"Review one chunk"*)
+        if [ -f "$LOOP_FAKE/question" ] && [ "$chunk" = b ] && [ "${prompt#*Decisions the user made}" = "$prompt" ]; then
+          echo 'N2_RESULT {"decision":"pause","summary":"keep the marker or drop it?","feedback":"keep the marker or drop it?"}'
+        else
+          echo 'N2_RESULT {"decision":"accept","summary":"looks right"}'
+        fi ;;
       *"answer for the result"*)
-        if [ -f "$LOOP_FAKE/liar" ] || [ "${prompt#*does NOT hold}" = "$prompt" ]; then
+        if [ -f "$LOOP_FAKE/impossible" ] && [ "${prompt#*does NOT hold}" != "$prompt" ]; then
+          echo 'N2_RESULT {"decision":"waive","criterion":"has-b","reason":"b.txt cannot say done at 1x1","summary":"impossible"}'
+        elif [ -f "$LOOP_FAKE/coupled" ] && [ ! -f "$LOOP_FAKE/coupled-repaired" ]; then
+          touch "$LOOP_FAKE/coupled-repaired"
+          echo 'N2_RESULT {"decision":"repair","summary":"a and b disagree","reopen":[{"chunk":"a","feedback":"a.txt must name b"},{"chunk":"b","feedback":"b.txt must name a"}]}'
+        elif [ -f "$LOOP_FAKE/liar" ] || [ "${prompt#*does NOT hold}" = "$prompt" ]; then
           echo 'N2_RESULT {"decision":"done","summary":"all verified"}'
         else
           echo 'N2_RESULT {"decision":"repair","summary":"b is wrong","reopen":[{"chunk":"b","feedback":"b.txt must say done"}]}'
@@ -75,6 +110,7 @@ JSON
   verifier)
     b=true
     if [ -f "$LOOP_FAKE/fail-b-once" ]; then b=false; rm "$LOOP_FAKE/fail-b-once"; fi
+    [ -f "$LOOP_FAKE/impossible" ] && b=false
     echo "N2_RESULT {\"criteria\":[{\"id\":\"has-a\",\"passed\":true,\"evidence\":\"a.txt present\"},{\"id\":\"has-b\",\"passed\":$b,\"evidence\":\"b.txt checked\"}],\"summary\":\"checked\"}"
     ;;
   *) echo "unknown role" >&2; exit 2 ;;

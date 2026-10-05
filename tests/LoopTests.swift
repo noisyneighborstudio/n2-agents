@@ -91,6 +91,161 @@ import Darwin
         expect(pick([slot("claude", "A", used: 10), slot("claude", "B", used: 10)], effort: .standard, cooldowns: [:], busy: ["claude|A": 1])?.key == "claude|B",
                "work spreads across equal slots")
 
+        // Review: another lab whenever one is signed in, and a wait rather than self-review.
+        let claude = slot("claude", "Work", used: 10), codex = slot("codex", "Home", used: 50)
+        func reviewer(_ s: [Slot], of labs: Set<String>, avoid: Set<String> = []) -> String? {
+            pickReviewer(s, effort: .deep, cooldowns: [:], busy: [:], notFrom: labs, avoidSlots: avoid)?.key
+        }
+        expect(reviewer([claude, codex], of: ["claude"]) == "codex|Home", "Claude's work goes to Codex, though Claude has more quota")
+        expect(reviewer([claude, slot("codex", "Home", used: 97)], of: ["claude"]) == nil,
+               "another lab out of quota means waiting, never self-review")
+        expect(reviewer([claude, codex], of: ["codex"]) == "claude|Work", "a sign-off goes to the lab that didn't verify")
+        expect(reviewLabs([claude, slot("codex", "Home", used: 97)], notFrom: ["claude"]) == ["codex"], "the wait names the lab it needs")
+        expect(reviewer([claude, slot("codex", "Home", used: 10, signedIn: "no")], of: ["claude"]) == "claude|Work",
+               "a lab that isn't signed in can't review; one lab reviews within itself")
+        let a = slot("codex", "A", used: 10), b = slot("codex", "B", used: 60)
+        expect(reviewer([a, b], of: ["codex"], avoid: ["codex|A"]) == "codex|B", "within one lab, another account reviews")
+        expect(reviewer([a, slot("codex", "B", used: 99)], of: ["codex"], avoid: ["codex|A"]) == "codex|A",
+               "a lone usable account still gets its review")
+
+        // What the controller starts gets a clean signal state, though it is
+        // started from a GCD thread (every signal blocked) by a process
+        // ignoring SIGINT and SIGTERM: a TUI under test must see SIGWINCH.
+        let probe = NSTemporaryDirectory() + "signals-\(UUID().uuidString)"
+        defer { for f in [probe, probe + ".err"] { try? FileManager.default.removeItem(atPath: f) } }
+        let previous = signal(SIGINT, SIG_IGN)
+        let spawned = DispatchGroup()
+        spawned.enter()
+        DispatchQueue.global().async {
+            _ = try? spawnAndWait(["/usr/bin/python3", "-c", "import signal; print(sorted(int(s) for s in signal.pthread_sigmask(signal.SIG_BLOCK, [])), signal.getsignal(signal.SIGINT) is signal.SIG_IGN)"],
+                                  cwd: "/", stdin: "/dev/null", stdout: probe, stderr: probe + ".err",
+                                  timeout: 30, detach: true, abort: Flag())
+            spawned.leave()
+        }
+        spawned.wait()
+        signal(SIGINT, previous)
+        let seen = (try? String(contentsOfFile: probe, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+        expect(seen == "[] False", "a spawned command starts with no blocked or ignored signals (saw \(seen ?? "nothing"))")
+
+        // A failed command keeps the failure's name: the trial's PTY test dumped
+        // 50 KB of screen bytes after it, and a plain tail kept only those.
+        let dump = String(repeating: "\u{1B}[3;9H1\u{1B}[23;40H\u{1B}(B\u{1B}[m screen bytes\n", count: 1500)
+        let output = "test_flash ... ok\nFAIL: test_resize (tests.test_tui_pty.CalculatorPTYTests)\n"
+            + "  File \"tests/test_tui_pty.py\", line 479, in test_resize\nAssertionError: Timed out waiting for the long entry\n" + dump
+            + "\nRan 67 tests in 7.6s\n\nFAILED (failures=1)\n"
+        let excerpt = failureExcerpt(output)
+        expect(excerpt.count <= 3000, "the excerpt fits its limit (\(excerpt.count))")
+        expect(excerpt.contains("FAIL: test_resize") && excerpt.contains("AssertionError: Timed out") && excerpt.contains("line 479"),
+               "the failing test, its line and its assertion survive")
+        expect(excerpt.hasSuffix("FAILED (failures=1)\n") && !excerpt.contains("\u{1B}"), "the end is kept and terminal escapes are gone")
+        expect(failureExcerpt("short\n") == "short\n", "short output is kept whole")
+
+        // A repair keeps coupled chunks together: the trial's tui and pty-smoke
+        // deadlocked split (pty-smoke waited on tui; tui's review failed on its test).
+        func chunk(_ id: String, _ deps: [String] = []) -> Chunk {
+            Chunk(id: id, title: id, instructions: "", paths: [id], criteria: [], dependsOn: deps, effort: .standard)
+        }
+        let model = chunk("model"), tui = chunk("tui", ["model", "layout"]), pty = chunk("pty-smoke", ["tui"]),
+            tests = chunk("arithmetic-tests", ["model"]), docs = chunk("docs")
+        expect(coupledRepairs([tui, pty]) == ["tui": ["pty-smoke"]], "a reopened chunk and its reopened dependent run as one, rooted at the dependency")
+        expect(coupledRepairs([model, tests, tui, pty]) == ["model": ["arithmetic-tests", "tui", "pty-smoke"]],
+               "links through each other join one group")
+        expect(coupledRepairs([tui, docs]).isEmpty, "unrelated reopened chunks stay apart and run in parallel")
+        expect(coupledRepairs([pty]).isEmpty, "a dependency that wasn't reopened couples nothing")
+        expect(coupledRepairs([tui, pty, pty]) == ["tui": ["pty-smoke"]], "a chunk named twice neither traps nor doubles")
+        // Folding that would make a cycle keeps the group apart (Codex's case:
+        // a needs x, x needs b, c needs a and b; all but x reopened).
+        let cyc = [chunk("a", ["x"]), chunk("x", ["b"]), chunk("b"), chunk("c", ["a", "b"])]
+        let folded = absorbRepairs(cyc, reopened: ["a", "b", "c"], added: [])
+        expect(folded.together.isEmpty && folded.apart.count == 1 && dependencyProblems(folded.chunks).isEmpty,
+               "a fold that would cycle stays apart and the plan stays valid (\(folded))")
+        let plain = absorbRepairs([model, chunk("layout"), tui, pty], reopened: ["tui", "pty-smoke"], added: [chunk("c", ["pty-smoke"])])
+        expect(plain.together == ["tui+pty-smoke"] && plain.chunks.first { $0.id == "c" }?.dependsOn == ["pty-smoke", "tui"]
+               && plain.chunks.first { $0.id == "pty-smoke" }?.status == .accepted, "a valid fold carries added dependents to its root")
+        // What depended on an absorbed chunk, a chunk the repair adds included, waits for its carrier.
+        var afterRepair = [model, tui, pty, chunk("c", ["pty-smoke"]), docs]
+        waitForCarriers(&afterRepair, carriedBy: ["pty-smoke": "tui"])
+        expect(afterRepair[3].dependsOn == ["pty-smoke", "tui"] && afterRepair[2].dependsOn == ["tui"] && afterRepair[4].dependsOn.isEmpty,
+               "a dependent of the absorbed chunk now also waits for the root")
+
+        // Workers: strength x quota left, and no slot past 1.5x its fair share.
+        let hand: (String, Effort) -> Double = { lab, effort in Double(Adapter.of(lab)!.strength[effort]!) }
+        func worker(_ s: [Slot], _ effort: Effort = .standard, assigned: [String: Int] = [:],
+                    strength: @escaping (String, Effort) -> Double = hand) -> String? {
+            pickWorker(s, effort: effort, cooldowns: [:], busy: [:], assigned: assigned, strength: strength)?.key
+        }
+        let roomy = slot("codex", "Roomy", used: 10), tight = slot("claude", "Tight", used: 70)
+        expect(worker([tight, roomy]) == "codex|Roomy", "equal strength: more quota left wins")
+        expect(worker([tight, roomy], strength: { lab, _ in lab == "claude" ? 3 : 1 }) == "claude|Tight",
+               "a much stronger lab beats more quota: 3 x 0.3 > 1 x 0.9")
+        expect(worker([tight, roomy], assigned: ["codex|Roomy": 2]) == "claude|Tight",
+               "past 1.5x its fair share a slot waits while another has less")
+        expect(worker([tight, roomy], assigned: ["codex|Roomy": 2, "claude|Tight": 2]) == "codex|Roomy",
+               "level shares go back to the score")
+        let ten = (0..<10).map { slot($0 < 5 ? "claude" : "codex", "P\($0)", used: Double($0) * 5) }
+        var spread: [String: Int] = [:]
+        for _ in 0..<20 { spread[worker(ten, assigned: spread)!, default: 0] += 1 }
+        expect(spread.count == 10 && spread.values.max()! <= 3, "twenty chunks over ten slots: everyone works, nobody past 3 (\(spread))")
+        expect(worker([slot("codex", "Full", used: 97), slot("claude", "Off", used: 10, signedIn: "no")]) == nil, "unusable slots never work")
+        expect(worker([slot("codex", "Unmetered", used: nil, quota: "no-usage-api"), slot("claude", "Metered", used: 90)]) == "claude|Metered",
+               "measured capacity before unmeasured")
+        expect(worker([slot("codex", "Unmetered", used: nil, quota: "no-usage-api"), slot("claude", "Metered", used: 90)],
+                      assigned: ["claude|Metered": 1]) == "claude|Metered",
+               "the spread cap never hands work to unknown capacity while measured capacity is left")
+
+        // Strength is learned from reviewed work once a lab has five outcomes.
+        let recordPath = NSTemporaryDirectory() + "lab-\(UUID().uuidString).jsonl"
+        defer { try? FileManager.default.removeItem(atPath: recordPath) }
+        let record = LabRecord(path: recordPath)
+        for score in [1.0, 1, 0.5, 0] { record.add(Outcome(slot: "codex|A", chunk: "c", effort: .deep, score: score, at: Date())) }
+        expect(record.strength("codex", .deep) == 3, "four outcomes: still the adapter's rating")
+        record.add(Outcome(slot: "codex|B", chunk: "d", effort: .deep, score: 0, at: Date()))
+        expect(abs(record.strength("codex", .deep) - 2.0) < 1e-9, "five outcomes averaging 0.5 measure 2.0")
+        expect(record.strength("codex", .light) == 2, "other efforts keep their rating")
+        expect(LabRecord(path: recordPath).outcomes.count == 5, "the record survives a restart")
+        // A torn line costs only itself: the next outcome starts on a line of its own.
+        let torn = NSTemporaryDirectory() + "lab-\(UUID().uuidString).jsonl"
+        defer { try? FileManager.default.removeItem(atPath: torn) }
+        try? Data("{\"slot\":\"codex|T\",\"chunk\":\"half".utf8).write(to: URL(fileURLWithPath: torn))
+        LabRecord(path: torn).add(Outcome(slot: "codex|T", chunk: "whole", effort: .light, score: 1, at: Date()))
+        expect(LabRecord(path: torn).outcomes.map(\.chunk) == ["whole"], "an outcome after a torn line is still readable")
+        // Torn inside a multibyte character: the earlier and later lines survive.
+        let mangled = NSTemporaryDirectory() + "lab-\(UUID().uuidString).jsonl"
+        defer { try? FileManager.default.removeItem(atPath: mangled) }
+        LabRecord(path: mangled).add(Outcome(slot: "codex|T", chunk: "before", effort: .light, score: 1, at: Date()))
+        if let h = FileHandle(forWritingAtPath: mangled) { h.seekToEndOfFile(); h.write(Data([0x7B, 0x22, 0xE2, 0x82])); try? h.close() }
+        LabRecord(path: mangled).add(Outcome(slot: "codex|T", chunk: "after", effort: .light, score: 1, at: Date()))
+        expect(LabRecord(path: mangled).outcomes.map(\.chunk) == ["before", "after"], "invalid UTF-8 in one line costs only that line")
+        // Two runs appending at once lose nothing and corrupt nothing.
+        let shared = NSTemporaryDirectory() + "lab-\(UUID().uuidString).jsonl"
+        defer { try? FileManager.default.removeItem(atPath: shared) }
+        // Each writer is its own record, as each run's controller is its own process.
+        DispatchQueue.concurrentPerform(iterations: 4) { r in
+            let record = LabRecord(path: shared)
+            for i in 0..<100 {
+                record.add(Outcome(slot: "codex|R\(r)", chunk: "c\(i)-" + String(repeating: "x", count: i % 37), effort: .standard, score: 1, at: Date()))
+            }
+        }
+        let lines = ((try? String(contentsOfFile: shared, encoding: .utf8)) ?? "").split(separator: "\n")
+        expect(lines.count == 400 && LabRecord(path: shared).outcomes.count == 400,
+               "concurrent appends keep every line whole (\(lines.count) lines, \(LabRecord(path: shared).outcomes.count) readable)")
+
+        // Approval waits for every answer, and for a plan drafted with any answer that changes it.
+        var q = Question(id: "where", question: "Where?", options: [.init(label: "b", recommended: true), .init(label: "c", recommended: false)])
+        expect(approvalBlocker([q], run: "r1")?.contains("agents loop answer r1") == true, "an open question blocks approval")
+        q.answer = "b"
+        expect(approvalBlocker([q], run: "r1") == nil, "the recommendation is what the plan assumed")
+        q.answer = "c"
+        expect(approvalBlocker([q], run: "r1")?.contains("agents loop replan r1") == true, "another answer needs a new draft")
+        q.plannedWith = "c"
+        expect(approvalBlocker([q], run: "r1") == nil, "a draft planned with the answer can be approved")
+        q.answer = "b"
+        expect(approvalBlocker([q], run: "r1")?.contains("agents loop replan r1") == true,
+               "back to the recommendation after a draft built on another answer needs a new draft")
+        var open = Question(id: "x", question: "X?", options: [])
+        open.answer = "no preference"
+        expect(approvalBlocker([open], run: "r1") == nil, "no preference on a question without a recommendation changes nothing")
+
         let reserved = slot("claude", "Reserve", used: 96, quota: "local-reserve")
         expect(pick([reserved], effort: .deep, cooldowns: [:], busy: [:]) == nil,
                "N2 reserve stays excluded without a provider-rejection label")

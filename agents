@@ -940,9 +940,44 @@ bin_dir() {
 # <vendor>-as and <vendor>-<profile> as real executables on PATH (symlinks to
 # Resources/agent-as), so every app and script can pin a profile — a shell
 # function only ever existed inside shells that sourced our helper.
+# N2's own skills (skills/<name>/SKILL.md beside this script) linked into
+# every profile's Claude and Codex skills, so an agent in any profile knows
+# how to fan work out. A link points outside the slot, so fleet sync leaves
+# it alone and each Mac links its own install's copy. A real directory of the
+# same name is someone's own skill and is never replaced.
+link_skills() {  # 1 = remove ours
+  for ls_src in "$scripts_dir"/skills/*/SKILL.md; do
+    [ -f "$ls_src" ] || continue
+    ls_src=$(dirname "$ls_src"); ls_name=$(basename "$ls_src")
+    for n in $(all_profiles); do
+      for v in claude codex; do
+        ls_slot=$(config_dir "$n" "$v")
+        [ -d "$ls_slot" ] || continue
+        # A linked skills dir points somewhere else: never write through it.
+        [ -L "$ls_slot/skills" ] && continue
+        ls_dst="$ls_slot/skills/$ls_name"
+        if [ -L "$ls_dst" ]; then
+          # Ours: this install's skill, or one inside an N2 app bundle. Any
+          # other link is someone's own and stays.
+          case $(readlink "$ls_dst") in
+            "$ls_src"|*"/N2 Agents.app/Contents/Resources/skills/$ls_name"|*"/N2Agents.app/Contents/Resources/skills/$ls_name"|*"/N2-Fleet-QA.app/Contents/Resources/skills/$ls_name") ;;
+            *) continue ;;
+          esac
+        elif [ -e "$ls_dst" ]; then
+          continue
+        fi
+        if [ "$1" = 1 ]; then rm -f "$ls_dst"; continue; fi
+        [ "$(readlink "$ls_dst" 2>/dev/null)" = "$ls_src" ] && continue
+        mkdir -p "$ls_slot/skills" && ln -sfn "$ls_src" "$ls_dst"
+      done
+    done
+  done
+}
+
 cmd_shims() {
   remove=0
   [ "${1:-}" = --remove ] && remove=1
+  link_skills "$remove"
   src="$scripts_dir/agent-as"
   [ -f "$src" ] || src="$scripts_dir/shell/agent-as"  # dev-tree layout
   dir=$(bin_dir) || die "agents command link not found; run install.sh again"

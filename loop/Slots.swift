@@ -133,6 +133,25 @@ func pick(_ slots: [Slot], effort: Effort, cooldowns: [String: Cooldown], busy: 
     }.first
 }
 
+/// A reviewer from a lab other than `labs` whenever another lab is signed
+/// in: no lab grades its own work. When that lab is busy or out of quota this
+/// returns nil and the run waits for it. Only a run with a single lab signed
+/// in reviews within it, on another account where there is one.
+func pickReviewer(_ slots: [Slot], effort: Effort, cooldowns: [String: Cooldown], busy: [String: Int],
+                  notFrom labs: Set<String>, avoidSlots: Set<String> = []) -> Slot? {
+    let others = reviewLabs(slots, notFrom: labs)
+    guard others.isEmpty else {
+        return pick(slots.filter { others.contains($0.vendor) }, effort: effort, cooldowns: cooldowns, busy: busy)
+    }
+    return pick(slots, effort: effort, cooldowns: cooldowns, busy: busy, avoidSlots: avoidSlots)
+        ?? pick(slots, effort: effort, cooldowns: cooldowns, busy: busy)
+}
+
+/// The signed-in labs that may review work from `labs`.
+func reviewLabs(_ slots: [Slot], notFrom labs: Set<String>) -> Set<String> {
+    Set(slots.filter { $0.signedIn != "no" }.map(\.vendor)).subtracting(labs)
+}
+
 /// A failed run's outcome, and how long its slot sits out. Shared by the
 /// planner and the controller so both judge slots the same way.
 func slotTrouble(_ slot: String, _ tail: String, now: Date = Date()) -> (String, Cooldown) {

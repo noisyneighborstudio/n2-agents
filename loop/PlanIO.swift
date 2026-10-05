@@ -114,3 +114,63 @@ func describePlan(_ s: RunState, slots: [Slot]?) -> String {
     out += "\nBudget: \(human(s.budgetMs)) of agent time. Work happens on branch \(s.branch) in worktrees; your checkout is untouched and nothing is pushed.\n"
     return out
 }
+
+/// Reopened chunks that must change together: linked by dependsOn, directly
+/// or through each other. Split, the dependent waits for the other's merge
+/// while that one's review fails on tests the dependent owns.
+/// Each group's root, the one depending on no other in the group, does the
+/// whole repair; the rest stay accepted. Returns root id -> absorbed ids.
+func coupledRepairs(_ reopened: [Chunk]) -> [String: [String]] {
+    let ids = Set(reopened.map(\.id))
+    var group = Dictionary(reopened.map { ($0.id, $0.id) }, uniquingKeysWith: { a, _ in a })
+    func find(_ x: String) -> String { group[x] == x ? x : find(group[x]!) }
+    for c in reopened { for d in c.dependsOn where ids.contains(d) { group[find(c.id)] = find(d) } }
+    var out: [String: [String]] = [:]
+    for members in Dictionary(grouping: Array(ids), by: find).values where members.count > 1 {
+        let inGroup = Set(members)
+        let roots = reopened.filter { inGroup.contains($0.id) && !$0.dependsOn.contains(where: inGroup.contains) }
+        let root = roots.first?.id ?? members[0]
+        var seen = Set<String>()
+        out[root] = reopened.map(\.id).filter { inGroup.contains($0) && $0 != root && seen.insert($0).inserted }
+    }
+    return out
+}
+
+/// Whatever depends on an absorbed chunk, chunks a repair adds included,
+/// also waits for the repair root carrying its fix.
+func waitForCarriers(_ chunks: inout [Chunk], carriedBy: [String: String]) {
+    for i in chunks.indices {
+        for (id, root) in carriedBy.sorted(by: { $0.key < $1.key })
+        where chunks[i].dependsOn.contains(id) && chunks[i].id != root && !chunks[i].dependsOn.contains(root) {
+            chunks[i].dependsOn.append(root)
+        }
+    }
+}
+
+/// The plan after a repair: chunks added, and each coupled group of reopened
+/// chunks folded into its root, whose dependents (added ones included) then
+/// wait for it. A group whose folding would make a dependency cycle stays
+/// as separate repairs. Returns the plan, the groups folded and those kept apart.
+func absorbRepairs(_ chunks: [Chunk], reopened: [String], added: [Chunk]) -> (chunks: [Chunk], together: [String], apart: [String]) {
+    var plan = chunks + added
+    var together: [String] = [], apart: [String] = []
+    let groups = coupledRepairs(reopened.compactMap { id in chunks.first { $0.id == id } })
+    for (root, absorbed) in groups.sorted(by: { $0.key < $1.key }) {
+        var trial = plan
+        guard let r = trial.firstIndex(where: { $0.id == root }) else { continue }
+        for id in absorbed {
+            guard let i = trial.firstIndex(where: { $0.id == id }) else { continue }
+            let a = trial[i]
+            trial[r].paths = Array(Set(trial[r].paths + a.paths)).sorted()
+            trial[r].criteria = Array(Set(trial[r].criteria + a.criteria)).sorted()
+            trial[r].feedback = (trial[r].feedback ?? "") + "\n\nThis repair also covers chunk \(id) (\(a.title)), whose paths are yours for it: \(a.feedback ?? "")"
+            trial[i].status = .accepted
+            trial[i].revisions -= 1
+            trial[i].feedback = nil
+        }
+        waitForCarriers(&trial, carriedBy: Dictionary(uniqueKeysWithValues: absorbed.map { ($0, root) }))
+        let name = ([root] + absorbed).joined(separator: "+")
+        if dependencyProblems(trial).isEmpty { plan = trial; together.append(name) } else { apart.append(name) }
+    }
+    return (plan, together, apart)
+}

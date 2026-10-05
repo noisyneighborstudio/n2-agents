@@ -220,19 +220,29 @@ agents loop "Add CSV export to the reports page" --file spec.md --budget 2h
    result. It asks about real ambiguities. You approve the plan; after that,
    no agent can change what done means.
 2. **Fan out.** Chunks run in parallel, each in its own git worktree, each on
-   the best slot for its rating: the strongest model for the effort, then the
-   most quota left. A slot that hits its limit, fails sign-in, or has an
+   the slot that scores best for it: the lab's strength for the chunk's effort
+   times the quota left. No slot takes more than 1.5x its fair share of the
+   work while another has less, so every profile and lab with quota pulls its
+   weight. Strength starts from a rating per lab and is then learned: each
+   reviewed chunk records how its lab did (accepted first time, after
+   revisions, or reopened by verification) in
+   `~/.n2-agents/loops/lab-outcomes.jsonl`, and after five chunks at an effort
+   that record decides. A slot that hits its limit, fails sign-in, or has an
    outage is set aside and the chunk moves on. That never counts against the
-   work.
-3. **Supervise.** A supervisor, on a different lab where one is signed in,
-   reviews every chunk before it is merged. It accepts it, sends it back with
+   work. `status` and `DONE.md` show who did the work and how it went.
+3. **Supervise.** A supervisor reviews every chunk before it is merged. It
+   always comes from another lab than the chunk's worker when one is signed
+   in: if that lab is out of quota, the chunk waits for it rather than being
+   reviewed by its own lab. With one lab signed in, another account reviews. It accepts it, sends it back with
    specific feedback, or stops for you. A chunk that stalls gets a diagnosis:
    a new approach, extra chunks, or a question for you. A repeat is never a
    new approach.
 4. **Done.** Once everything is merged, the loop runs the commands, then a
-   fresh verifier checks every criterion on that exact commit, and the
-   supervisor signs off. A failed criterion reopens only the chunks behind
-   it. The run is `DONE` only when every criterion and every command passed
+   fresh verifier checks every criterion on that exact commit, and a
+   supervisor from another lab than the verifier's signs off, so two labs
+   agree on done. A failed criterion reopens only the chunks behind
+   it. A repair that reopens a chunk and one depending on it runs them as one
+   chunk, so neither waits on the other. The run is `DONE` only when every criterion and every command passed
    on the final commit. Nobody's claim of "finished" counts, the
    supervisor's included.
 
@@ -241,7 +251,10 @@ agents loop status [run]           # what done means, and how far along each chu
 agents loop pause [run]            # stops running agents now; their work stays in the worktrees
 agents loop resume [run]           # carries on from exactly there
 agents loop resume [run] --budget 4h   # …with a larger total budget
-agents loop log [run] -f           # the controller's log
+agents loop answer <run> "decision"    # answer a paused run's question; every later agent sees it
+agents loop waive <run> <criterion> "why"   # waive a criterion the sign-off judged impossible
+agents loop wait [run]             # blocks until something happens: a merge, a repair, a pause, done
+agents loop log [run] -f           # the controller's log, every status change included
 agents loop list
 ```
 
@@ -258,7 +271,22 @@ It waits by itself when every slot is out of quota until a known reset.
 
 To review a plan before anything runs, use `agents loop plan "goal" --budget
 2h`, edit the saved `plan.json` if you like, then `agents loop approve <run>
---plan plan.json`. Loops use Claude Code, Codex and Muse. Each runs headless
+--plan plan.json`.
+
+An agent can drive a run the same way, with no terminal: `agents loop plan
+"goal" --budget 2h --json` prints the plan and the planner's questions;
+`agents loop answer <run> <question> <answer>` answers one (a number picks an
+option); `agents loop replan <run>` drafts again once an answer differs from
+the recommendation. `approve` refuses, with the next command to run, until
+every question is answered and planned in.
+
+Any agent can do this for you. N2 links its `n2-fanout` skill into every
+profile's Claude Code and Codex skills (each time the app starts), so asking
+the agent you're already using to "fan this out" walks it through planning,
+your questions, your approval and following the run to the end. A skill of
+your own with that name is left alone.
+
+Loops use Claude Code, Codex and Muse. Each runs headless
 with its own scoped approval mode. Grok and Cursor only offer
 approve-everything modes, so the loop doesn't use them. Runs live in
 `~/.n2-agents/loops/`.

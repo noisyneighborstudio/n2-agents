@@ -87,6 +87,32 @@ struct Question: Codable {
     var question: String
     var options: [Option]
     var answer: String?
+    /// The answer the current plan was drafted with.
+    var plannedWith: String? = nil
+
+    /// What an empty reply means: the recommendation, else no preference.
+    var defaultAnswer: String { options.first(where: \.recommended)?.label ?? "no preference" }
+    /// Answered with something the current plan hasn't been drafted with: the
+    /// first draft assumed the recommendation, a later one the answers it saw.
+    var changesPlan: Bool { answer.map { $0 != (plannedWith ?? defaultAnswer) } ?? false }
+}
+
+/// Why a drafted plan can't be approved yet, or nil when it can.
+func approvalBlocker(_ questions: [Question], run: String) -> String? {
+    let open = questions.filter { $0.answer == nil }.map(\.id)
+    if !open.isEmpty {
+        return "the planner asked \(open.count) question(s) first: \(open.joined(separator: ", ")) — agents loop answer \(run) <question> <answer>"
+    }
+    let changed = questions.filter(\.changesPlan).map(\.id)
+    if !changed.isEmpty {
+        return "your answer to \(changed.joined(separator: ", ")) changes the plan — draft it again: agents loop replan \(run)"
+    }
+    return nil
+}
+
+struct PendingWaiver: Codable {
+    var criterion: String
+    var candidate: String
 }
 
 struct Evidence: Codable {
@@ -158,6 +184,14 @@ struct RunState: Codable {
     var shortId: String { String(id.prefix(8)) }
     var candidate: String? { plan.chunks.allSatisfy { $0.status == .accepted } ? lastMerge : nil }
     var lastMerge: String?
+    /// How each reviewed chunk went for the slot that did it.
+    var outcomes: [Outcome]? = nil
+    /// The user's answers to a paused run, in order; every later prompt carries them.
+    var decisions: [String]? = nil
+    /// Criteria the user waived after a sign-off judged them impossible as written: id -> reason.
+    var waived: [String: String]? = nil
+    /// The waiver a sign-off proposed and the commit it judged: the only one `waive` accepts.
+    var pendingWaiver: PendingWaiver? = nil
 
     func chunk(_ id: String) -> Chunk? { plan.chunks.first { $0.id == id } }
 
@@ -187,7 +221,7 @@ struct RunState: Codable {
     /// exited 0, on this exact commit. Nothing else counts as done.
     func definitionOfDoneHolds(on candidate: String) -> Bool {
         let ev = evidence(for: candidate)
-        let criteriaPass = plan.criteria.allSatisfy { ev[$0.id]?.passed == true }
+        let criteriaPass = plan.criteria.allSatisfy { ev[$0.id]?.passed == true || waived?[$0.id] != nil }
         let results = commands.filter { $0.candidate == candidate }
         let commandsPass = plan.verificationCommands.allSatisfy { cmd in
             results.last(where: { $0.command == cmd })?.exitCode == 0

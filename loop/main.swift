@@ -7,8 +7,13 @@ agents loop — fan a goal out across your slots until its definition of done ho
   agents loop "goal" --budget 2h [--file spec.md]…   plan, interview, approve, start
   agents loop plan "goal" --budget 2h                plan and interview; approve later
   agents loop approve <run> [--plan edited.json]     approve a drafted plan and start
+  agents loop answer <run> <question> <answer>       answer a planner's question
+  agents loop answer <run> "<decision>"              answer a paused run's question and resume
+  agents loop waive <run> <criterion> "<why>"        waive a criterion the sign-off judged impossible, and resume
+  agents loop replan <run>                           draft the plan again with your answers
   agents loop start --plan plan.json --budget 2h --yes   start a reviewed plan unattended
   agents loop status [run] [--json]                  where it stands, what done means
+  agents loop wait [run] [--timeout 30m] [--json]    block until a merge, repair, pause, wait or done
   agents loop list                                   every run
   agents loop pause [run]                            stop turns now; all work is kept
   agents loop resume [run] [--budget 4h]             continue; --budget sets a new total
@@ -20,6 +25,8 @@ Options:
   --file <path>          add a document to the goal; repeatable
   --cwd <dir>            the repository (default: current directory)
   --keep-awake           keep the Mac awake while the run is going
+  --json                 plan, answer, replan, status, wait: JSON on stdout
+  --timeout <duration>   wait: return after this long with nothing new (default 30m)
 
 How it works: a planner splits the goal into chunks and writes the definition
 of done — observable criteria plus exact verification commands — which you
@@ -42,11 +49,12 @@ struct Args {
     var yes = false
     var json = false
     var follow = false
+    var timeout: Int?
 }
 
 func parseArgs(_ argv: [String]) throws -> Args {
     var a = Args()
-    let commands: Set = ["start", "plan", "approve", "status", "list", "pause", "resume", "log", "_controller"]
+    let commands: Set = ["start", "plan", "approve", "answer", "waive", "replan", "status", "wait", "list", "pause", "resume", "log", "_controller"]
     var rest = argv[...]
     if let first = rest.first, commands.contains(first) { a.command = first; rest = rest.dropFirst() }
     func value(_ flag: String) throws -> String {
@@ -63,6 +71,7 @@ func parseArgs(_ argv: [String]) throws -> Args {
             a.concurrency = n
         case "--file": a.files.append(try value(arg))
         case "--plan": a.plan = try value(arg)
+        case "--timeout": a.timeout = try parseDuration(try value(arg))
         case "--cwd": a.cwd = try value(arg)
         case "--keep-awake": a.keepAwake = true
         case "--yes": a.yes = true
@@ -78,6 +87,12 @@ func parseArgs(_ argv: [String]) throws -> Args {
 }
 
 let interactive = isatty(0) == 1 && isatty(1) == 1
+/// With --json, stdout carries only the JSON; progress goes to stderr.
+var jsonOut = false
+
+func say(_ line: String) {
+    if jsonOut { FileHandle.standardError.write(Data((line + "\n").utf8)) } else { print(line) }
+}
 
 func ask(_ prompt: String) -> String {
     print(prompt, terminator: "")
@@ -104,7 +119,7 @@ func planOnce(_ s: inout RunState, cli: String, source: SlotSource, cwd: String,
         guard let slot = pick(try source.slots(), effort: .deep, cooldowns: s.cooldowns, busy: [:], avoidSlots: avoid) else {
             throw LoopError("no signed-in slot with quota left to plan with (see: agents list, agents best)")
         }
-        print("planning with \(slot.key)…")
+        say("planning with \(slot.key)…")
         let id = "\(s.turns.count + 1)-planner"
         s.turns.append(Turn(id: id, role: .planner, chunk: nil, slot: slot.key, effort: .deep, startedAt: Date()))
         try Store.standard().save(s)
@@ -146,7 +161,7 @@ func planOnce(_ s: inout RunState, cli: String, source: SlotSource, cwd: String,
         // each remaining slot without spending the invalid-plan allowance.
         if s.turns[i].outcome != "quota" { failedPlans += 1 }
         avoid.insert(slot.key)
-        print("  \(slot.key) \(out.exit == 0 ? "returned no plan" : "failed: " + oneLine(out.tail, 160))\(failedPlans < 4 ? " — trying another slot" : "")")
+        say("  \(slot.key) \(out.exit == 0 ? "returned no plan" : "failed: " + oneLine(out.tail, 160))\(failedPlans < 4 ? " — trying another slot" : "")")
     }
     throw LoopError("four non-quota planner turns failed; see \(Store.standard().dir(s.id))/turns")
 }
@@ -161,11 +176,12 @@ func draft(_ s: inout RunState, cli: String, source: SlotSource, cwd: String) th
             if plan.goal.isEmpty { plan.goal = s.plan.goal }
             s.plan = plan
             let answered = Dictionary(uniqueKeysWithValues: s.questions.compactMap { q in q.answer.map { (q.question, $0) } })
-            s.questions = questions.map { var q = $0; q.answer = answered[q.question]; return q }
+            // The planner saw these answers, so this draft is planned with them.
+            s.questions = questions.map { var q = $0; q.answer = answered[q.question]; q.plannedWith = q.answer; return q }
             return
         }
         errors = problems
-        print("  the plan had \(problems.count) problem(s); asking for a corrected one")
+        say("  the plan had \(problems.count) problem(s); asking for a corrected one")
     }
     throw LoopError("the planner couldn't produce a valid plan:\n  " + errors.joined(separator: "\n  "))
 }
@@ -232,7 +248,7 @@ func newRun(_ a: Args, store: Store) throws -> RunState {
     guard !goal.isEmpty || !sources.isEmpty || a.plan != nil else { throw LoopError("what's the goal? agents loop \"goal\" --budget 2h") }
     let id = UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "")
     if !trackedChanges(root).isEmpty || !git(root, "ls-files", "--others", "--exclude-standard").out.isEmpty {
-        print("note: uncommitted changes in \(root) are not part of the run — it starts from \(base.prefix(10))")
+        say("note: uncommitted changes in \(root) are not part of the run — it starts from \(base.prefix(10))")
     }
     let s = RunState(
         id: id, created: Date(), repo: root, baseCommit: base, branch: "n2/loop-\(id.prefix(8))", sources: sources,
@@ -247,8 +263,8 @@ func newRun(_ a: Args, store: Store) throws -> RunState {
 
 /// Plan in a throwaway worktree of the starting commit: planners read, and
 /// the user's checkout is never where an agent runs.
-func planRun(_ s: inout RunState, store: Store, cli: String) throws {
-    guard let lock = store.lock(s.id) else { throw LoopError("run already has an active planner or controller") }
+func planRun(_ s: inout RunState, store: Store, cli: String, interview asking: Bool = interactive, holding held: Int32? = nil) throws {
+    guard let lock = held ?? store.lock(s.id) else { throw LoopError("run already has an active planner or controller") }
     defer {
         try? FileManager.default.removeItem(atPath: store.pauseFile(s.id))
         flock(lock, LOCK_UN); close(lock)
@@ -259,15 +275,21 @@ func planRun(_ s: inout RunState, store: Store, cli: String) throws {
     let source = SlotSource(cli: cli)
     try draft(&s, cli: cli, source: source, cwd: dir)
     try store.save(s)
-    if interactive, interview(&s) {
+    if asking, interview(&s) {
         print("\nre-planning with your answers…")
         try draft(&s, cli: cli, source: source, cwd: dir)
     }
     try store.save(s)
 }
 
+/// The run lock `approve` holds from reading the draft until its controller starts.
+var heldLock: Int32?
+
 func approveAndStart(_ s: inout RunState, store: Store, cli: String) throws {
-    guard !store.controllerRunning(s.id) else { throw LoopError("run already has an active planner or controller") }
+    let fd = try heldLock ?? takeLock(store, s.id, waiting: 0)
+    heldLock = fd
+    defer { if let fd = heldLock { flock(fd, LOCK_UN); close(fd); heldLock = nil } }
+    if let blocker = approvalBlocker(s.questions, run: s.shortId) { throw LoopError("not approved: " + blocker) }
     recoverTurnProcesses(&s.turns, runId: s.id, store: store)
     try? FileManager.default.removeItem(atPath: store.pauseFile(s.id))
     _ = try gitOrThrow(s.repo, ["branch", s.branch, s.baseCommit])
@@ -275,6 +297,7 @@ func approveAndStart(_ s: inout RunState, store: Store, cli: String) throws {
     s.status = .running
     s.log("approved", "\(s.plan.criteria.count) criteria, \(s.plan.chunks.count) chunks, budget \(human(s.budgetMs))")
     try store.save(s)
+    if let fd = heldLock { flock(fd, LOCK_UN); close(fd); heldLock = nil }   // the controller takes it next
     try launchController(s, store: store)
     print("""
 
@@ -293,6 +316,11 @@ func launchController(_ s: RunState, store: Store) throws {
 }
 
 func confirmOrDraft(_ s: inout RunState, store: Store, cli: String, yes: Bool) throws {
+    if let blocker = approvalBlocker(s.questions, run: s.shortId) {
+        _ = try writePlanFile(s)
+        print("\n" + describePlan(s, slots: nil) + "\nsaved as a draft: " + blocker)
+        return
+    }
     let source = SlotSource(cli: cli)
     print("\n" + describePlan(s, slots: try? source.slots()))
     if yes || (interactive && ask("Approve and start? [y/N] ").lowercased().hasPrefix("y")) {
@@ -303,8 +331,123 @@ func confirmOrDraft(_ s: inout RunState, store: Store, cli: String, yes: Bool) t
     }
 }
 
+/// A draft as an agent reads it: the plan, its questions, and what stands
+/// between it and approval.
+func draftJSON(_ s: RunState) throws -> String {
+    let questions: [[String: Any]] = s.questions.map { q in
+        var o: [String: Any] = ["id": q.id, "question": q.question,
+                                "options": q.options.map { ["label": $0.label, "recommended": $0.recommended] }]
+        o["answer"] = q.answer ?? NSNull()
+        o["changesPlan"] = q.changesPlan
+        return o
+    }
+    let view: [String: Any] = [
+        "run": s.shortId, "status": s.status.rawValue, "goal": s.plan.goal, "budget": human(s.budgetMs),
+        "criteria": s.plan.criteria.map { ["id": $0.id, "description": $0.description, "verification": $0.verification] },
+        "verificationCommands": s.plan.verificationCommands,
+        "chunks": s.plan.chunks.map { ["id": $0.id, "title": $0.title, "paths": $0.paths, "dependsOn": $0.dependsOn,
+                                        "effort": $0.effort.rawValue] },
+        "questions": questions,
+        "blocker": approvalBlocker(s.questions, run: s.shortId) ?? NSNull(),
+    ]
+    return String(decoding: try JSONSerialization.data(withJSONObject: view, options: [.prettyPrinted, .sortedKeys]), as: UTF8.self)
+}
+
+/// The events worth telling someone about: work merged, a repair, a wait
+/// for quota, a pause, done.
+func newsworthy(_ e: Event) -> Bool {
+    ["merge", "done", "paused", "capacity"].contains(e.kind) || (e.kind == "supervisor" && e.detail.hasPrefix("repair"))
+}
+
+/// Block until the run has news, then print it: the events since the call,
+/// and where the run stands. A paused, finished or orphaned run answers at once.
+func waitForNews(store: Store, id: String, timeoutMs: Int, json: Bool) throws {
+    let first = try store.load(id)
+    let mark = first.events.last
+    let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1000)
+    var s = first
+    var news: [Event] = []
+    while true {
+        let alive = store.controllerRunning(id)
+        let tail: ArraySlice<Event>
+        if let mark, let i = s.events.lastIndex(where: { $0.at == mark.at && $0.kind == mark.kind && $0.detail == mark.detail }) {
+            tail = s.events[(i + 1)...]
+        } else {
+            tail = s.events[...]
+        }
+        news = tail.filter(newsworthy)
+        // A pause is answerable only once its controller has stopped.
+        let settled = ([.paused, .done, .draft].contains(s.status) || [.running, .waiting].contains(s.status)) && !alive
+        let stopping = [.paused, .done].contains(s.status) && alive
+        if settled || (!stopping && (!news.isEmpty || s.status != first.status)) || Date() >= deadline { break }
+        usleep(1_000_000)
+        s = try store.load(id)
+    }
+    let orphaned = [.running, .waiting].contains(s.status) && !store.controllerRunning(id)
+    if json {
+        var o: [String: Any] = ["run": s.shortId, "status": s.status.rawValue, "controllerRunning": store.controllerRunning(id),
+                                "events": news.map { ["at": iso.string(from: $0.at), "kind": $0.kind, "detail": $0.detail] }]
+        o["reason"] = s.reason ?? NSNull()
+        o["retryAt"] = s.retryAt.map { iso.string(from: $0) } ?? NSNull()
+        print(String(decoding: try JSONSerialization.data(withJSONObject: o, options: [.prettyPrinted, .sortedKeys]), as: UTF8.self))
+    } else {
+        for e in news { print("\(iso.string(from: e.at)) \(e.kind): \(e.detail)") }
+        print("status: \(s.status.rawValue)\(s.reason.map { " — " + $0 } ?? "")\(orphaned ? " (controller not running — agents loop resume \(s.shortId))" : "")")
+    }
+}
+
+/// The run's lock, waiting up to `seconds` for a stopping planner or controller to let go.
+func takeLock(_ store: Store, _ id: String, waiting seconds: Double) throws -> Int32 {
+    let deadline = Date().addingTimeInterval(seconds)
+    while true {
+        if let fd = store.lock(id) { return fd }
+        guard Date() < deadline else { throw LoopError("run \(id.prefix(8)) is busy: a planner or controller is working on it") }
+        usleep(200_000)
+    }
+}
+
+/// Load, change and save a run holding its lock, so no planner, controller or
+/// other command saves an older copy over the change.
+@discardableResult
+func mutate(_ store: Store, _ id: String, waiting seconds: Double = 0, _ body: (inout RunState) throws -> Void) throws -> RunState {
+    let fd = try takeLock(store, id, waiting: seconds)
+    defer { flock(fd, LOCK_UN); close(fd) }
+    var s = try store.load(id)
+    try body(&s)
+    try store.save(s)
+    return s
+}
+
+/// Continue a paused or orphaned run from where it stopped.
+func resumeRun(store: Store, id: String, budget: Int?, change: (inout RunState) throws -> Void = { _ in }) throws {
+    // A running controller refuses at once; one stopping after a pause gets time to let go.
+    let now = try store.load(id)
+    if store.controllerRunning(id) && ![.paused, .done].contains(now.status) {
+        throw LoopError("run \(now.shortId) is \(now.status.rawValue) with its controller working; pause it first")
+    }
+    let s = try mutate(store, id, waiting: 60) { s in
+        guard s.status != .done else { throw LoopError("run \(s.shortId) is done — its result is on branch \(s.branch)") }
+        guard s.status != .draft else { throw LoopError("run \(s.shortId) is a draft — approve it: agents loop approve \(s.shortId)") }
+        try change(&s)
+        if let b = budget {
+            guard b > s.usedMs else { throw LoopError("the new total must exceed the \(human(s.usedMs)) already used") }
+            s.budgetMs = b
+        }
+        s.status = .running
+        s.reason = nil
+        s.retryAt = nil
+        s.pendingWaiver = nil
+        // A human resuming is the material change: fresh chances for what had stalled.
+        s.signatures = s.signatures.filter { !$0.key.hasPrefix("unusable:") && $0.key != "slot-failures" }
+        s.log("resumed", "budget \(human(s.budgetMs)), \(human(s.usedMs)) used")
+    }
+    try launchController(s, store: store)
+    print("resumed loop \(s.shortId) — agents loop status \(s.shortId)")
+}
+
 func main() throws {
     let a = try parseArgs(Array(CommandLine.arguments.dropFirst()))
+    jsonOut = a.json
     let store = Store.standard()
     switch a.command {
     case "start", "plan":
@@ -314,8 +457,13 @@ func main() throws {
             try loadPlanFile(file, into: &s)
             try store.save(s)
         } else {
-            print("run \(s.shortId): planning \"\(oneLine(s.plan.goal, 80))\"")
-            try planRun(&s, store: store, cli: cli)
+            say("run \(s.shortId): planning \"\(oneLine(s.plan.goal, 80))\"")
+            try planRun(&s, store: store, cli: cli, interview: interactive && !a.json)
+        }
+        if a.command == "plan" && a.json {
+            _ = try writePlanFile(s)
+            print(try draftJSON(s))
+            return
         }
         if a.command == "plan" {
             print("\n" + describePlan(s, slots: nil))
@@ -327,20 +475,78 @@ func main() throws {
         try confirmOrDraft(&s, store: store, cli: cli, yes: a.yes)
     case "approve":
         let cli = try agentsCLI()
-        var s = try store.load(try store.resolve(a.positional.first))
+        let id = try store.resolve(a.positional.first)
+        heldLock = try takeLock(store, id, waiting: 0)
+        var s = try store.load(id)
         guard s.status == .draft else { throw LoopError("run \(s.shortId) is \(s.status.rawValue), not a draft") }
         if let file = a.plan { try loadPlanFile(file, into: &s) }
         if let b = a.budget { s.budgetMs = b }
+        if let blocker = approvalBlocker(s.questions, run: s.shortId) { throw LoopError("not approved: " + blocker) }
         try confirmOrDraft(&s, store: store, cli: cli, yes: a.yes || !interactive)
+    case "answer" where a.positional.count == 2:
+        let decision = a.positional[1].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !decision.isEmpty else { throw LoopError("the decision is empty") }
+        try resumeRun(store: store, id: try store.resolve(a.positional[0]), budget: a.budget) { s in
+            guard s.status == .paused else {
+                throw LoopError("run \(s.shortId) is \(s.status.rawValue); a decision answers a paused run (a draft's questions take: answer <run> <question> <answer>)")
+            }
+            s.decisions = (s.decisions ?? []) + [decision]
+            s.log("decided", decision)
+            // The decision is the material change: a chunk stopped at the revision cap gets one more try.
+            for i in s.plan.chunks.indices where s.plan.chunks[i].status != .accepted && s.plan.chunks[i].revisions >= Limits.maxRevisions {
+                s.plan.chunks[i].revisions = Limits.maxRevisions - 1
+            }
+        }
+    case "waive":
+        guard a.positional.count >= 3 else { throw LoopError("usage: agents loop waive <run> <criterion> \"<why>\"") }
+        let criterion = a.positional[1], why = a.positional[2...].joined(separator: " ")
+        try resumeRun(store: store, id: try store.resolve(a.positional[0]), budget: a.budget) { s in
+            // Only what the sign-off proposed, on the commit it judged, may be waived.
+            guard s.status == .paused, let pending = s.pendingWaiver, pending.criterion == criterion, pending.candidate == s.lastMerge else {
+                throw LoopError("run \(s.shortId) has no pending waiver for \"\(criterion)\"\(s.pendingWaiver.map { " (the sign-off proposed waiving \($0.criterion))" } ?? ""); only a criterion the sign-off judged impossible can be waived")
+            }
+            s.waived = (s.waived ?? [:]).merging([criterion: why]) { $1 }
+            s.log("waived", "\(criterion): \(why)")
+        }
+    case "answer":
+        guard a.positional.count >= 3 else { throw LoopError("usage: agents loop answer <run> <question> <answer>, or for a paused run: agents loop answer <run> \"<decision>\"") }
+        let qid = a.positional[1], reply = a.positional[2...].joined(separator: " ")
+        // Under the lock: a replan in flight refuses the answer instead of saving over it.
+        let s = try mutate(store, try store.resolve(a.positional[0])) { s in
+            guard s.status == .draft else { throw LoopError("run \(s.shortId) is \(s.status.rawValue), not a draft") }
+            guard let i = s.questions.firstIndex(where: { $0.id == qid }) else {
+                throw LoopError("run \(s.shortId) has no question \"\(qid)\" (it has: \(s.questions.map(\.id).joined(separator: ", ")))")
+            }
+            let q = s.questions[i]
+            // A number picks an option, as in the interactive interview.
+            s.questions[i].answer = Int(reply).flatMap { $0 >= 1 && $0 <= q.options.count ? q.options[$0 - 1].label : nil } ?? reply
+            s.log("answered", "\(q.id): \(s.questions[i].answer!)")
+        }
+        if a.json { print(try draftJSON(s)) }
+        else { print(approvalBlocker(s.questions, run: s.shortId) ?? "ready to approve: agents loop approve \(s.shortId)") }
+    case "replan":
+        let cli = try agentsCLI()
+        let id = try store.resolve(a.positional.first)
+        // Locked before reading: an answer can't land between this read and the planner's save.
+        let lock = try takeLock(store, id, waiting: 0)
+        var s = try store.load(id)
+        guard s.status == .draft else { flock(lock, LOCK_UN); close(lock); throw LoopError("run \(s.shortId) is \(s.status.rawValue), not a draft") }
+        say("run \(s.shortId): planning again with your answers")
+        try planRun(&s, store: store, cli: cli, interview: false, holding: lock)
+        _ = try writePlanFile(s)
+        if a.json { print(try draftJSON(s)) }
+        else { print("\n" + describePlan(s, slots: nil)); print(approvalBlocker(s.questions, run: s.shortId) ?? "ready to approve: agents loop approve \(s.shortId)") }
     case "status":
         let s = try store.load(try store.resolve(a.positional.first))
         if a.json { print(String(decoding: try Store.encoder.encode(s), as: UTF8.self)) }
         else { print(describeRun(s, controllerAlive: store.controllerRunning(s.id)), terminator: "") }
+    case "wait":
+        try waitForNews(store: store, id: try store.resolve(a.positional.first), timeoutMs: a.timeout ?? 30 * 60_000, json: a.json)
     case "list":
         print(listRuns(store))
     case "pause":
         let id = try store.resolve(a.positional.first)
-        var s = try store.load(id)
+        let s = try store.load(id)
         let unfinishedDraft = s.status == .draft && s.turns.contains { $0.endedAt == nil }
         guard [.running, .waiting].contains(s.status) || unfinishedDraft else { throw LoopError("run \(s.shortId) is \(s.status.rawValue)") }
         if store.controllerRunning(id) {
@@ -348,37 +554,20 @@ func main() throws {
             print("pausing \(s.shortId): stopping running turns; their work stays in the worktrees…")
             while store.controllerRunning(id) { usleep(200_000) }
         } else {
-            recoverTurnProcesses(&s.turns, runId: s.id, store: store)
-            if unfinishedDraft {
-                s.reason = "planning stopped; the draft still needs a valid plan and approval"
-                s.log("planning-stopped", s.reason!)
-            } else {
-                s.pause("paused by you — resume with: agents loop resume \(s.shortId)")
+            try mutate(store, id) { s in
+                recoverTurnProcesses(&s.turns, runId: s.id, store: store)
+                if unfinishedDraft {
+                    s.reason = "planning stopped; the draft still needs a valid plan and approval"
+                    s.log("planning-stopped", s.reason!)
+                } else {
+                    s.pause("paused by you — resume with: agents loop resume \(s.shortId)")
+                }
             }
-            try store.save(s)
         }
         print(describeRun(try store.load(id), controllerAlive: false), terminator: "")
     case "resume":
-        let cli = try agentsCLI()
-        _ = cli
-        let id = try store.resolve(a.positional.first)
-        var s = try store.load(id)
-        guard !store.controllerRunning(id) else { throw LoopError("run \(s.shortId) is already running") }
-        guard s.status != .done else { throw LoopError("run \(s.shortId) is done — its result is on branch \(s.branch)") }
-        guard s.status != .draft else { throw LoopError("run \(s.shortId) is a draft — approve it: agents loop approve \(s.shortId)") }
-        if let b = a.budget {
-            guard b > s.usedMs else { throw LoopError("the new total must exceed the \(human(s.usedMs)) already used") }
-            s.budgetMs = b
-        }
-        s.status = .running
-        s.reason = nil
-        s.retryAt = nil
-        // A human resuming is the material change: fresh chances for what had stalled.
-        s.signatures = s.signatures.filter { !$0.key.hasPrefix("unusable:") && $0.key != "slot-failures" }
-        s.log("resumed", "budget \(human(s.budgetMs)), \(human(s.usedMs)) used")
-        try store.save(s)
-        try launchController(s, store: store)
-        print("resumed loop \(s.shortId) — agents loop status \(s.shortId)")
+        _ = try agentsCLI()
+        try resumeRun(store: store, id: try store.resolve(a.positional.first), budget: a.budget)
     case "log":
         let id = try store.resolve(a.positional.first)
         let log = store.controllerLog(id)

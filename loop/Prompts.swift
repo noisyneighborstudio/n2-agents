@@ -6,12 +6,14 @@ import Foundation
 
 private func contract(_ s: RunState) -> String {
     let done = s.plan.criteria.map { "- [\($0.id)] \($0.description)\n  verified by: \($0.verification)" }.joined(separator: "\n")
+    let decided = (s.decisions ?? []).map { "- \($0)" }.joined(separator: "\n")
     return """
     Goal:
     \(s.plan.goal)
 
     Definition of done (approved by the user; no agent may change, waive or reinterpret it):
     \(done)
+    \(decided.isEmpty ? "" : "\nDecisions the user made during the run (binding: they settle any question, review or instruction that says otherwise):\n" + decided)
     """
 }
 
@@ -47,7 +49,7 @@ func plannerPrompt(goal: String, sources: [String], answers: [Question], budgetM
     Produce:
     1. criteria — the definition of done. Each is an observable fact about the finished work, with how an independent reviewer checks it. Together they must cover the entire goal: when every one holds, the goal is done, and not before.
     2. verificationCommands — exact, non-interactive shell commands run from the repository root on the final commit (build, tests, lint). Only commands that exist or that the plan creates. Empty if there are none.
-    3. chunks — the work, split into pieces one agent can finish in one focused session of about fifteen minutes. Each chunk: id (short slug), title, instructions (complete: the worker sees only this chunk), paths (the files or globs it will touch, e.g. "src/api/**"; use "**" only when it truly spans everything), criteria (ids it serves), dependsOn (chunk ids that must be merged first), effort ("light" for mechanical work, "standard", or "deep" for hard design, debugging or reasoning). Chunks that can run at the same time should not share paths.
+    3. chunks — the work, split into pieces one agent can finish in one focused session of about fifteen minutes. Each chunk: id (short slug), title, instructions (complete: the worker sees only this chunk), paths (the files or globs it will touch, e.g. "src/api/**"; use "**" only when it truly spans everything), criteria (ids it serves), dependsOn (chunk ids that must be merged first), effort ("light" for mechanical work, "standard", or "deep" for hard design, debugging or reasoning). Chunks that can run at the same time should not share paths. A chunk that changes behavior also updates the tests asserting that behavior: never split a change from its tests.
     4. questions — only real ambiguities that change the plan, each with options and exactly one recommended. The plan you return must assume the recommended answers.
     \(rules)
     \(answer(#"{"plan":{"goal":"…","criteria":[{"id":"…","description":"…","verification":"…"}],"verificationCommands":["…"],"chunks":[{"id":"…","title":"…","instructions":"…","paths":["…"],"criteria":["…"],"dependsOn":[],"effort":"standard"}]},"questions":[{"id":"…","question":"…","options":[{"label":"…","recommended":true}]}]}"#))
@@ -125,7 +127,7 @@ func diagnosePrompt(_ s: RunState, _ c: Chunk, problem: String) -> String {
 
 func verifierPrompt(_ s: RunState, candidate: String, results: [CommandResult]) -> String {
     let cmds = results.isEmpty ? "No verification commands in the plan." : results.map {
-        "$ \($0.command)  → exit \($0.exitCode)\n\(clip($0.tail, 3000))"
+        "$ \($0.command)  → exit \($0.exitCode)\n\(clip($0.tail, 3200))"
     }.joined(separator: "\n\n")
     return """
     ROLE: verifier
@@ -143,7 +145,9 @@ func verifierPrompt(_ s: RunState, candidate: String, results: [CommandResult]) 
 }
 
 func signoffPrompt(_ s: RunState, candidate: String, evidence: [Evidence], results: [CommandResult]) -> String {
-    let ev = evidence.map { "- \($0.criterion): \($0.passed ? "PASS" : "FAIL") — \($0.detail)" }.joined(separator: "\n")
+    let ev = evidence.map { e in
+        "- \(e.criterion): \(e.passed ? "PASS" : s.waived?[e.criterion].map { "WAIVED by the user (\($0))" } ?? "FAIL") — \(e.detail)"
+    }.joined(separator: "\n")
     let cmds = results.map { "- \($0.command): exit \($0.exitCode)" }.joined(separator: "\n")
     let chunks = s.plan.chunks.map { "- \($0.id) (\($0.paths.joined(separator: ", "))): \($0.title) — serves \($0.criteria.joined(separator: ", "))" }.joined(separator: "\n")
     let holds = s.definitionOfDoneHolds(on: candidate)
@@ -161,9 +165,9 @@ func signoffPrompt(_ s: RunState, candidate: String, evidence: [Evidence], resul
 
     \(holds
       ? "Every criterion passed and every command succeeded. Decide whether you stand behind this as done. Answer repair if you find a real defect the criteria should have caught."
-      : "The definition of done does NOT hold yet. Plan the repair: reopen the chunks responsible for each failure with specific feedback, or add chunks for work nobody owns. If a verification command or the environment itself is broken (not the work), pause and say what a human must fix — never rewrite correct code to satisfy a broken check.")
+      : "The definition of done does NOT hold yet. Plan the repair: reopen the chunks responsible for each failure with specific feedback, or add chunks for work nobody owns. If a verification command or the environment itself is broken (not the work), pause and say what a human must fix — never rewrite correct code to satisfy a broken check. If a failed criterion cannot be met as written (it asks for the impossible), answer waive with that criterion and why: only the user can waive it, and the run waits for them.")
     Inspect read-only. Do not edit anything.
     \(rules)
-    \(answer(#"{"decision":"done"|"repair"|"pause","summary":"…","reopen":[{"chunk":"…","feedback":"…"}],"chunks":[{"id":"…","title":"…","instructions":"…","paths":["…"],"criteria":["…"],"dependsOn":[],"effort":"standard"}],"reason":"for pause"}"#))
+    \(answer(#"{"decision":"done"|"repair"|"pause"|"waive","summary":"…","criterion":"for waive","reopen":[{"chunk":"…","feedback":"…"}],"chunks":[{"id":"…","title":"…","instructions":"…","paths":["…"],"criteria":["…"],"dependsOn":[],"effort":"standard"}],"reason":"for pause"}"#))
     """
 }

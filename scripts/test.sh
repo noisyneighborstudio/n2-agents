@@ -4,6 +4,8 @@ set -euo pipefail
 unset CODEX_HOME CLAUDE_CONFIG_DIR GROK_HOME CURSOR_CONFIG_DIR XDG_CONFIG_HOME
 unset OPENAI_API_KEY ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN
 TRAPZERR() { print -u2 -- "Test command failed at ${funcfiletrace[1]}"; }
+# Expect a command to fail. A bare "! cmd" never trips errexit, so it can't fail a test.
+fails() { if "$@"; then print -u2 -- "expected failure: $*"; return 1; fi; }
 cd "${0:A:h}/.."
 
 test_root="$PWD/.test-tmp-${1:-all}"
@@ -622,7 +624,7 @@ grok_installed
 mkdir -p "$grok_home/.n2-agents/Old/grok"
 rm "$grok_home/.grok"
 ln -s "$grok_home/.n2-agents/Old/grok" "$grok_home/.grok"
-! grok_installed
+fails grok_installed
 run_grok_home shims >/dev/null
 grok_installed
 test -x "$grok_bin/grok-old"
@@ -720,6 +722,7 @@ swiftc -parse-as-library ${(f)"$(ls loop/*.swift | grep -v main.swift)"} tests/L
 # app's binary resources just to exercise the loop engine.
 mkdir -p .build/release
 swiftc -swift-version 5 -O loop/*.swift -o "$PWD/.build/release/n2-loop"
+sh scripts/test-fanout-skill.sh
 n2_root=$PWD
 loop_root="$test_root/loop"
 mkdir -p "$loop_root/home" "$loop_root/bin"
@@ -773,11 +776,45 @@ git -C "$repo" show "${branch}:b.txt" | grep -q done
 [ ! -e "$repo/a.txt" ] && [ "$(git -C "$repo" rev-parse --abbrev-ref HEAD)" != "$branch" ]
 [ "$(git -C "$repo" worktree list | wc -l | tr -d ' ')" = 1 ]      # scaffolding cleared away
 test -f "$loop_root/runs/$run/DONE.md"
+# Who did the work: both chunks accepted on first review, across both slots,
+# and each outcome lands in the lab record routing learns from.
+grep -Eq '^  codex \(lab\) +[0-9]+ +2 +2 +0$' "$loop_root/runs/$run/DONE.md"
+[ "$(grep -c '^  codex|' "$loop_root/runs/$run/DONE.md")" = 2 ]
+[ "$(grep -c "\"chunk\"" "$loop_root/runs/lab-outcomes.jsonl")" -ge 2 ]
 roles=$(field '" ".join(sorted(set(t["role"] for t in s["turns"])))')
 [ "$roles" = "planner supervisor verifier worker" ]
 shown=$(loop status "$run")
 [[ $shown == *"DONE"* && $shown == *"✓ has-a"* && $shown == *"✓ grep -q done b.txt"* ]]
+# A finished run answers wait at once, and the log says how it ended.
+[ "$(loop wait "$run" --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')" = DONE ]
+grep -q '] status: DONE' "$loop_root/runs/$run/controller.log"
 loop list | grep -q "${run[1,8]}  DONE"
+
+# An agent drives a run without a terminal: the plan and its questions as
+# JSON, answers by verb, approval refused until they are answered and
+# planned in.
+loop_fake=$(mktemp -d "$loop_root/fake.XXXXXX"); touch "$loop_fake/ask"
+repo=$(mktemp -d "$loop_root/repo.XXXXXX")
+git -C "$repo" init -q && git -C "$repo" config user.email loop@test && git -C "$repo" config user.name Loop
+echo hi > "$repo/README" && git -C "$repo" add . && git -C "$repo" commit -qm init
+drafted=$(loop plan "write a and b" --budget 1h --cwd "$repo" --json 2>/dev/null)
+run=$(ls -t "$loop_root/runs" | head -1)
+jq_() { python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print(eval(sys.argv[1]))' "$1"; }
+[ "$(print -r -- "$drafted" | jq_ 'd["questions"][0]["id"], d["status"], len(d["chunks"])')" = "('where', 'DRAFT', 2)" ]
+[[ $(print -r -- "$drafted" | jq_ 'd["blocker"]') == *"agents loop answer ${run[1,8]}"* ]]
+fails loop approve "$run" >/dev/null 2>&1
+[ "$(field 's["status"]')" = DRAFT ]
+loop answer "$run" where 2 | grep -Fq "agents loop replan ${run[1,8]}"   # c.txt: not the recommendation
+fails loop approve "$run" >/dev/null 2>&1
+fails loop answer "$run" nosuch 1 >/dev/null 2>&1
+replanned=$(loop replan "$run" --json 2>/dev/null)
+test -f "$loop_fake/replanned-with-c"
+[ "$(print -r -- "$replanned" | jq_ 'd["blocker"], d["questions"][0]["answer"]')" = "(None, 'c.txt')" ]
+loop approve "$run" >/dev/null
+wait_for DONE
+# The answer reached the result: c.txt, and no b.txt.
+git -C "$repo" show "n2/loop-${run[1,8]}:c.txt" | grep -q done
+fails git -C "$repo" cat-file -e "n2/loop-${run[1,8]}:b.txt" 2>/dev/null
 
 # A slot out of quota costs the work nothing: planning and chunks fail over.
 new_loop quota-Home
@@ -851,11 +888,26 @@ new_loop slow
 # only once both have, or a TERM in that window kills one without a record.
 for _ in {1..100}; do [ "$(field 'len([t for t in s["turns"] if t["role"] == "worker" and not t.get("endedAt") and t.get("pgid")])')" = 2 ] && [ -e "$loop_fake/trapped-a" ] && [ -e "$loop_fake/trapped-b" ] && break; sleep 0.2; done
 pgids=(${(f)"$(field '"\n".join(str(t["pgid"]) for t in s["turns"] if t["role"] == "worker")')"})
+# A working run refuses a decision at once instead of racing its controller.
+fails loop answer "$run" "too soon" >/dev/null 2>&1
+[ -z "$(field 's.get("decisions")')" ] || [ "$(field 's.get("decisions")')" = None ]
+# Whoever is waiting on the run hears about the pause, with its reason.
+loop wait "$run" --json --timeout 2m > "$loop_root/waited.json" &
+waiter=$!
 loop pause "$run" >/dev/null
+wait $waiter
+python3 - "$loop_root/waited.json" <<'PYWAIT'
+import json,sys
+w=json.load(open(sys.argv[1]))
+assert w["status"]=="PAUSED" and w["reason"].startswith("paused by you"), w
+assert any(e["kind"]=="paused" for e in w["events"]), w
+assert w["controllerRunning"] is False, w   # answerable now: the controller has let go
+PYWAIT
+grep -q '] status: PAUSED — paused by you' "$loop_root/runs/$run/controller.log"
 [ "$(field 's["status"]')" = PAUSED ]
 [[ "$(field 's["reason"]')" == "paused by you"* ]]
 [ "$(field '{t["outcome"] for t in s["turns"] if t["role"] == "worker"}')" = "{'interrupted'}" ] || { field '[{k: t.get(k) for k in ("id", "role", "outcome", "note", "startedAt", "endedAt", "pgid")} for t in s["turns"] if t["role"] == "worker"]' >&2; exit 1; }
-for g in $pgids; do ! kill -0 -"$g" 2>/dev/null; done
+for g in $pgids; do fails kill -0 -"$g" 2>/dev/null; done
 # They were asked to stop: TERM reached each agent, not just the KILL after its
 # grace. The controller ignores TERM itself, which its children must not inherit.
 [ "$(sort "$loop_fake/terminated" 2>/dev/null | tr '\n' ' ')" = "a b " ]
@@ -863,6 +915,42 @@ rm "$loop_fake/slow"
 loop resume "$run" >/dev/null
 wait_for DONE
 [ "$(field 'min(c["turns"] for c in s["plan"]["chunks"])')" = 2 ]
+
+# A repair reopening a chunk and its dependent runs them as one chunk, so
+# neither waits on the other: the root does both fixes, the dependent stays merged.
+new_loop coupled
+wait_for DONE
+grep -q 'repair: reopened a, b (as one: a+b)' "$loop_root/runs/$run/controller.log"
+[ "$(field '[(c["id"], c["turns"]) for c in s["plan"]["chunks"]]')" = "[('a', 2), ('b', 1)]" ]
+grep -lq 'also covers chunk b' "$loop_root/runs/$run"/turns/*-worker-a.prompt
+# Both requested repairs are on the result, made by the one chunk.
+[ "$(git -C "$repo" show "n2/loop-${run[1,8]}:a.txt")" = "done, names b" ]
+[ "$(git -C "$repo" show "n2/loop-${run[1,8]}:b.txt")" = "done, names a" ]
+
+# A criterion the sign-off judges impossible pauses for the user instead of
+# another repair round; only the user's waiver lets the run finish.
+new_loop impossible
+wait_for PAUSED
+[[ "$(field 's["reason"]')" == "the sign-off judges criterion has-b impossible as written"*"agents loop waive"* ]]
+[ "$(field 'sum(1 for t in s["turns"] if t["role"] == "worker")')" = 2 ]
+fails loop waive "$run" nosuch "why" >/dev/null 2>&1
+fails loop waive "$run" has-a "not proposed" >/dev/null 2>&1   # only the proposed criterion
+loop waive "$run" has-b "a 1x1 terminal can't show it" >/dev/null
+wait_for DONE
+[ "$(field 's["status"]')" = DONE ]
+grep -A1 '^- \*\*has-b\*\*' "$loop_root/runs/$run/DONE.md" | grep -q "waived by the user: a 1x1 terminal can't show it"
+
+# A supervisor's question pauses the run; the user's decision resumes it and
+# reaches every later prompt, so the next review settles it.
+new_loop question
+wait_for PAUSED
+[[ "$(field 's["reason"]')" == "supervisor on b: keep the marker or drop it?" ]]
+loop answer "$run" "keep the marker" >/dev/null
+wait_for DONE
+[ "$(field 's["decisions"]')" = "['keep the marker']" ]
+fails loop waive "$run" has-b "nobody proposed it" >/dev/null 2>&1
+grep -lq -- '- keep the marker' "$loop_root/runs/$run"/turns/*-supervisor-b.prompt
+fails loop answer "$run" "too late" >/dev/null 2>&1
 
 # Done means the definition of done: a criterion the verifier rejects sends
 # its chunk back, and only a fresh pass on the new commit finishes the run.

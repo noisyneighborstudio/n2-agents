@@ -110,19 +110,8 @@ func spawnAndWait(_ argv: [String], cwd: String, stdin: String, stdout: String, 
     defer { posix_spawnattr_destroy(&attr) }
     // A concurrent Foundation Process may own Git output pipes or locks.
     // Keep only descriptors installed by our explicit file actions.
-    // The agent must not inherit the controller's ignored TERM and INT, nor the
-    // mask of the dispatch thread that spawns it (which blocks them): either
-    // way a pause or timeout only ever lands as the KILL after the grace.
-    var defaults = sigset_t(), unblocked = sigset_t()
-    sigemptyset(&defaults)
-    sigaddset(&defaults, SIGTERM)
-    sigaddset(&defaults, SIGINT)
-    sigemptyset(&unblocked)
-    posix_spawnattr_setsigdefault(&attr, &defaults)
-    posix_spawnattr_setsigmask(&attr, &unblocked)
-    let flags = Int16(POSIX_SPAWN_CLOEXEC_DEFAULT) | Int16(POSIX_SPAWN_SETSIGDEF) | Int16(POSIX_SPAWN_SETSIGMASK)
-        | (detach ? Int16(POSIX_SPAWN_SETSID) : 0)
-    posix_spawnattr_setflags(&attr, flags)
+    let flags = Int16(POSIX_SPAWN_CLOEXEC_DEFAULT) | (detach ? Int16(POSIX_SPAWN_SETSID) : 0)
+    cleanSignals(&attr, flags)
 
     var pid: pid_t = 0
     let cargs = argv.map { strdup($0) } + [nil]
@@ -195,7 +184,7 @@ func spawnDetached(_ argv: [String], log: String) throws -> pid_t {
     var attr: posix_spawnattr_t? = nil
     posix_spawnattr_init(&attr)
     defer { posix_spawnattr_destroy(&attr) }
-    posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSID) | Int16(POSIX_SPAWN_CLOEXEC_DEFAULT))
+    cleanSignals(&attr, Int16(POSIX_SPAWN_SETSID) | Int16(POSIX_SPAWN_CLOEXEC_DEFAULT))
     var pid: pid_t = 0
     let cargs = argv.map { strdup($0) } + [nil]
     defer { cargs.forEach { free($0) } }
@@ -216,4 +205,19 @@ func recoverTurnProcesses(_ turns: inout [Turn], runId: String, store: Store) {
         turns[i].endedAt = Date()
         turns[i].outcome = "interrupted"
     }
+}
+
+/// A child inherits the spawning thread's signal mask and the process's
+/// ignored signals. GCD threads block every signal and the controller
+/// ignores SIGINT and SIGTERM, so without this a command would never see
+/// SIGWINCH or Ctrl-C, and a paused or timed-out agent would only ever get
+/// the KILL after its grace, never the TERM: start it with nothing blocked
+/// and every default.
+private func cleanSignals(_ attr: inout posix_spawnattr_t?, _ flags: Int16) {
+    var none = sigset_t(), all = sigset_t()
+    sigemptyset(&none)
+    sigfillset(&all)
+    posix_spawnattr_setsigmask(&attr, &none)
+    posix_spawnattr_setsigdefault(&attr, &all)
+    posix_spawnattr_setflags(&attr, flags | Int16(POSIX_SPAWN_SETSIGMASK) | Int16(POSIX_SPAWN_SETSIGDEF))
 }

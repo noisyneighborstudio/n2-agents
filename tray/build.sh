@@ -64,6 +64,7 @@ echo "Version: $ver ($build_ver)"
 cp ../agents ../app-update.py ../workspace-pack.py ../usage.py ../codex-rpc.py ../codex-run.py ../fleet-prompt.py ../fleet-claude.py ../usage-store.py ../vendors.sh ../fleet.sh ../fleet-sync.sh ../fleet-exec.sh ../fleet-qa-import.py ../fleet-manifest.py ../profile-metadata.py ../fleet-auth-response.py ../fleet-auth-transport.py ../fleet-auth-owner.py ../fleet-auth-native.py ../fleet-auth-server.py ../fleet-auth-binding.py ../fleet-auth-client.py ../fleet-auth-manage.py ../fleet-auth-login-wire.py ../fleet-auth-login.py ../fleet-auth-migration.py ../fleet-auth-bridge.py ../fleet-auth-websocket.py ../fleet-session.py ../busybar.py "$bin_dir/n2-loop" "$app/Contents/Resources/"
 cp ../shell/agents.zsh ../shell/agents.bash ../shell/agents.fish ../shell/agent-as "$app/Contents/Resources/"
 ditto logos "$app/Contents/Resources/logos"
+ditto ../skills "$app/Contents/Resources/skills"
 chmod +x "$app/Contents/Resources/agents" "$app/Contents/Resources/agent-as"
 
 # App icon: build multi-res icns from n2agents.png

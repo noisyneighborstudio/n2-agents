@@ -49,6 +49,17 @@ final class Controller {
         self.s = try store.load(id)
         self.slots = SlotSource(cli: cli)
         self.dir = store.dir(id)
+        self.labs = LabRecord(path: store.root + "/lab-outcomes.jsonl")
+    }
+
+    private let labs: LabRecord
+
+    /// A chunk's result for the slot that did it, in the run and the lab record.
+    private func record(_ c: Chunk, score: Double) {
+        guard let slot = c.lastSlot else { return }
+        let o = Outcome(slot: slot, chunk: c.id, effort: c.effort, score: score, at: Date())
+        s.outcomes = (s.outcomes ?? []) + [o]
+        labs.add(o)
     }
 
     private func note(_ kind: String, _ detail: String) {
@@ -57,13 +68,24 @@ final class Controller {
         fflush(stdout)
     }
 
-    private func save() { try? store.save(s) }
+    /// Every status change reaches the controller log, pauses and their reasons included.
+    private var loggedStatus: RunStatus?
+    private func save() {
+        if s.status != loggedStatus {
+            loggedStatus = s.status
+            print("[\(iso.string(from: Date()))] status: \(s.status.rawValue)\(s.reason.map { " — " + $0 } ?? "")")
+            fflush(stdout)
+        }
+        try? store.save(s)
+    }
 
     // MARK: - lifecycle
 
     func run() throws {
         guard let lock = store.lock(s.id) else { throw LoopError("run \(s.shortId) already has a controller") }
         defer { flock(lock, LOCK_UN); close(lock) }
+        // What was read before the lock may be stale: a resume can save in between.
+        s = try store.load(s.id)
         signal(SIGTERM, SIG_IGN)
         signal(SIGINT, SIG_IGN)
         let term = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
@@ -134,6 +156,7 @@ final class Controller {
     private var reserveMs: Int { min(30 * 60_000, s.budgetMs / 4) }
 
     private func tick() {
+        reviewWait = []
         if s.status == .waiting {
             guard let at = s.retryAt, Date() >= at else { return }
             s.status = .running
@@ -147,11 +170,11 @@ final class Controller {
 
         for c in s.plan.chunks where room() && c.problem != nil && !chunkJobs.contains(c.id) {
             guard remainingMs > 0 else { break }
-            if startTurn(.supervisor, chunk: c.id, effort: .deep, avoid: c.lastSlot) { started = true } else { starved = true }
+            if startTurn(.supervisor, chunk: c.id, effort: .deep, of: c.lastSlot) { started = true } else { starved = true }
         }
         for c in s.plan.chunks where room() && c.problem == nil && c.status == .reviewing && !chunkJobs.contains(c.id) {
             guard remainingMs > 0 else { break }
-            if startTurn(.supervisor, chunk: c.id, effort: .deep, avoid: c.lastSlot) { started = true } else { starved = true }
+            if startTurn(.supervisor, chunk: c.id, effort: .deep, of: c.lastSlot) { started = true } else { starved = true }
         }
         var working = s.plan.chunks.filter { $0.status == .working || chunkJobs.contains($0.id) }
         for c in s.plan.chunks where room() && c.problem == nil && c.status == .pending && !chunkJobs.contains(c.id) {
@@ -180,7 +203,10 @@ final class Controller {
     /// Nothing usable right now. Wait for the earliest cooldown if there is
     /// one; otherwise a human has to sign something in.
     private func waitForCapacity() {
-        let all = (try? slots.slots(fresh: true)) ?? []
+        var all = (try? slots.slots(fresh: true)) ?? []
+        // A review waits for its lab only, though others are free.
+        let review = reviewWait.sorted().joined(separator: " or ")
+        if !reviewWait.isEmpty { all = all.filter { reviewWait.contains($0.vendor) } }
         // The refresh may observe recovery after selection used a cached
         // restriction. Let the next tick select from this fresh reading.
         if pick(all, effort: .standard, cooldowns: s.cooldowns, busy: [:]) != nil { return }
@@ -188,19 +214,38 @@ final class Controller {
         if let next {
             s.status = .waiting
             s.retryAt = next
-            note("capacity", "every usable slot is out of quota or cooling down; retrying at \(iso.string(from: next))")
+            note("capacity", (review.isEmpty ? "every usable slot is" : "a review needs \(review), which is")
+                 + " out of quota or cooling down; retrying at \(iso.string(from: next))")
         } else {
-            s.pause("no signed-in slot with quota left (see: agents list, agents best)")
+            s.pause(review.isEmpty ? "no signed-in slot with quota left (see: agents list, agents best)"
+                                   : "a review needs \(review) and no \(review) slot has quota left; no lab reviews its own work (see: agents best)")
         }
     }
 
     // MARK: - turns
 
-    private func chooseSlot(_ effort: Effort, avoid: String?) -> Slot? {
-        guard let all = try? slots.slots() else { return nil }
-        let vendors: Set<String> = avoid.map { [String($0.split(separator: "|")[0])] } ?? []
-        return pick(all, effort: effort, cooldowns: s.cooldowns, busy: busy, avoidVendors: vendors)
+    /// Work so far per slot: worker turns that weren't turned away by slot trouble.
+    private var assigned: [String: Int] {
+        s.turns.filter { $0.role == .worker && !["quota", "auth", "outage"].contains($0.outcome ?? "") }
+            .reduce(into: [:]) { $0[$1.slot, default: 0] += 1 }
     }
+
+    private func chooseWorker(_ effort: Effort) -> Slot? {
+        guard let all = try? slots.slots() else { return nil }
+        return pickWorker(all, effort: effort, cooldowns: s.cooldowns, busy: busy, assigned: assigned, strength: labs.strength)
+    }
+
+    /// Another lab than the one whose work is under review; see pickReviewer.
+    private func chooseReviewer(_ effort: Effort, of slotKeys: [String]) -> Slot? {
+        guard let all = try? slots.slots() else { return nil }
+        let labs = Set(slotKeys.compactMap { $0.split(separator: "|").first.map(String.init) })
+        let slot = pickReviewer(all, effort: effort, cooldowns: s.cooldowns, busy: busy, notFrom: labs, avoidSlots: Set(slotKeys))
+        if slot == nil { reviewWait.formUnion(reviewLabs(all, notFrom: labs)) }
+        return slot
+    }
+
+    /// Labs a review is waiting on this tick: their capacity, not anyone's, ends the wait.
+    private var reviewWait: Set<String> = []
 
     private func newTurn(_ role: Role, chunk: String?, slot: Slot, effort: Effort) -> Turn {
         let id = "\(s.turns.count + 1)-\(role.rawValue)\(chunk.map { "-" + $0 } ?? "")"
@@ -297,7 +342,7 @@ final class Controller {
     // MARK: - workers
 
     private func startWorker(_ id: String) -> Bool {
-        guard var c = s.chunk(id), let slot = chooseSlot(c.effort, avoid: nil) else { return false }
+        guard var c = s.chunk(id), let slot = chooseWorker(c.effort) else { return false }
         let resume = c.workspace != nil
         if c.workspace == nil {
             let path = dir + "/work/" + c.id, branch = "n2/\(s.shortId)/\(c.id)"
@@ -363,8 +408,8 @@ final class Controller {
 
     // MARK: - supervisor
 
-    private func startTurn(_ role: Role, chunk id: String, effort: Effort, avoid: String?) -> Bool {
-        guard let c = s.chunk(id), let ws = c.workspace, let slot = chooseSlot(effort, avoid: avoid) else { return false }
+    private func startTurn(_ role: Role, chunk id: String, effort: Effort, of worker: String?) -> Bool {
+        guard let c = s.chunk(id), let ws = c.workspace, let slot = chooseReviewer(effort, of: worker.map { [$0] } ?? []) else { return false }
         if let problem = c.problem {
             launch(.supervisor, chunk: id, slot: slot, effort: effort, cwd: ws,
                    prompt: diagnosePrompt(s, c, problem: problem), timeout: Limits.review) { t, out in
@@ -426,6 +471,7 @@ final class Controller {
             c.status = .accepted
             c.mergedAs = s.lastMerge
             c.feedback = nil
+            record(c, score: c.revisions == 0 ? 1 : 0.5)
             note("merge", "\(c.id) accepted and merged (\(String(s.lastMerge?.prefix(10) ?? ""))): \(oneLine(reason))")
             return
         }
@@ -515,7 +561,9 @@ final class Controller {
             }
             return true
         }
-        guard let slot = chooseSlot(.deep, avoid: nil) else { return false }
+        // The sign-off comes from another lab than the verifier's, so two labs agree on done.
+        let verifiers = evidence.values.compactMap { e in s.turns.first { $0.id == e.turn }?.slot }
+        guard let slot = chooseReviewer(.deep, of: verifiers) else { return false }
         launch(.supervisor, chunk: nil, slot: slot, effort: .deep, cwd: path,
                prompt: signoffPrompt(s, candidate: candidate, evidence: Array(evidence.values).sorted { $0.criterion < $1.criterion }, results: results),
                timeout: Limits.review) { t, out in
@@ -540,7 +588,7 @@ final class Controller {
                 self.jobs[id] = nil
                 guard let (exit, timedOut, aborted) = result, !aborted else { return }   // paused: runs again on resume
                 let code: Int32 = timedOut ? 124 : exit
-                self.s.commands.append(CommandResult(command: command, exitCode: code, tail: String(text.suffix(4000)),
+                self.s.commands.append(CommandResult(command: command, exitCode: code, tail: failureExcerpt(text) + "\n(full output: \(files).out and \(files).out.err)",
                                                      candidate: candidate, seconds: Date().timeIntervalSince(started)))
                 self.note("verify", "\(command) → exit \(code)\(timedOut ? " (timed out)" : "")")
             }
@@ -594,6 +642,8 @@ final class Controller {
             errors += added.filter { a in s.plan.chunks.contains { $0.id == a.id } }.map { "chunk \"\($0.id)\" already exists" }
             let reopen = ((r["reopen"] as? [Any]) ?? []).compactMap { $0 as? [String: Any] }
             for o in reopen where s.chunk(str(o["chunk"]) ?? "") == nil { errors.append("unknown chunk \"\(str(o["chunk"]) ?? "")\"") }
+            let named = reopen.compactMap { str($0["chunk"]) }
+            if Set(named).count != named.count { errors.append("a chunk is reopened twice") }
             errors += dependencyProblems(s.plan.chunks + added)
             if added.isEmpty && reopen.isEmpty { errors.append("the repair names no chunk") }
             let key = "repair:\(candidate)"
@@ -603,6 +653,7 @@ final class Controller {
             let repo = s.repo
             for o in reopen {
                 let id = str(o["chunk"])!
+                if let c = s.chunk(id) { record(c, score: 0) }
                 s.update(id) { c in
                     if let ws = c.workspace { _ = git(repo, "worktree", "remove", "--force", ws) }
                     if let b = c.branch { _ = git(repo, "branch", "-D", b) }
@@ -612,10 +663,20 @@ final class Controller {
                     c.feedback = "Independent verification found: \(str(o["feedback"]) ?? "")"
                 }
             }
-            s.plan.chunks += added
-            note("supervisor", "repair: reopened \(reopen.compactMap { str($0["chunk"]) }.joined(separator: ", "))\(added.isEmpty ? "" : "; added \(added.map(\.id).joined(separator: ", "))")")
+            // Coupled chunks repair as one, unless folding them would make a cycle.
+            let (chunks, together, apart) = absorbRepairs(s.plan.chunks, reopened: reopen.compactMap { str($0["chunk"]) }, added: added)
+            s.plan.chunks = chunks
+            note("supervisor", "repair: reopened \(reopen.compactMap { str($0["chunk"]) }.joined(separator: ", "))\(together.isEmpty ? "" : " (as one: \(together.joined(separator: ", ")))")\(apart.isEmpty ? "" : " (kept apart, folding would cycle: \(apart.joined(separator: ", ")))")\(added.isEmpty ? "" : "; added \(added.map(\.id).joined(separator: ", "))")")
         case "pause":
             s.pause("supervisor: \(str(r["reason"]) ?? str(r["summary"]) ?? "needs a human")")
+        case "waive":
+            let failing = s.plan.criteria.map(\.id).filter { s.evidence(for: candidate)[$0]?.passed != true && s.waived?[$0] == nil }
+            guard let id = str(r["criterion"]), failing.contains(id) else {
+                note("supervisor", "\(t.id) asked to waive \"\(str(r["criterion"]) ?? "")\", which isn't a failing criterion")
+                return unusable(t, "the sign-off")
+            }
+            s.pendingWaiver = PendingWaiver(criterion: id, candidate: candidate)
+            s.pause("the sign-off judges criterion \(id) impossible as written: \(str(r["reason"]) ?? str(r["summary"]) ?? "") — waive it: agents loop waive \(s.shortId) \(id) \"<why>\"; or keep it: agents loop answer \(s.shortId) \"<what to do instead>\"")
         default:
             note("supervisor", "\(t.id) returned an unknown decision \"\(decision)\"")
             unusable(t, "the sign-off")
@@ -626,11 +687,14 @@ final class Controller {
     private func finish(_ candidate: String, summary: String) {
         var doc = "# \(s.plan.goal)\n\nDone on branch `\(s.branch)` at `\(candidate)`.\n\n\(summary)\n\n## Definition of done\n\n"
         let ev = s.evidence(for: candidate)
-        for c in s.plan.criteria { doc += "- **\(c.id)** — \(c.description)\n  - \(ev[c.id]?.detail ?? "")\n" }
+        for c in s.plan.criteria {
+            doc += "- **\(c.id)** — \(c.description)\n  - \(s.waived?[c.id].map { "waived by the user: " + $0 } ?? ev[c.id]?.detail ?? "")\n"
+        }
         if !s.plan.verificationCommands.isEmpty {
             doc += "\n## Commands\n\n"
             for r in s.commands where r.candidate == candidate { doc += "- `\(r.command)` → exit \(r.exitCode)\n" }
         }
+        doc += "\n## Who did the work\n\n```\n\(spreadTable(s))```\n"
         try? doc.write(toFile: dir + "/DONE.md", atomically: true, encoding: .utf8)
         for c in s.plan.chunks {
             if let ws = c.workspace { _ = git(s.repo, "worktree", "remove", "--force", ws) }
