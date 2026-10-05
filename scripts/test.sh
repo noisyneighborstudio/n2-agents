@@ -75,7 +75,7 @@ if in_group cli; then
 python3 tests/ReonboardTests.py
 sh -n agents vendors.sh fleet.sh fleet-sync.sh fleet-exec.sh scripts/test-fleet-spike.sh scripts/test-exec.sh scripts/test-sync-review.sh scripts/test-sync-status.sh scripts/test-sync-scan.sh scripts/test-archive-guard.sh scripts/test-update.sh scripts/test-native-ui.sh shell/agent-as
 zsh -n install.sh uninstall.sh tray/build.sh \
-  scripts/release-build.sh scripts/make-appcast.sh scripts/release-prepare.sh \
+  scripts/release-build.sh scripts/release-binaries.sh scripts/make-appcast.sh scripts/release-prepare.sh \
   scripts/publish-appcast.sh shell/agents.zsh
 bash -n shell/agents.bash
 command -v fish >/dev/null && fish -n shell/agents.fish
@@ -106,7 +106,7 @@ python3 scripts/test-native-fleet-ordering.py
 python3 scripts/test-native-notification.py
 sh scripts/test-owner-auth-status.sh
 sh scripts/test-profile-setup.sh
-swift test -c release --filter NativeAuthTests
+swift test --filter NativeAuthTests
 swiftc -typecheck scripts/make-icon.swift
 swiftc -typecheck scripts/verify-signature.swift
 channel_test=$(mktemp -d "$TMPDIR/channel.XXXXXX")/update-channel-tests
@@ -871,14 +871,17 @@ quota_proof 8 recovery
 
 # Hold both slots long enough to observe WAITING, then let the real controller
 # retry at the stated reset and finish without a user resume or changed clock.
-new_loop worker-quota-total=2 worker-retry-seconds=30
+# WAITING is observed about 1s after the rejections, so 15s leaves wide margin.
+new_loop worker-quota-total=2 worker-retry-seconds=15
 wait_for WAITING
 wait_for DONE
 quota_proof 2 waiting
 
 # Pause stops running agents at once and keeps their work; resume finishes.
 new_loop slow
-for _ in {1..100}; do [ "$(field 'len([t for t in s["turns"] if t["role"] == "worker" and not t.get("endedAt") and t.get("pgid")])')" = 2 ] && break; sleep 0.2; done
+# A worker's group exists before its wrapper installs the TERM handler; pause
+# only once both have, or a TERM in that window kills one without a record.
+for _ in {1..100}; do [ "$(field 'len([t for t in s["turns"] if t["role"] == "worker" and not t.get("endedAt") and t.get("pgid")])')" = 2 ] && [ -e "$loop_fake/trapped-a" ] && [ -e "$loop_fake/trapped-b" ] && break; sleep 0.2; done
 pgids=(${(f)"$(field '"\n".join(str(t["pgid"]) for t in s["turns"] if t["role"] == "worker")')"})
 # Whoever is waiting on the run hears about the pause, with its reason.
 loop wait "$run" --json --timeout 2m > "$loop_root/waited.json" &
@@ -896,6 +899,9 @@ grep -q '] status: PAUSED — paused by you' "$loop_root/runs/$run/controller.lo
 [[ "$(field 's["reason"]')" == "paused by you"* ]]
 [ "$(field '{t["outcome"] for t in s["turns"] if t["role"] == "worker"}')" = "{'interrupted'}" ] || { field '[{k: t.get(k) for k in ("id", "role", "outcome", "note", "startedAt", "endedAt", "pgid")} for t in s["turns"] if t["role"] == "worker"]' >&2; exit 1; }
 for g in $pgids; do ! kill -0 -"$g" 2>/dev/null; done
+# They were asked to stop: TERM reached each agent, not just the KILL after its
+# grace. The controller ignores TERM itself, which its children must not inherit.
+[ "$(sort "$loop_fake/terminated" 2>/dev/null | tr '\n' ' ')" = "a b " ]
 rm "$loop_fake/slow"
 loop resume "$run" >/dev/null
 wait_for DONE

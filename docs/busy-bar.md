@@ -2,7 +2,7 @@
 
 N2 Agents can show lab health on a [BUSY Bar](https://busy.app), the 72×16 LED
 desk display. It shows the same changes the menu bar toasts announce, for every
-profile and every lab:
+profile and every lab, and a new N2 Agents build:
 
 | Card       | When                                             | Stays            |
 |------------|--------------------------------------------------|------------------|
@@ -12,6 +12,7 @@ profile and every lab:
 | OUT        | it runs out, or the provider refuses work        | until it's back  |
 | BACK       | an exhausted slot has capacity again             | 60 s             |
 | SIGNED OUT | a slot loses its sign-in                         | until signed in  |
+| UPDATE     | a new N2 Agents build is available (once each)   | 60 s             |
 
 Each card plays a short intro with the N2 mark, then shows the word over the
 profile and lab (for example `Work - Codex, back Mon 3:40 PM`), and the LED
@@ -19,6 +20,17 @@ blinks in the card's color. A tier is announced once when entered; a reading
 back above it makes the next dip news again. What is already so when the app
 starts stays quiet. A newer card replaces the one on screen, and pressing Back
 on the bar dismisses it.
+
+## Every hour
+
+On the hour, the bar plays a usage show: one slide per profile and lab with a
+reading, in panel order: the ring, the profile with the figure at its right,
+and the lab below. Each slides in, its ring sweeps up to what is left while the
+figure counts up, holds about two seconds, and slides out. The ring's
+color matches the cards: green above 50%, blue to 25%, yellow to 10%, amber
+below that, red when out. Unmetered, signed-out and unchecked slots are left
+out. Afterwards, a standing OUT or SIGNED OUT card comes back without its
+intro. A Mac asleep at the hour skips that show.
 
 N2 Agents doesn't track agent turns, so the bar shows nothing when an agent
 finishes or waits on you.

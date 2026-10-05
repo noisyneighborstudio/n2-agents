@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: write
+  actions: read   # the release build artifact of the run that passed
 
 concurrency:
   group: sparkle-publication
@@ -39,6 +40,19 @@ jobs:
           # The lockfile is written by npm 11 (Node 24); an older npm's `npm ci`
           # resolves it differently and rejects it as out of sync.
           node-version: 24
+      # Ship what CI's release gate built for this commit, not a second build.
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-binaries
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}
+      - name: Unpack the verified release build
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release-binaries"
+          tar -xzf "$RUNNER_TEMP/release-binaries.tgz" -C "$RUNNER_TEMP/release-binaries"
+          echo "N2_PREBUILT_BIN=$RUNNER_TEMP/release-binaries" >> "$GITHUB_ENV"
       - name: Select isolated channel
         run: |
           set -euo pipefail

@@ -14,14 +14,18 @@ app="build/N2 Agents.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Frameworks"
 
-echo "Compiling…"
-swift build --package-path .. -c release --product N2AgentsTray
-swift build --package-path .. -c release --product n2-loop
-bin_dir=$(swift build --package-path .. -c release --show-bin-path)
+# Publish sets N2_PREBUILT_BIN to the binaries CI's release gate built for
+# this commit; every other build compiles them here.
+bin_dir=${N2_PREBUILT_BIN:-}
+if [[ -n $bin_dir ]]; then
+  echo "Using prebuilt binaries: $bin_dir"
+else
+  echo "Compiling…"
+  bin_dir=build/binaries
+  ../scripts/release-binaries.sh "$bin_dir"
+fi
 cp "$bin_dir/N2AgentsTray" "$app/Contents/MacOS/N2 Agents"
-sparkle_framework=$(find ../.build -type d -name Sparkle.framework -print -quit)
-[[ -n $sparkle_framework ]] || { echo "✗ Sparkle.framework was not produced" >&2; exit 1; }
-ditto "$sparkle_framework" "$app/Contents/Frameworks/Sparkle.framework"
+ditto "$bin_dir/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
 ditto "$bin_dir/SwiftTerm_SwiftTerm.bundle" "$app/Contents/Resources/SwiftTerm_SwiftTerm.bundle"
 cp Info.plist "$app/Contents/"
 

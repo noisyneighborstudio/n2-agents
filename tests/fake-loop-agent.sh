@@ -5,7 +5,8 @@
 #   quota-<profile>   that slot is out of quota
 #   worker-quota-<profile>   holds n: that slot's next n worker turns hit a
 #                     limit that resets in two seconds
-#   slow              workers take a minute (time to pause them)
+#   slow              workers take a minute (time to pause them); with
+#                     LOOP_FAKE_STRUCTURED the wrapper records the TERM
 #   fail-b-once       the first verification rejects criterion has-b
 #   liar              the sign-off says done whatever the evidence says
 #   coupled           b depends on a, and the first sign-off reopens both

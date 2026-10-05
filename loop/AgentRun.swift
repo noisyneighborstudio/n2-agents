@@ -210,7 +210,9 @@ func recoverTurnProcesses(_ turns: inout [Turn], runId: String, store: Store) {
 /// A child inherits the spawning thread's signal mask and the process's
 /// ignored signals. GCD threads block every signal and the controller
 /// ignores SIGINT and SIGTERM, so without this a command would never see
-/// SIGWINCH or Ctrl-C: start it with nothing blocked and every default.
+/// SIGWINCH or Ctrl-C, and a paused or timed-out agent would only ever get
+/// the KILL after its grace, never the TERM: start it with nothing blocked
+/// and every default.
 private func cleanSignals(_ attr: inout posix_spawnattr_t?, _ flags: Int16) {
     var none = sigset_t(), all = sigset_t()
     sigemptyset(&none)

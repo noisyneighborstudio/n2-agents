@@ -385,10 +385,7 @@ fleet_verbs=$(awk '/^cmd_fleet\(\)/{d=1} d&&/^}/{d=0} d&&/^    [a-z][a-z|-]*\)/ 
 for v in $fleet_verbs; do
   case $uh in *"
   $v"*|*"
-  $v "*) : ;; *) bad "help: documents the '$v' verb" "$uh" ; continue ;; esac
-  case $(grep -c "^    $v)\|^    $v|\||$v)\|^    $v|" fleet.sh) in 0)
-      bad "help: '$v' is dispatched" "no case arm in fleet.sh" ;;
-    *) ok "help: '$v' is documented and dispatched" ;; esac
+  $v "*) ok "help: documents the '$v' verb" ;; *) bad "help: documents the '$v' verb" "$uh" ;; esac
 done
 
 # every verb is also offered by each shell's completion, so the tab-completed
@@ -516,22 +513,18 @@ else ok "reconcile: revoked peer removed from the roster"; fi
 out=$(peer rc2 fleet ping "$T" 2>&1); rc=$?
 denied "reconcile: the revoked peer can no longer be called" "$out" "$rc"
 
-# A neighbour cannot revoke *us* by putting our id in its list.
-raw rc1 'printf "%s 0\n" "'"$Z"'" >/dev/null'   # no-op: rc1 trusts rc2
-raw rc2 'printf "%s 0\n" "'"$E"'" >> "$fleet_root/revoked"'
-peer rc1 fleet reconcile >/dev/null 2>&1
-if peer rc1 fleet id >/dev/null 2>&1 && ! raw rc1 'fleet_revoked "'"$E"'"'; then
-  ok "reconcile: a peer cannot revoke us through its own list"
-else bad "reconcile: a peer cannot revoke us through its own list" "rc1 revoked itself"; fi
-
-# Undo the synthetic injection. rc2 was never *told* to revoke rc1 — the line
-# was planted to prove rc1 ignores it — but while it sits in rc2's list, rc2's
-# own fleet_call refuses to dial rc1 ("ERR not-approved", client side), which
-# would silently void the premise of every later rc2 -> rc1 assertion.
-raw rc2 'grep -vF "'"$E"'" "$fleet_root/revoked" > "$fleet_root/revoked.t" 2>/dev/null; mv "$fleet_root/revoked.t" "$fleet_root/revoked"'
-if raw rc2 'fleet_approved "'"$E"'"'; then
-  ok "reconcile: clearing the planted entry restores rc2 -> rc1 trust"
-else bad "reconcile: clearing the planted entry restores rc2 -> rc1 trust" "rc2 still refuses rc1"; fi
+# A neighbour cannot revoke *us*, or itself, by putting the id in its list.
+# Only the reply is stubbed: rc2 answering with rc1's own id would make it
+# refuse rc1 first, and the list would never be read.
+out=$(raw rc1 'fleet_call() { [ "$2" = revocations ] && printf "%s\\n" "'"$E"'" "'"$Z"'"; }; fleet_reconcile' 2>&1)
+refute "reconcile: rc1 reads an approved peer's list" "no approved peers" "$out"
+refute "reconcile: nothing in that list is adopted" "revoked" "$out"
+if raw rc1 'fleet_revoked "'"$E"'"'; then
+  bad "reconcile: a peer cannot revoke us through its own list" "rc1 revoked itself"
+else ok "reconcile: a peer cannot revoke us through its own list"; fi
+if raw rc1 'fleet_revoked "'"$Z"'"'; then
+  bad "reconcile: a peer cannot revoke itself through its own list" "rc1 revoked rc2"
+else ok "reconcile: a peer cannot revoke itself through its own list"; fi
 
 # --- 22. host key rotation for an already-approved peer --------------------
 mark "22. host key rotation for an already-approved peer"
@@ -754,8 +747,22 @@ check "bootstrap: enrollment hop still verifies the host" "StrictHostKeyChecking
 check "bootstrap: enrollment hop still uses the fleet known_hosts" "UserKnownHostsFile=" "$bopts"
 check "bootstrap: enrollment hop stays non-interactive" "BatchMode=yes" "$bopts"
 check "bootstrap: every later hop pins the fleet key" "IdentitiesOnly=yes" "$nopts"
-check "enroll: the request marks itself as the bootstrap hop" "bootstrap 1" \
-  "$(grep -n 'fleet_meta_set "$b" bootstrap 1' "$repo/fleet.sh" | tr -d '\n' | sed 's/.*fleet_meta_set "\$b" //')"
+# The enrollment request itself must dial as that hop. A recording ssh sees
+# the options a fresh machine's request is sent with.
+mkdir -p "$base/bsbin"
+cat > "$base/bsbin/ssh" <<EOF
+#!/bin/sh
+printf '%s\n' "\$@" > "$base/bsbin/argv"
+exit 255
+EOF
+chmod +x "$base/bsbin/ssh"
+ssh-keygen -q -t ed25519 -N '' -f "$base/bshk" >/dev/null
+peer bsx fleet init --machine bsx >/dev/null
+raw bsx "PATH=\"$base/bsbin:\$PATH\"; fleet_enroll_request ssh 127.0.0.1 nobody /tmp code \
+  '127.0.0.1 $(awk '{print $1" "$2}' "$base/bshk.pub")' 22" >/dev/null 2>&1
+eargv=$(tr '\n' ' ' < "$base/bsbin/argv" 2>/dev/null)
+check  "enroll: the request still verifies the host" "StrictHostKeyChecking=yes" "$eargv"
+refute "enroll: the request does not pin the unissued fleet key" "IdentitiesOnly" "$eargv"
 
 # --- 27. bound-code approval grants inbound access both ways ---------------
 mark "27. bound-code approval grants inbound access both ways"
@@ -850,7 +857,6 @@ check "pending-grant: the peer is still recorded pending, not approved" "pending
   "$(raw kappa "fleet_peer_state '$A'")"
 # alpha holds inbound ssh to kappa, yet every ordinary verb is refused because
 # fleet_verify gates on approval, not on reachability.
-out=$(raw kappa "fleet_peer_state '$A'"); check "pending-grant: reachability is not approval" "pending" "$out"
 for v in ping roster status revoke; do
   pf="$base/pg.$v"; : > "$pf"
   out=$(raw alpha "fleet_envelope '$K' $v '$pf'" 2>/dev/null | raw kappa "fleet_serve" 2>&1); rc=$?
@@ -1668,9 +1674,9 @@ if [ "$reqs" = "$reqs2" ]; then ok "framing: bad framing is refused before any h
 else bad "framing: bad framing is refused before any handler runs" "handler ran ($reqs -> $reqs2)"; fi
 
 # A reply the client cannot decode must not be reported as a successful call.
-out=$(raw fr2 'fleet_call() { :; }; ctmp=$(mktemp -d); printf "OK\n!!not base64!!\n" > $ctmp/rep
-  if tail -n +2 $ctmp/rep | base64 -d > $ctmp/out 2>/dev/null; then echo DECODED; else echo REFUSED; fi' 2>&1)
-check "framing: an undecodable reply body does not decode clean" "REFUSED" "$out"
+out=$(raw fr2 "fleet_carry() { printf 'OK\n!!not base64!!\n'; }; fleet_call '$FR1' ping; echo rc=\$?" 2>&1)
+check "framing: an undecodable reply body is refused" "ERR malformed-reply" "$out"
+check "framing: an undecodable reply is a failed call" "rc=1" "$out"
 
 # --- ssh option isolation --------------------------------------------------
 # The host pin is only exclusive if nothing else can answer for the host key

@@ -7,8 +7,12 @@
 # this file is a synthetic string invented for the test.
 set -u
 repo=${N2_SYNC_REPO:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}
-# Independent credential-gate regressions use disposable peers and homes.
-sh "$repo/scripts/test-embedded-credentials.sh" || exit 1
+# Independent credential-gate regressions use disposable peers and homes. They
+# run once per full suite: a shard or resumed run (and the trimmed copy it
+# re-execs, which repeats this preamble) leaves them to the run from section 1.
+if [ -z "${N2_SYNC_FRESH_FROM:-}${N2_SYNC_START_AT:-}" ]; then
+  sh "$repo/scripts/test-embedded-credentials.sh" || exit 1
+fi
 # N2_SYNC_START_AT=<n> runs sections <n>..end against a fixture an earlier
 # bounded run left behind (N2_SYNC_BASE + N2_SYNC_KEEP). Sections build forward
 # on fixture state, so they cannot simply be skipped in place: the run re-execs
@@ -1869,6 +1873,74 @@ mark "53. header-style credentials obey the auth opt-in"
 # auth sharing explicitly OFF on both machines: the operator refused to share
 # credentials and shared one anyway. Every credential in this section is a
 # synthetic string invented here.
+#
+# The scanner first, on every shape sections 53 and 64-68 replicate between
+# peers: each credential spelling must be caught and each lookalike must not.
+# Over-broadness can only be seen here. Between peers a vendor whose
+# credentials are shared skips the scan, and an opted-out vendor's mcp class
+# is withheld before any scan, so a scanner that flagged everything passed.
+scan() {  # scan <secret|clean> <name> <content>
+  printf '%s' "$3" > "$base/scan.in"
+  if env HOME="$base/scan" sh -c '. "$1/fleet.sh"; . "$1/fleet-sync.sh"; sync_file_carries_secret "$2"' \
+       _ "$repo" "$base/scan.in"; then scan_got=secret; else scan_got=clean; fi
+  if [ "$scan_got" = "$1" ]; then ok "scan: $2"; else bad "scan: $2" "scanned $scan_got"; fi
+}
+scan secret 'an Authorization header' '{"headers":{"Authorization":"Bearer SYNTHETIC-HDR-001"}}'
+for hk in 'X-Api-Key' 'authorization' 'X-Auth-Token' 'api-key' 'x-goog-api-key'; do
+  scan secret "an $hk header" "{\"url\":\"https://e/x\",\"headers\":{\"$hk\":\"SYNTHETIC-HDR-002\"}}"
+done
+scan secret 'an escaped header key' '{"headers":{"\u0041uthorization":"Bearer SYNTHETIC-ESC-001"}}'
+scan secret 'a partly escaped mixed-case header key' '{"headers":{"\u0061uthoriz\u0041tion":"Bearer SYNTHETIC-ESC-002"}}'
+scan secret 'an escaped env key' '{"env":{"\u0041NTHROPIC_API_KEY":"SYNTHETIC-ESC-003"}}'
+scan secret 'a header key split from its colon' '{
+  "headers": {
+    "Authorization"
+      : "Bearer SYNTHETIC-NL-001"
+  }
+}'
+scan secret 'an escaped key split over blank lines' '{ "headers": {
+        "\u0041uthorization"
+
+              :   "Bearer SYNTHETIC-NL-002"
+  } }'
+scan secret 'an env key split from its colon' '{
+  "env": {
+    "ANTHROPIC_API_KEY"
+      : "SYNTHETIC-NL-003"
+  }
+}'
+scan secret 'a single-quoted TOML env key' "model = \"gpt-5\"
+[env]
+'OPENAI_API_KEY' = 'SYNTHETIC-TOML-001'
+"
+scan secret 'a single-quoted TOML header name' "model = \"gpt-5\"
+[http_headers]
+'Authorization' = 'Bearer SYNTHETIC-TOML-002'
+"
+scan secret 'a camelCase OAuth grant' '{"claudeAiOauth":{"accessToken":"SYNTHETIC-CAMEL-001","refreshToken":"SYNTHETIC-CAMEL-002","expiresAt":1}}'
+scan secret 'a bare token key' '{"remote":{"url":"https://example.invalid","token":"SYNTHETIC-CAMEL-003"}}'
+scan secret 'an embedded mcp record, credential-free or not' '{"mcpServers":{"local":{"command":"node","args":["s.js"]}}}'
+scan clean 'authorizationRequired is not an Authorization header' '{"authorizationRequired":true,"env":{"CLAUDE_CODE_MAX_OUTPUT_TOKENS":"8192"}}'
+scan clean 'a harmless escape' '{"note":"\u0041 plain letter","authorizationRequired":true}'
+scan clean 'a non-ASCII escape' '{"model":"opus","label":"caf\u00e9"}'
+scan clean 'a split non-credential key and a bare key name in a list' '{
+  "authorizationRequired"
+    : true,
+  "notes": [
+    "access_token",
+    "rotate quarterly"
+  ]
+}'
+scan clean 'ordinary multi-line settings' '{
+  "model": "opus",
+  "env": { "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "8192" }
+}'
+scan clean 'an apostrophe in a TOML value' "model = \"gpt-5\"
+notes = \"the model's apiKey handling is documented elsewhere\"
+"
+scan clean 'token-prefixed ordinary keys' '{"maxTokens":8192,"tokensUsed":3,"tokenizer":"cl100k","passwordless":true}'
+scan clean 'key, keys and secret references' '{"key":"cmd+k","keys":{"up":"k"},"secretName":"prod","secretRef":"vault://x"}'
+
 mkdir -p "$base/iota" "$base/kappa"
 I=$(peer iota  fleet init --machine iota  | awk '{print $2}')
 K=$(peer kappa fleet init --machine kappa | awk '{print $2}')
@@ -1900,45 +1972,6 @@ else
 fi
 peer iota  fleet sync auth disable claude >/dev/null 2>&1
 peer kappa fleet sync auth disable claude >/dev/null 2>&1
-
-# Over-broadness: the gate must catch credentials, not paralyse ordinary config.
-mkdir -p "$base/lambda" "$base/mu"
-L=$(peer lambda fleet init --machine lambda | awk '{print $2}')
-M=$(peer mu     fleet init --machine mu     | awk '{print $2}')
-peer mu fleet pair --home "$base/lambda" \
-  --code "$(peer lambda fleet invite --peer "$M" 2>/dev/null)" >/dev/null 2>&1
-peer lambda new Work >/dev/null 2>&1
-ldir=$(slot lambda Work claude); mdir=$(slot mu Work claude)
-# The `mcp` class needs the vendor opt-in before anything in it moves, so opt
-# both sides in here: what is under test is the credential scanner's
-# over-broadness, not the class gate that section 1 already covers.
-peer lambda fleet sync auth enable claude >/dev/null 2>&1
-peer mu     fleet sync auth enable claude >/dev/null 2>&1
-put x "$ldir/.mcp.json" '{"mcpServers":{"local":{"command":"node","args":["s.js"]}}}'
-# Lookalikes chosen because they contain the key names as substrings: the match
-# is anchored on the assignment, so neither is a credential.
-put x "$ldir/settings.json" '{"authorizationRequired":true,"env":{"CLAUDE_CODE_MAX_OUTPUT_TOKENS":"8192"}}'
-peer lambda fleet sync now --peer "$M" >/dev/null 2>&1
-if [ -f "$mdir/.mcp.json" ]; then ok "hdr: a credential-free mcp config still replicates"
-else bad "hdr: a credential-free mcp config still replicates" "withheld"; fi
-if [ -f "$mdir/settings.json" ]; then ok "hdr: authorizationRequired is not an Authorization header"
-else bad "hdr: authorizationRequired is not an Authorization header" "withheld"; fi
-
-# Opt back out, and the header spellings are each refused again -- once by the
-# class gate, and (section 53's first block) by the scanner when opted in.
-peer lambda fleet sync auth disable claude >/dev/null 2>&1
-peer mu     fleet sync auth disable claude >/dev/null 2>&1
-
-# The other header spellings, each against a fresh file on the same pair.
-for hk in 'X-Api-Key' 'authorization' 'X-Auth-Token'; do
-  put x "$ldir/.mcp.json" "{\"mcpServers\":{\"r\":{\"url\":\"https://e/x\",\"headers\":{\"$hk\":\"SYNTHETIC-HDR-002\"}}}}"
-  peer lambda fleet sync now --peer "$M" >/dev/null 2>&1
-  if grep -q 'SYNTHETIC-HDR-002' "$mdir/.mcp.json" 2>/dev/null; then
-    bad "hdr: $hk is credential material too" "replicated with auth sharing off"
-  else
-    ok "hdr: $hk is credential material too"
-  fi
-done
 
 # --- 54. a profile is a thing in its own right -----------------------------
 # The manifest used to speak only about files, so a profile had no existence
@@ -2597,32 +2630,6 @@ fi
 peer upsilon fleet sync auth disable claude >/dev/null 2>&1
 peer phi     fleet sync auth disable claude >/dev/null 2>&1
 
-# Over-broadness: an escape that does not spell a credential key must not
-# paralyse ordinary config. `A plain` decodes to `A plain`, and
-# `authorizationRequired` is still not an assignment of `Authorization`.
-# A fresh profile, because the addresses used above still hold credential
-# bytes on phi and are legitimately refused there while phi is opted out.
-peer upsilon new Clean >/dev/null 2>&1
-udir=$(slot upsilon Clean claude); pdir=$(slot phi Clean claude)
-# Opted in on both sides so the `mcp` class gate is out of the way: the
-# assertion below is about the escape decoder, not about the class.
-peer upsilon fleet sync auth enable claude >/dev/null 2>&1
-peer phi     fleet sync auth enable claude >/dev/null 2>&1
-put x "$udir/.mcp.json" \
-  '{"mcpServers":{"local":{"command":"node","args":["s.js"]}},"note":"\u0041 plain letter","authorizationRequired":true}'
-put x "$udir/settings.json" '{"model":"opus","label":"caf\u00e9"}'
-peer upsilon fleet sync now --peer "$PH" >/dev/null 2>&1
-if grep -q 'plain letter' "$pdir/.mcp.json" 2>/dev/null; then
-  ok  "esc: a harmless escape does not withhold an ordinary mcp config"
-else
-  bad "esc: a harmless escape does not withhold an ordinary mcp config" "withheld"
-fi
-if grep -q 'opus' "$pdir/settings.json" 2>/dev/null; then
-  ok  "esc: a non-ASCII escape is left alone, not invented into a key"
-else
-  bad "esc: a non-ASCII escape is left alone, not invented into a key" "withheld"
-fi
-
 # --- 65. a newline between key and colon is still an assignment -----------
 mark "65. a credential split across a newline is still a credential"
 # Regression for a real bypass. The scanner used to be a line-oriented grep,
@@ -2719,42 +2726,6 @@ fi
 peer chi fleet sync auth disable claude >/dev/null 2>&1
 peer psi fleet sync auth disable claude >/dev/null 2>&1
 
-# Over-broadness: folding whitespace must not make ordinary multi-line config
-# look like a credential. A fresh profile, because the addresses above hold
-# credential bytes that are legitimately refused on psi while it is opted out.
-peer chi new Clean >/dev/null 2>&1
-cdir=$(slot chi Clean claude); sdir=$(slot psi Clean claude)
-# Opted in on both sides: what is under test is the whitespace folder, not the
-# `mcp` class gate.
-peer chi fleet sync auth enable claude >/dev/null 2>&1
-peer psi fleet sync auth enable claude >/dev/null 2>&1
-put x "$cdir/.mcp.json" '{
-  "mcpServers": {
-    "local": { "command": "node", "args": ["s.js"] }
-  },
-  "authorizationRequired"
-    : true,
-  "notes": [
-    "access_token",
-    "rotate quarterly"
-  ]
-}'
-put x "$cdir/settings.json" '{
-  "model": "opus",
-  "env": { "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "8192" }
-}'
-peer chi fleet sync now --peer "$PS" >/dev/null 2>&1
-if grep -q 'rotate quarterly' "$sdir/.mcp.json" 2>/dev/null; then
-  ok  "nl: a split non-credential key does not withhold ordinary mcp config"
-else
-  bad "nl: a split non-credential key does not withhold ordinary mcp config" "withheld"
-fi
-if grep -q 'opus' "$sdir/settings.json" 2>/dev/null; then
-  ok  "nl: a bare key name in a list is not an assignment"
-else
-  bad "nl: a bare key name in a list is not an assignment" "withheld"
-fi
-
 # --- 66. a TOML literal-string key is still a key --------------------------
 mark "66. a single-quoted TOML key is still a credential"
 # Regression for a real bypass found in review. The scanner accepted an
@@ -2821,19 +2792,6 @@ else
   bad "toml: opted in on both sides, it does replicate" "still withheld"
 fi
 
-# Over-broadness guard: an apostrophe in ordinary config must not withhold it.
-peer omega new Clean >/dev/null 2>&1
-odir=$(slot omega Clean codex); gdir=$(slot sigma Clean codex)
-put x "$odir/config.toml" "model = \"gpt-5\"
-notes = \"the model's apiKey handling is documented elsewhere\"
-"
-peer omega fleet sync now --peer "$SG" >/dev/null 2>&1
-if grep -q 'documented elsewhere' "$gdir/config.toml" 2>/dev/null; then
-  ok  "toml: an apostrophe in a value does not withhold ordinary config"
-else
-  bad "toml: an apostrophe in a value does not withhold ordinary config" "withheld"
-fi
-
 # --- 67. a camelCase OAuth grant is still a credential ----------------------
 mark "67. camelCase and bare token credential keys are caught"
 # Second regression from the same family. Only the snake_case spellings were
@@ -2893,19 +2851,6 @@ else
   bad "camel: opted in on both sides, it does replicate" "still withheld"
 fi
 
-# Over-broadness guard: the near-miss names that share a prefix with the new
-# keys must keep replicating, or every ordinary settings file stops syncing.
-peer kappa new Clean >/dev/null 2>&1
-kdir=$(slot kappa Clean claude); tdir=$(slot tau Clean claude)
-put x "$kdir/settings.json" \
-  '{"maxTokens":8192,"tokensUsed":3,"tokenizer":"cl100k","passwordless":true,"env":{"CLAUDE_CODE_MAX_OUTPUT_TOKENS":"8192"}}'
-peer kappa fleet sync now --peer "$TA" >/dev/null 2>&1
-if grep -q 'tokenizer' "$tdir/settings.json" 2>/dev/null; then
-  ok  "camel: token-prefixed ordinary keys still replicate"
-else
-  bad "camel: token-prefixed ordinary keys still replicate" "withheld"
-fi
-
 # --- 68. a hyphen is the third spelling of the same separator ---------------
 mark "68. hyphenated credential header names are caught"
 # Third regression from the same family, and the one with real providers
@@ -2962,20 +2907,6 @@ if grep -qF 'SYNTHETIC-HYPHEN-001' "$ndir/.mcp.json" 2>/dev/null; then
   ok  "hyphen: opted in on both sides, it does replicate"
 else
   bad "hyphen: opted in on both sides, it does replicate" "still withheld"
-fi
-
-# Over-broadness guard. `key`, `keys` and `secretName` are ordinary
-# configuration; if the new names swallow them, every keybinding file and
-# every secret *reference* stops syncing.
-peer rho new Plain >/dev/null 2>&1
-rdir=$(slot rho Plain claude); ndir=$(slot nu Plain claude)
-put x "$rdir/settings.json" \
-  '{"key":"cmd+k","keys":{"up":"k"},"secretName":"prod","secretRef":"vault://x"}'
-peer rho fleet sync now --peer "$NA" >/dev/null 2>&1
-if grep -q 'secretName' "$ndir/settings.json" 2>/dev/null; then
-  ok  "hyphen: ordinary key and secretName fields still replicate"
-else
-  bad "hyphen: ordinary key and secretName fields still replicate" "withheld"
 fi
 
 # --- 69. a machine can except itself out of the managed-tool manifest ------
@@ -3397,6 +3328,10 @@ refute "merged: beta has no mirror-image conflict" "mrg" "$(peer beta fleet sync
 out=$(peer alpha fleet sync now --peer "$B" 2>&1)
 check "merged: a repeated pass is quiet" "noop	skills|Work|claude|skills/mrg/SKILL.md" "$out"
 # A merge is written through the same credential gate as any incoming bytes.
+# Section 30 leaves claude opted in on both peers, so a full run from section 1
+# reaches here sharing claude credentials; this case needs it off.
+peer alpha fleet sync auth disable claude >/dev/null 2>&1
+peer beta  fleet sync auth disable claude >/dev/null 2>&1
 sk="$(slot alpha Merge claude)/CLAUDE.md"; skb="$(slot beta Merge claude)/CLAUDE.md"
 put alpha "$sk" 'guidance'
 peer alpha fleet sync now --peer "$B" >/dev/null 2>&1

@@ -85,7 +85,8 @@ class BusyBarTests(unittest.TestCase):
     def test_each_kind_maps_to_its_card(self):
         expected = {'half': ('50% LEFT', '#2979FFFF', 60), 'quarter': ('25% LEFT', '#FFD600FF', 60),
                     'low': ('10% LEFT', '#FFAB00FF', 120), 'out': ('OUT', '#FF1744FF', 0),
-                    'signedout': ('SIGNED OUT', '#FF1744FF', 0), 'back': ('BACK', '#00C853FF', 60)}
+                    'signedout': ('SIGNED OUT', '#FF1744FF', 0), 'back': ('BACK', '#00C853FF', 60),
+                    'update': ('UPDATE', '#FFD600FF', 60)}
         self.assertEqual(set(busybar.KINDS), set(expected))
         for kind, (word, color, timeout) in expected.items():
             card = busybar.make_card(kind, 'Work - Claude Code')
@@ -237,6 +238,50 @@ class BusyBarTests(unittest.TestCase):
         status = self.run_cli('off')
         self.assertEqual(status['enabled'], 'off')
         self.assertEqual(FakeBar.requests[0][0], 'DELETE')
+
+
+    SLIDES = json.dumps([{'profile': 'Work', 'lab': 'Claude Code', 'left': 82},
+                         {'profile': 'Home', 'lab': 'Codex', 'left': 0}])
+
+    def test_gauge_fills_in_proportion(self):
+        def cells(fraction):
+            body = busybar.gauge(fraction, '#00C853FF').splitlines()[5:]
+            return sum(r.count('f') for r in body), sum(r.count('t') for r in body)
+        empty, half, full = cells(0), cells(0.5), cells(1)
+        self.assertEqual(empty[0], 0)
+        self.assertEqual(full[1], 0)
+        self.assertAlmostEqual(half[0] / sum(half), 0.5, delta=0.05)
+        self.assertTrue(busybar.gauge(0.3, '#2979FFFF').startswith('! XPM2\n16 16 3 1\n. c none\nt c #303030\nf c #2979FF'))
+
+    def test_gauge_colors_follow_the_alert_tiers(self):
+        self.assertEqual([busybar.tone(n) for n in (100, 51, 50, 26, 25, 11, 10, 1, 0)],
+                         ['#00C853FF', '#00C853FF', '#2979FFFF', '#2979FFFF', '#FFD600FF', '#FFD600FF',
+                          '#FFAB00FF', '#FFAB00FF', '#FF1744FF'])
+
+    def test_slideshow_does_nothing_while_off(self):
+        self.run_cli('slideshow', stdin=self.SLIDES)
+        self.assertEqual(FakeBar.requests, [])
+
+    def test_slideshow_counts_each_slot_up_then_clears(self):
+        self.turn_on()
+        self.run_cli('slideshow', stdin=self.SLIDES)
+        figures = [e['text'] for d in self.draws() for e in d['elements'] if e['id'] == 'figure']
+        self.assertEqual(figures[0], '0%')
+        self.assertIn('82%', figures)
+        self.assertEqual(figures[-1], '0%')
+        self.assertEqual(max(int(f[:-1]) for f in figures), 82)
+        self.assertTrue(all(e['timeout'] == 5 for d in self.draws() for e in d['elements']), 'stray slides go on their own')
+        self.assertEqual(FakeBar.requests[-1][0], 'DELETE')
+
+    def test_slideshow_puts_a_standing_card_back_without_its_intro(self):
+        self.turn_on()
+        self.run_cli('alert', 'out', 'Work - Codex', '--key', 'Work|codex')
+        FakeBar.requests = []
+        self.run_cli('slideshow', stdin=self.SLIDES)
+        last = self.draws()[-1]
+        self.assertEqual(([e['id'] for e in last['elements']], last['led_notification_color']),
+                         (['logo', 'label', 'title'], '#FF1744FF'))
+        self.assertFalse(any(e['id'] == 'edge-l' for d in self.draws() for e in d['elements']), 'no intro replay')
 
 
 if __name__ == '__main__':

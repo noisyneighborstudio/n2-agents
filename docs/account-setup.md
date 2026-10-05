@@ -17,7 +17,7 @@ at once instead of waiting for its next open or cached reading to expire.
 
 The embedded console handles Command-V while focused. Paste code also pastes
 through SwiftTerm's clipboard action and returns keyboard focus to the prompt.
-Press Return to submit. `swift test -c release --filter NativeAuthTests` proves
+Press Return to submit. `swift test --filter NativeAuthTests` proves
 both input routes reach a real PTY using a synthetic clipboard action.
 
 `sh scripts/test-profile-setup.sh` exercises both first-use and reset entry paths
