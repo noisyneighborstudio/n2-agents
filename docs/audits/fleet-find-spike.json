@@ -1,0 +1,35 @@
+{
+  "date": "2026-10-05",
+  "machine": "mac-mini",
+  "corpus": {
+    "foregroundTranscripts": 604,
+    "bytes": 2083410000,
+    "largestBytes": 272971000,
+    "claudeBytesWarm": 416000000
+  },
+  "metadataOnly": {"query": "appcast", "matched": 0, "of": 609},
+  "rawGrep": {
+    "claudeOnlyWarmSeconds": 0.55,
+    "claudeOnlyMatches": 45,
+    "allOneTermCpuSeconds": 21.6,
+    "allWithTypoVariantsSeconds": [136.6, 140.6, 142.8]
+  },
+  "index": {
+    "engine": "sqlite 3.54 fts5 trigram",
+    "conversationChars": 6800000,
+    "buildSeconds": 3.8,
+    "bytes": 26000000
+  },
+  "queries": [
+    {"q": "appcast n2 agents", "indexMatches": 4, "grepMatches": 24, "seconds": 0.02},
+    {"q": "apcast n2agents", "indexMatches": 4, "grepMatches": 30, "seconds": 0.02},
+    {"q": "appcast crew", "indexMatches": 1, "grepMatches": 20, "seconds": 0.02},
+    {"q": "sparkel release n2", "indexMatches": 6, "grepMatches": null, "seconds": 0.02}
+  ],
+  "knownTargets": [
+    {"session": "324fd019", "title": "#67 release status", "branch": "seth/loop-pause-wait-for-trap", "pushed": true, "folderExists": true},
+    {"session": "44c34579", "title": "Product demo recording", "branch": "t3code/full-product-demo-recording", "pushed": true, "folderExists": true},
+    {"session": "ac9efee8", "title": "Continue the work", "branch": "seth/fanout-integration", "pushed": true, "folderExists": true}
+  ],
+  "hazards": ["git remote get-url hung on a TCC-protected folder under ~/Documents"]
+}
