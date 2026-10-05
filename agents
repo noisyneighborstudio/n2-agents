@@ -960,7 +960,7 @@ link_skills() {  # 1 = remove ours
           # Ours: this install's skill, or one inside an N2 app bundle. Any
           # other link is someone's own and stays.
           case $(readlink "$ls_dst") in
-            "$ls_src"|*/Contents/Resources/skills/"$ls_name") ;;
+            "$ls_src"|*/N2*.app/Contents/Resources/skills/"$ls_name") ;;
             *) continue ;;
           esac
         elif [ -e "$ls_dst" ]; then

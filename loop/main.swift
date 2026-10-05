@@ -263,8 +263,8 @@ func newRun(_ a: Args, store: Store) throws -> RunState {
 
 /// Plan in a throwaway worktree of the starting commit: planners read, and
 /// the user's checkout is never where an agent runs.
-func planRun(_ s: inout RunState, store: Store, cli: String, interview asking: Bool = interactive) throws {
-    guard let lock = store.lock(s.id) else { throw LoopError("run already has an active planner or controller") }
+func planRun(_ s: inout RunState, store: Store, cli: String, interview asking: Bool = interactive, holding held: Int32? = nil) throws {
+    guard let lock = held ?? store.lock(s.id) else { throw LoopError("run already has an active planner or controller") }
     defer {
         try? FileManager.default.removeItem(atPath: store.pauseFile(s.id))
         flock(lock, LOCK_UN); close(lock)
@@ -526,10 +526,13 @@ func main() throws {
         else { print(approvalBlocker(s.questions, run: s.shortId) ?? "ready to approve: agents loop approve \(s.shortId)") }
     case "replan":
         let cli = try agentsCLI()
-        var s = try store.load(try store.resolve(a.positional.first))
-        guard s.status == .draft else { throw LoopError("run \(s.shortId) is \(s.status.rawValue), not a draft") }
+        let id = try store.resolve(a.positional.first)
+        // Locked before reading: an answer can't land between this read and the planner's save.
+        let lock = try takeLock(store, id, waiting: 0)
+        var s = try store.load(id)
+        guard s.status == .draft else { flock(lock, LOCK_UN); close(lock); throw LoopError("run \(s.shortId) is \(s.status.rawValue), not a draft") }
         say("run \(s.shortId): planning again with your answers")
-        try planRun(&s, store: store, cli: cli, interview: false)
+        try planRun(&s, store: store, cli: cli, interview: false, holding: lock)
         _ = try writePlanFile(s)
         if a.json { print(try draftJSON(s)) }
         else { print("\n" + describePlan(s, slots: nil)); print(approvalBlocker(s.questions, run: s.shortId) ?? "ready to approve: agents loop approve \(s.shortId)") }

@@ -153,6 +153,15 @@ import Darwin
         expect(coupledRepairs([tui, docs]).isEmpty, "unrelated reopened chunks stay apart and run in parallel")
         expect(coupledRepairs([pty]).isEmpty, "a dependency that wasn't reopened couples nothing")
         expect(coupledRepairs([tui, pty, pty]) == ["tui": ["pty-smoke"]], "a chunk named twice neither traps nor doubles")
+        // Folding that would make a cycle keeps the group apart (Codex's case:
+        // a needs x, x needs b, c needs a and b; all but x reopened).
+        let cyc = [chunk("a", ["x"]), chunk("x", ["b"]), chunk("b"), chunk("c", ["a", "b"])]
+        let folded = absorbRepairs(cyc, reopened: ["a", "b", "c"], added: [])
+        expect(folded.together.isEmpty && folded.apart.count == 1 && dependencyProblems(folded.chunks).isEmpty,
+               "a fold that would cycle stays apart and the plan stays valid (\(folded))")
+        let plain = absorbRepairs([model, chunk("layout"), tui, pty], reopened: ["tui", "pty-smoke"], added: [chunk("c", ["pty-smoke"])])
+        expect(plain.together == ["tui+pty-smoke"] && plain.chunks.first { $0.id == "c" }?.dependsOn == ["pty-smoke", "tui"]
+               && plain.chunks.first { $0.id == "pty-smoke" }?.status == .accepted, "a valid fold carries added dependents to its root")
         // What depended on an absorbed chunk, a chunk the repair adds included, waits for its carrier.
         var afterRepair = [model, tui, pty, chunk("c", ["pty-smoke"]), docs]
         waitForCarriers(&afterRepair, carriedBy: ["pty-smoke": "tui"])

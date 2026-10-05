@@ -28,6 +28,9 @@ mkdir -p "$HOME/.claude" "$HOME/.codex" "$N2_AGENTS_ROOT/Work/claude" "$N2_AGENT
 echo mine > "$N2_AGENTS_ROOT/Mine/claude/skills/n2-fanout/SKILL.md"
 # Someone's own link of the same name, and a skills dir that is itself a link.
 ln -s "$base/personal/skills/n2-fanout" "$N2_AGENTS_ROOT/Linked/claude/skills/n2-fanout"
+# A link into some other app's bundle is that app's, not N2's.
+mkdir -p "$N2_AGENTS_ROOT/Other/codex/skills" "$base/Other.app/Contents/Resources/skills/n2-fanout"
+ln -s "$base/Other.app/Contents/Resources/skills/n2-fanout" "$N2_AGENTS_ROOT/Other/codex/skills/n2-fanout"
 ln -s "$base/elsewhere" "$N2_AGENTS_ROOT/Shared/claude/skills"
 shims() { "$repo/agents" shims "$@" >/dev/null 2>&1 || true; }   # PATH links need an install; skills don't
 linked() { [ -L "$1/skills/n2-fanout" ] && [ "$(readlink "$1/skills/n2-fanout")" = "$repo/skills/n2-fanout" ] \
@@ -40,8 +43,11 @@ done
   && [ "$(cat "$N2_AGENTS_ROOT/Mine/claude/skills/n2-fanout/SKILL.md")" = mine ] || fail "replaced someone's own skill"
 [ "$(readlink "$N2_AGENTS_ROOT/Linked/claude/skills/n2-fanout")" = "$base/personal/skills/n2-fanout" ] || fail "replaced someone's own link"
 [ ! -e "$base/elsewhere/n2-fanout" ] || fail "wrote through a linked skills dir"
+[ "$(readlink "$N2_AGENTS_ROOT/Other/codex/skills/n2-fanout")" = "$base/Other.app/Contents/Resources/skills/n2-fanout" ] \
+  || fail "took over another app's skill link"
 shims --remove
 [ ! -e "$HOME/.claude/skills/n2-fanout" ] && [ ! -e "$N2_AGENTS_ROOT/Work/codex/skills/n2-fanout" ] || fail "--remove left a link"
 [ "$(cat "$N2_AGENTS_ROOT/Mine/claude/skills/n2-fanout/SKILL.md")" = mine ] || fail "--remove touched someone's own skill"
 [ -L "$N2_AGENTS_ROOT/Linked/claude/skills/n2-fanout" ] || fail "--remove deleted someone's own link"
+[ -L "$N2_AGENTS_ROOT/Other/codex/skills/n2-fanout" ] || fail "--remove deleted another app's skill link"
 echo "Fan-out skill: commands and flags exist; linked into 4 slots, idempotent, own skill kept, removed cleanly"

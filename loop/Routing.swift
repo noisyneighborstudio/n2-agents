@@ -33,10 +33,15 @@ final class LabRecord {
         let fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0o600)
         guard fd >= 0 else { return }
         defer { close(fd) }
-        flock(fd, LOCK_EX)
+        while flock(fd, LOCK_EX) != 0 { guard errno == EINTR else { return } }
         defer { flock(fd, LOCK_UN) }
+        // Write the whole line, through interruptions and short writes.
         let bytes = [UInt8](line + Data("\n".utf8))
-        _ = bytes.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
+        var done = 0
+        while done < bytes.count {
+            let n = bytes[done...].withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
+            if n > 0 { done += n } else if n < 0 && errno == EINTR { continue } else { return }
+        }
     }
 
     /// The lab's measured strength for this effort on the adapters' 1-3 scale
