@@ -25,14 +25,18 @@ final class LabRecord {
         outcomes = text.split(separator: "\n").compactMap { try? Store.decoder.decode(Outcome.self, from: Data($0.utf8)) }
     }
 
+    /// One whole line per write, appended under a lock: runs sharing the
+    /// record never overwrite or interleave each other's outcomes.
     func add(_ o: Outcome) {
         outcomes.append(o)
         guard let line = try? JSONEncoder.line.encode(o) else { return }
-        if let h = FileHandle(forWritingAtPath: path) {
-            h.seekToEndOfFile(); h.write(line + Data("\n".utf8)); try? h.close()
-        } else {
-            try? (line + Data("\n".utf8)).write(to: URL(fileURLWithPath: path))
-        }
+        let fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { return }
+        defer { close(fd) }
+        flock(fd, LOCK_EX)
+        defer { flock(fd, LOCK_UN) }
+        let bytes = [UInt8](line + Data("\n".utf8))
+        _ = bytes.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
     }
 
     /// The lab's measured strength for this effort on the adapters' 1-3 scale
@@ -60,7 +64,10 @@ extension JSONEncoder {
 /// unmeasured, so unknown usage never looks like room.
 func pickWorker(_ slots: [Slot], effort: Effort, cooldowns: [String: Cooldown], busy: [String: Int],
                 assigned: [String: Int], strength: (String, Effort) -> Double) -> Slot? {
-    let usable = slots.filter { unusable($0, cooldowns: cooldowns) == nil }
+    let open = slots.filter { unusable($0, cooldowns: cooldowns) == nil }
+    // Fairness is shared among measured slots; unmeasured ones work only when none is left.
+    let measured = open.filter { $0.quota == "ok" }
+    let usable = measured.isEmpty ? open : measured
     guard !usable.isEmpty else { return nil }
     let total = usable.reduce(1) { $0 + (assigned[$1.key] ?? 0) }
     let cap = max(1, Int(1.5 * Double(total) / Double(usable.count)))

@@ -282,8 +282,13 @@ func planRun(_ s: inout RunState, store: Store, cli: String, interview asking: B
     try store.save(s)
 }
 
+/// The run lock `approve` holds from reading the draft until its controller starts.
+var heldLock: Int32?
+
 func approveAndStart(_ s: inout RunState, store: Store, cli: String) throws {
-    guard !store.controllerRunning(s.id) else { throw LoopError("run already has an active planner or controller") }
+    let fd = try heldLock ?? takeLock(store, s.id, waiting: 0)
+    heldLock = fd
+    defer { if let fd = heldLock { flock(fd, LOCK_UN); close(fd); heldLock = nil } }
     if let blocker = approvalBlocker(s.questions, run: s.shortId) { throw LoopError("not approved: " + blocker) }
     recoverTurnProcesses(&s.turns, runId: s.id, store: store)
     try? FileManager.default.removeItem(atPath: store.pauseFile(s.id))
@@ -292,6 +297,7 @@ func approveAndStart(_ s: inout RunState, store: Store, cli: String) throws {
     s.status = .running
     s.log("approved", "\(s.plan.criteria.count) criteria, \(s.plan.chunks.count) chunks, budget \(human(s.budgetMs))")
     try store.save(s)
+    if let fd = heldLock { flock(fd, LOCK_UN); close(fd); heldLock = nil }   // the controller takes it next
     try launchController(s, store: store)
     print("""
 
@@ -370,8 +376,10 @@ func waitForNews(store: Store, id: String, timeoutMs: Int, json: Bool) throws {
             tail = s.events[...]
         }
         news = tail.filter(newsworthy)
-        let settled = [.paused, .done, .draft].contains(s.status) || ([.running, .waiting].contains(s.status) && !alive)
-        if settled || !news.isEmpty || s.status != first.status || Date() >= deadline { break }
+        // A pause is answerable only once its controller has stopped.
+        let settled = ([.paused, .done, .draft].contains(s.status) || [.running, .waiting].contains(s.status)) && !alive
+        let stopping = [.paused, .done].contains(s.status) && alive
+        if settled || (!stopping && (!news.isEmpty || s.status != first.status)) || Date() >= deadline { break }
         usleep(1_000_000)
         s = try store.load(id)
     }
@@ -388,23 +396,51 @@ func waitForNews(store: Store, id: String, timeoutMs: Int, json: Bool) throws {
     }
 }
 
-/// Continue a paused or orphaned run from where it stopped.
-func resumeRun(store: Store, id: String, budget: Int?) throws {
-    var s = try store.load(id)
-    guard !store.controllerRunning(id) else { throw LoopError("run \(s.shortId) is already running") }
-    guard s.status != .done else { throw LoopError("run \(s.shortId) is done — its result is on branch \(s.branch)") }
-    guard s.status != .draft else { throw LoopError("run \(s.shortId) is a draft — approve it: agents loop approve \(s.shortId)") }
-    if let b = budget {
-        guard b > s.usedMs else { throw LoopError("the new total must exceed the \(human(s.usedMs)) already used") }
-        s.budgetMs = b
+/// The run's lock, waiting up to `seconds` for a stopping planner or controller to let go.
+func takeLock(_ store: Store, _ id: String, waiting seconds: Double) throws -> Int32 {
+    let deadline = Date().addingTimeInterval(seconds)
+    while true {
+        if let fd = store.lock(id) { return fd }
+        guard Date() < deadline else { throw LoopError("run \(id.prefix(8)) is busy: a planner or controller is working on it") }
+        usleep(200_000)
     }
-    s.status = .running
-    s.reason = nil
-    s.retryAt = nil
-    // A human resuming is the material change: fresh chances for what had stalled.
-    s.signatures = s.signatures.filter { !$0.key.hasPrefix("unusable:") && $0.key != "slot-failures" }
-    s.log("resumed", "budget \(human(s.budgetMs)), \(human(s.usedMs)) used")
+}
+
+/// Load, change and save a run holding its lock, so no planner, controller or
+/// other command saves an older copy over the change.
+@discardableResult
+func mutate(_ store: Store, _ id: String, waiting seconds: Double = 0, _ body: (inout RunState) throws -> Void) throws -> RunState {
+    let fd = try takeLock(store, id, waiting: seconds)
+    defer { flock(fd, LOCK_UN); close(fd) }
+    var s = try store.load(id)
+    try body(&s)
     try store.save(s)
+    return s
+}
+
+/// Continue a paused or orphaned run from where it stopped.
+func resumeRun(store: Store, id: String, budget: Int?, change: (inout RunState) throws -> Void = { _ in }) throws {
+    // A running controller refuses at once; one stopping after a pause gets time to let go.
+    let now = try store.load(id)
+    if store.controllerRunning(id) && ![.paused, .done].contains(now.status) {
+        throw LoopError("run \(now.shortId) is \(now.status.rawValue) with its controller working; pause it first")
+    }
+    let s = try mutate(store, id, waiting: 60) { s in
+        guard s.status != .done else { throw LoopError("run \(s.shortId) is done — its result is on branch \(s.branch)") }
+        guard s.status != .draft else { throw LoopError("run \(s.shortId) is a draft — approve it: agents loop approve \(s.shortId)") }
+        try change(&s)
+        if let b = budget {
+            guard b > s.usedMs else { throw LoopError("the new total must exceed the \(human(s.usedMs)) already used") }
+            s.budgetMs = b
+        }
+        s.status = .running
+        s.reason = nil
+        s.retryAt = nil
+        s.pendingWaiver = nil
+        // A human resuming is the material change: fresh chances for what had stalled.
+        s.signatures = s.signatures.filter { !$0.key.hasPrefix("unusable:") && $0.key != "slot-failures" }
+        s.log("resumed", "budget \(human(s.budgetMs)), \(human(s.usedMs)) used")
+    }
     try launchController(s, store: store)
     print("resumed loop \(s.shortId) — agents loop status \(s.shortId)")
 }
@@ -439,54 +475,53 @@ func main() throws {
         try confirmOrDraft(&s, store: store, cli: cli, yes: a.yes)
     case "approve":
         let cli = try agentsCLI()
-        var s = try store.load(try store.resolve(a.positional.first))
+        let id = try store.resolve(a.positional.first)
+        heldLock = try takeLock(store, id, waiting: 0)
+        var s = try store.load(id)
         guard s.status == .draft else { throw LoopError("run \(s.shortId) is \(s.status.rawValue), not a draft") }
         if let file = a.plan { try loadPlanFile(file, into: &s) }
         if let b = a.budget { s.budgetMs = b }
         if let blocker = approvalBlocker(s.questions, run: s.shortId) { throw LoopError("not approved: " + blocker) }
         try confirmOrDraft(&s, store: store, cli: cli, yes: a.yes || !interactive)
     case "answer" where a.positional.count == 2:
-        let id = try store.resolve(a.positional[0])
-        var s = try store.load(id)
-        guard s.status == .paused, !store.controllerRunning(id) else {
-            throw LoopError("run \(s.shortId) is \(s.status.rawValue); a decision answers a paused run (a draft's questions take: answer <run> <question> <answer>)")
-        }
         let decision = a.positional[1].trimmingCharacters(in: .whitespacesAndNewlines)
         guard !decision.isEmpty else { throw LoopError("the decision is empty") }
-        s.decisions = (s.decisions ?? []) + [decision]
-        s.log("decided", decision)
-        // The decision is the material change: a chunk stopped at the revision cap gets one more try.
-        for i in s.plan.chunks.indices where s.plan.chunks[i].status != .accepted && s.plan.chunks[i].revisions >= Limits.maxRevisions {
-            s.plan.chunks[i].revisions = Limits.maxRevisions - 1
+        try resumeRun(store: store, id: try store.resolve(a.positional[0]), budget: a.budget) { s in
+            guard s.status == .paused else {
+                throw LoopError("run \(s.shortId) is \(s.status.rawValue); a decision answers a paused run (a draft's questions take: answer <run> <question> <answer>)")
+            }
+            s.decisions = (s.decisions ?? []) + [decision]
+            s.log("decided", decision)
+            // The decision is the material change: a chunk stopped at the revision cap gets one more try.
+            for i in s.plan.chunks.indices where s.plan.chunks[i].status != .accepted && s.plan.chunks[i].revisions >= Limits.maxRevisions {
+                s.plan.chunks[i].revisions = Limits.maxRevisions - 1
+            }
         }
-        try store.save(s)
-        try resumeRun(store: store, id: id, budget: a.budget)
     case "waive":
         guard a.positional.count >= 3 else { throw LoopError("usage: agents loop waive <run> <criterion> \"<why>\"") }
-        let id = try store.resolve(a.positional[0])
-        var s = try store.load(id)
-        guard s.status == .paused, !store.controllerRunning(id) else { throw LoopError("run \(s.shortId) is \(s.status.rawValue); only a paused run's criterion can be waived") }
         let criterion = a.positional[1], why = a.positional[2...].joined(separator: " ")
-        guard s.plan.criteria.contains(where: { $0.id == criterion }) else {
-            throw LoopError("run \(s.shortId) has no criterion \"\(criterion)\" (it has: \(s.plan.criteria.map(\.id).joined(separator: ", ")))")
+        try resumeRun(store: store, id: try store.resolve(a.positional[0]), budget: a.budget) { s in
+            // Only what the sign-off proposed, on the commit it judged, may be waived.
+            guard s.status == .paused, let pending = s.pendingWaiver, pending.criterion == criterion, pending.candidate == s.lastMerge else {
+                throw LoopError("run \(s.shortId) has no pending waiver for \"\(criterion)\"\(s.pendingWaiver.map { " (the sign-off proposed waiving \($0.criterion))" } ?? ""); only a criterion the sign-off judged impossible can be waived")
+            }
+            s.waived = (s.waived ?? [:]).merging([criterion: why]) { $1 }
+            s.log("waived", "\(criterion): \(why)")
         }
-        s.waived = (s.waived ?? [:]).merging([criterion: why]) { $1 }
-        s.log("waived", "\(criterion): \(why)")
-        try store.save(s)
-        try resumeRun(store: store, id: id, budget: a.budget)
     case "answer":
         guard a.positional.count >= 3 else { throw LoopError("usage: agents loop answer <run> <question> <answer>, or for a paused run: agents loop answer <run> \"<decision>\"") }
-        var s = try store.load(try store.resolve(a.positional[0]))
-        guard s.status == .draft else { throw LoopError("run \(s.shortId) is \(s.status.rawValue), not a draft") }
-        guard let i = s.questions.firstIndex(where: { $0.id == a.positional[1] }) else {
-            throw LoopError("run \(s.shortId) has no question \"\(a.positional[1])\" (it has: \(s.questions.map(\.id).joined(separator: ", ")))")
+        let qid = a.positional[1], reply = a.positional[2...].joined(separator: " ")
+        // Under the lock: a replan in flight refuses the answer instead of saving over it.
+        let s = try mutate(store, try store.resolve(a.positional[0])) { s in
+            guard s.status == .draft else { throw LoopError("run \(s.shortId) is \(s.status.rawValue), not a draft") }
+            guard let i = s.questions.firstIndex(where: { $0.id == qid }) else {
+                throw LoopError("run \(s.shortId) has no question \"\(qid)\" (it has: \(s.questions.map(\.id).joined(separator: ", ")))")
+            }
+            let q = s.questions[i]
+            // A number picks an option, as in the interactive interview.
+            s.questions[i].answer = Int(reply).flatMap { $0 >= 1 && $0 <= q.options.count ? q.options[$0 - 1].label : nil } ?? reply
+            s.log("answered", "\(q.id): \(s.questions[i].answer!)")
         }
-        let reply = a.positional[2...].joined(separator: " ")
-        let q = s.questions[i]
-        // A number picks an option, as in the interactive interview.
-        s.questions[i].answer = Int(reply).flatMap { $0 >= 1 && $0 <= q.options.count ? q.options[$0 - 1].label : nil } ?? reply
-        s.log("answered", "\(q.id): \(s.questions[i].answer!)")
-        try store.save(s)
         if a.json { print(try draftJSON(s)) }
         else { print(approvalBlocker(s.questions, run: s.shortId) ?? "ready to approve: agents loop approve \(s.shortId)") }
     case "replan":
@@ -508,7 +543,7 @@ func main() throws {
         print(listRuns(store))
     case "pause":
         let id = try store.resolve(a.positional.first)
-        var s = try store.load(id)
+        let s = try store.load(id)
         let unfinishedDraft = s.status == .draft && s.turns.contains { $0.endedAt == nil }
         guard [.running, .waiting].contains(s.status) || unfinishedDraft else { throw LoopError("run \(s.shortId) is \(s.status.rawValue)") }
         if store.controllerRunning(id) {
@@ -516,14 +551,15 @@ func main() throws {
             print("pausing \(s.shortId): stopping running turns; their work stays in the worktrees…")
             while store.controllerRunning(id) { usleep(200_000) }
         } else {
-            recoverTurnProcesses(&s.turns, runId: s.id, store: store)
-            if unfinishedDraft {
-                s.reason = "planning stopped; the draft still needs a valid plan and approval"
-                s.log("planning-stopped", s.reason!)
-            } else {
-                s.pause("paused by you — resume with: agents loop resume \(s.shortId)")
+            try mutate(store, id) { s in
+                recoverTurnProcesses(&s.turns, runId: s.id, store: store)
+                if unfinishedDraft {
+                    s.reason = "planning stopped; the draft still needs a valid plan and approval"
+                    s.log("planning-stopped", s.reason!)
+                } else {
+                    s.pause("paused by you — resume with: agents loop resume \(s.shortId)")
+                }
             }
-            try store.save(s)
         }
         print(describeRun(try store.load(id), controllerAlive: false), terminator: "")
     case "resume":

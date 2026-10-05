@@ -953,9 +953,16 @@ link_skills() {  # 1 = remove ours
       for v in claude codex; do
         ls_slot=$(config_dir "$n" "$v")
         [ -d "$ls_slot" ] || continue
+        # A linked skills dir points somewhere else: never write through it.
+        [ -L "$ls_slot/skills" ] && continue
         ls_dst="$ls_slot/skills/$ls_name"
         if [ -L "$ls_dst" ]; then
-          case $(readlink "$ls_dst") in */skills/"$ls_name") ;; *) continue ;; esac
+          # Ours: this install's skill, or one inside an N2 app bundle. Any
+          # other link is someone's own and stays.
+          case $(readlink "$ls_dst") in
+            "$ls_src"|*/Contents/Resources/skills/"$ls_name") ;;
+            *) continue ;;
+          esac
         elif [ -e "$ls_dst" ]; then
           continue
         fi

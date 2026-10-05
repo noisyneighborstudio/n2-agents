@@ -23,8 +23,12 @@ done
 
 export HOME="$base/home" N2_AGENTS_ROOT="$base/home/.n2-agents" PATH="/usr/bin:/bin"
 mkdir -p "$HOME/.claude" "$HOME/.codex" "$N2_AGENTS_ROOT/Work/claude" "$N2_AGENTS_ROOT/Work/codex" \
-  "$N2_AGENTS_ROOT/Mine/claude/skills/n2-fanout"
+  "$N2_AGENTS_ROOT/Mine/claude/skills/n2-fanout" "$N2_AGENTS_ROOT/Linked/claude/skills" "$N2_AGENTS_ROOT/Shared/claude" \
+  "$base/personal/skills/n2-fanout" "$base/elsewhere"
 echo mine > "$N2_AGENTS_ROOT/Mine/claude/skills/n2-fanout/SKILL.md"
+# Someone's own link of the same name, and a skills dir that is itself a link.
+ln -s "$base/personal/skills/n2-fanout" "$N2_AGENTS_ROOT/Linked/claude/skills/n2-fanout"
+ln -s "$base/elsewhere" "$N2_AGENTS_ROOT/Shared/claude/skills"
 shims() { "$repo/agents" shims "$@" >/dev/null 2>&1 || true; }   # PATH links need an install; skills don't
 linked() { [ -L "$1/skills/n2-fanout" ] && [ "$(readlink "$1/skills/n2-fanout")" = "$repo/skills/n2-fanout" ] \
   && cmp -s "$1/skills/n2-fanout/SKILL.md" "$skill"; }
@@ -34,7 +38,10 @@ for slot in "$HOME/.claude" "$HOME/.codex" "$N2_AGENTS_ROOT/Work/claude" "$N2_AG
 done
 [ ! -L "$N2_AGENTS_ROOT/Mine/claude/skills/n2-fanout" ] \
   && [ "$(cat "$N2_AGENTS_ROOT/Mine/claude/skills/n2-fanout/SKILL.md")" = mine ] || fail "replaced someone's own skill"
+[ "$(readlink "$N2_AGENTS_ROOT/Linked/claude/skills/n2-fanout")" = "$base/personal/skills/n2-fanout" ] || fail "replaced someone's own link"
+[ ! -e "$base/elsewhere/n2-fanout" ] || fail "wrote through a linked skills dir"
 shims --remove
 [ ! -e "$HOME/.claude/skills/n2-fanout" ] && [ ! -e "$N2_AGENTS_ROOT/Work/codex/skills/n2-fanout" ] || fail "--remove left a link"
 [ "$(cat "$N2_AGENTS_ROOT/Mine/claude/skills/n2-fanout/SKILL.md")" = mine ] || fail "--remove touched someone's own skill"
+[ -L "$N2_AGENTS_ROOT/Linked/claude/skills/n2-fanout" ] || fail "--remove deleted someone's own link"
 echo "Fan-out skill: commands and flags exist; linked into 4 slots, idempotent, own skill kept, removed cleanly"

@@ -640,6 +640,8 @@ final class Controller {
             errors += added.filter { a in s.plan.chunks.contains { $0.id == a.id } }.map { "chunk \"\($0.id)\" already exists" }
             let reopen = ((r["reopen"] as? [Any]) ?? []).compactMap { $0 as? [String: Any] }
             for o in reopen where s.chunk(str(o["chunk"]) ?? "") == nil { errors.append("unknown chunk \"\(str(o["chunk"]) ?? "")\"") }
+            let named = reopen.compactMap { str($0["chunk"]) }
+            if Set(named).count != named.count { errors.append("a chunk is reopened twice") }
             errors += dependencyProblems(s.plan.chunks + added)
             if added.isEmpty && reopen.isEmpty { errors.append("the repair names no chunk") }
             let key = "repair:\(candidate)"
@@ -662,6 +664,7 @@ final class Controller {
             // Coupled chunks repair as one: the root takes the others' paths,
             // criteria and fixes, and they stay merged as they were.
             var together: [String] = []
+            var carriedBy: [String: String] = [:]
             for (root, absorbed) in coupledRepairs(reopen.compactMap { s.chunk(str($0["chunk"]) ?? "") }).sorted(by: { $0.key < $1.key }) {
                 for id in absorbed {
                     guard let a = s.chunk(id) else { continue }
@@ -671,10 +674,12 @@ final class Controller {
                         c.feedback = (c.feedback ?? "") + "\n\nThis repair also covers chunk \(id) (\(a.title)), whose paths are yours for it: \(a.feedback ?? "")"
                     }
                     s.update(id) { c in c.status = .accepted; c.revisions -= 1; c.feedback = nil }
+                    carriedBy[id] = root
                 }
                 together.append(([root] + absorbed).joined(separator: "+"))
             }
             s.plan.chunks += added
+            waitForCarriers(&s.plan.chunks, carriedBy: carriedBy)
             note("supervisor", "repair: reopened \(reopen.compactMap { str($0["chunk"]) }.joined(separator: ", "))\(together.isEmpty ? "" : " (as one: \(together.joined(separator: ", ")))")\(added.isEmpty ? "" : "; added \(added.map(\.id).joined(separator: ", "))")")
         case "pause":
             s.pause("supervisor: \(str(r["reason"]) ?? str(r["summary"]) ?? "needs a human")")
@@ -684,6 +689,7 @@ final class Controller {
                 note("supervisor", "\(t.id) asked to waive \"\(str(r["criterion"]) ?? "")\", which isn't a failing criterion")
                 return unusable(t, "the sign-off")
             }
+            s.pendingWaiver = PendingWaiver(criterion: id, candidate: candidate)
             s.pause("the sign-off judges criterion \(id) impossible as written: \(str(r["reason"]) ?? str(r["summary"]) ?? "") — waive it: agents loop waive \(s.shortId) \(id) \"<why>\"; or keep it: agents loop answer \(s.shortId) \"<what to do instead>\"")
         default:
             note("supervisor", "\(t.id) returned an unknown decision \"\(decision)\"")

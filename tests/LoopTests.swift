@@ -152,6 +152,12 @@ import Darwin
                "links through each other join one group")
         expect(coupledRepairs([tui, docs]).isEmpty, "unrelated reopened chunks stay apart and run in parallel")
         expect(coupledRepairs([pty]).isEmpty, "a dependency that wasn't reopened couples nothing")
+        expect(coupledRepairs([tui, pty, pty]) == ["tui": ["pty-smoke"]], "a chunk named twice neither traps nor doubles")
+        // What depended on an absorbed chunk, a chunk the repair adds included, waits for its carrier.
+        var afterRepair = [model, tui, pty, chunk("c", ["pty-smoke"]), docs]
+        waitForCarriers(&afterRepair, carriedBy: ["pty-smoke": "tui"])
+        expect(afterRepair[3].dependsOn == ["pty-smoke", "tui"] && afterRepair[2].dependsOn == ["tui"] && afterRepair[4].dependsOn.isEmpty,
+               "a dependent of the absorbed chunk now also waits for the root")
 
         // Workers: strength x quota left, and no slot past 1.5x its fair share.
         let hand: (String, Effort) -> Double = { lab, effort in Double(Adapter.of(lab)!.strength[effort]!) }
@@ -174,6 +180,9 @@ import Darwin
         expect(worker([slot("codex", "Full", used: 97), slot("claude", "Off", used: 10, signedIn: "no")]) == nil, "unusable slots never work")
         expect(worker([slot("codex", "Unmetered", used: nil, quota: "no-usage-api"), slot("claude", "Metered", used: 90)]) == "claude|Metered",
                "measured capacity before unmeasured")
+        expect(worker([slot("codex", "Unmetered", used: nil, quota: "no-usage-api"), slot("claude", "Metered", used: 90)],
+                      assigned: ["claude|Metered": 1]) == "claude|Metered",
+               "the spread cap never hands work to unknown capacity while measured capacity is left")
 
         // Strength is learned from reviewed work once a lab has five outcomes.
         let recordPath = NSTemporaryDirectory() + "lab-\(UUID().uuidString).jsonl"
@@ -185,6 +194,19 @@ import Darwin
         expect(abs(record.strength("codex", .deep) - 2.0) < 1e-9, "five outcomes averaging 0.5 measure 2.0")
         expect(record.strength("codex", .light) == 2, "other efforts keep their rating")
         expect(LabRecord(path: recordPath).outcomes.count == 5, "the record survives a restart")
+        // Two runs appending at once lose nothing and corrupt nothing.
+        let shared = NSTemporaryDirectory() + "lab-\(UUID().uuidString).jsonl"
+        defer { try? FileManager.default.removeItem(atPath: shared) }
+        // Each writer is its own record, as each run's controller is its own process.
+        DispatchQueue.concurrentPerform(iterations: 4) { r in
+            let record = LabRecord(path: shared)
+            for i in 0..<100 {
+                record.add(Outcome(slot: "codex|R\(r)", chunk: "c\(i)-" + String(repeating: "x", count: i % 37), effort: .standard, score: 1, at: Date()))
+            }
+        }
+        let lines = ((try? String(contentsOfFile: shared, encoding: .utf8)) ?? "").split(separator: "\n")
+        expect(lines.count == 400 && LabRecord(path: shared).outcomes.count == 400,
+               "concurrent appends keep every line whole (\(lines.count) lines, \(LabRecord(path: shared).outcomes.count) readable)")
 
         // Approval waits for every answer, and for a plan drafted with any answer that changes it.
         var q = Question(id: "where", question: "Where?", options: [.init(label: "b", recommended: true), .init(label: "c", recommended: false)])
@@ -195,6 +217,9 @@ import Darwin
         expect(approvalBlocker([q], run: "r1")?.contains("agents loop replan r1") == true, "another answer needs a new draft")
         q.plannedWith = "c"
         expect(approvalBlocker([q], run: "r1") == nil, "a draft planned with the answer can be approved")
+        q.answer = "b"
+        expect(approvalBlocker([q], run: "r1")?.contains("agents loop replan r1") == true,
+               "back to the recommendation after a draft built on another answer needs a new draft")
         var open = Question(id: "x", question: "X?", options: [])
         open.answer = "no preference"
         expect(approvalBlocker([open], run: "r1") == nil, "no preference on a question without a recommendation changes nothing")

@@ -16,16 +16,35 @@ commit. One commit with a `Slice: <slug>` trailer; remove the entry in that comm
 
 ## Queue
 
-Fan-out first: any agent drives `agents loop` through a skill, and work spreads
-across every profile and lab with quota left, reviewed by another lab. The
-first trial (calculator, run 3deef8ab) lost 45 of 126 minutes to engine
-faults; these slices remove them, then a second trial on a new goal compares.
+Fan-out next. Trial 1 (calculator, run 3deef8ab) took 2h with 45 minutes of
+engine faults and 4 manual interventions; after the fixes, trial 2 (event site,
+run 2c6b76f7, 3x the code) took 61 minutes with none. A Codex review of the
+stack found 12 defects Claude's own checks had passed; all are fixed with tests.
 
-1. **Second fan-out trial** (`fanout-trial-2`): a goal the user provides,
-   same slots and reserve; compare wall time, interventions and quota with
-   run 3deef8ab.
+1. **Learn strength from first attempts, spread across accounts** (`loop-routing-2`).
+   Behavior: a chunk's outcome is credited to the lab of its first worker,
+   not whoever finished a revision; no slot runs more than one worker turn
+   at once while another usable slot is idle. Proof: LoopTests for both;
+   trial 2's pattern (three route chunks on one account) no longer occurs in
+   the e2e spread.
 
-2. **Merge a conflict with an agent, reviewed by another** (`fleet-sync-agent-merge`).
+2. **Shared scaffolding has one owner** (`loop-plan-scaffolding`).
+   Behavior: the planner assigns package markers and shared fixtures
+   (`tests/__init__.py`, conftest files) to one chunk that others depend on.
+   Proof: plan validation rejects two parallel chunks whose paths both claim
+   the same file; trial 2's merge conflict can't recur.
+
+3. **Continue sessions instead of cold starts** (`loop-session-continuation`).
+   Behavior: a revision or repair resumes its worker's session when that slot
+   is usable; each lab keeps one warm reviewer session for up to six chunk
+   reviews. Verifier and sign-off stay fresh. Proof: e2e asserts a revise
+   resumes the recorded session id and a cold slot starts a new one; trial 3
+   measures turn time against trial 2.
+
+4. **Small-goal mode** (`loop-small-goal`), then trial 3 against a 1:1
+   baseline on a goal the user picks: one builder, one cross-lab review.
+
+5. **Merge a conflict with an agent, reviewed by another** (`fleet-sync-agent-merge`).
    Behavior: `fleet sync merge <id>` asks an agent with measured headroom for a
    merged version, then an agent from a different lab reviews it (Claude
    never reviews Claude's merge; a harness counts by its model's lab, and an
@@ -42,7 +61,7 @@ faults; these slices remove them, then a second trial on a new goal compares.
    the fake agent's recorded input is empty.
    Scope: CLI only; the panel button is the next slice.
 
-3. **"Merge with Agent" in the panel** (`fleet-sync-agent-merge-ui`).
+6. **"Merge with Agent" in the panel** (`fleet-sync-agent-merge-ui`).
    Behavior: each text conflict row offers Merge with Agent beside the two
    existing choices; a sheet shows the diff, the review and Accept or Discard.
    Only that row's button disables while agents work; it is disabled with a
@@ -50,7 +69,7 @@ faults; these slices remove them, then a second trial on a new goal compares.
    Proof: a Swift test holds the merge read while the rest of the panel renders
    (the AGENTS.md UI rule); accept and discard record the right outcome.
 
-4. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
+7. **Walk the fleet flows in the native UI** (`fleet-native-flows`).
    Behavior: from the QA app, pair two disposable peers (Settings › Fleet),
    sync (with a held profile shared from Fleet settings), send work (the Send
    Work page), show its result (the Task page) and revoke (the Machine page).
@@ -59,7 +78,7 @@ faults; these slices remove them, then a second trial on a new goal compares.
    per step fails.
    Scope: disposable peers only; no live installation or real machines.
 
-5. **Honor Claude usage rejections** (`usage-claude-backoff`).
+8. **Honor Claude usage rejections** (`usage-claude-backoff`).
    Behavior: after a 429 from Claude usage, no reader asks that account again
    until its `Retry-After` has passed; the row stays `rate-limited` with the
    last reading and its time. Evidence: `docs/audits/claude-usage-rate-limit-spike.md`.
@@ -68,7 +87,7 @@ faults; these slices remove them, then a second trial on a new goal compares.
    a read after the window calls again. Break the gate once; the test fails.
    Scope: Claude only, one Mac. Codex and peer sharing excluded.
 
-6. **One Claude usage call per account at a time** (`usage-claude-single-flight`).
+9. **One Claude usage call per account at a time** (`usage-claude-single-flight`).
    Behavior: concurrent readers (tray, loop, dispatch) of one account share
    one provider call, and a reading under 60 s old is served from the journal.
    Proof: two concurrent `usage.py` runs against a held fake provider make one
@@ -77,7 +96,7 @@ faults; these slices remove them, then a second trial on a new goal compares.
    Scope: Claude only, one Mac. The 60 s figure is policy, not a measured
    provider window.
 
-7. **Offer skill updates across the fleet** (`fleet-skill-updates`), later.
+10. **Offer skill updates across the fleet** (`fleet-skill-updates`), later.
    Behavior: N2 notices when an installed skill has a newer version at its
    source and offers one action that updates it on every enrolled Mac; the
    Fleet panel shows which Macs are behind.
@@ -97,6 +116,10 @@ Blocked on authorization:
   (readiness: "provider-specific authentication lifecycle").
 
 ## Noticed
+
+- The event site trial 2 built (branch n2/loop-2c6b76f7 in
+  ~/Development/fanout-trial-events) mails sign-in links for 127.0.0.1 and
+  prints 127.0.0.1 whatever --host says. Trial artifact, not N2 code.
 
 - The tray knows nothing of loop runs: a paused or finished run should post a
   desktop notification. `agents loop wait` covers agents; people need this.

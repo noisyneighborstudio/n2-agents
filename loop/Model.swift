@@ -92,8 +92,9 @@ struct Question: Codable {
 
     /// What an empty reply means: the recommendation, else no preference.
     var defaultAnswer: String { options.first(where: \.recommended)?.label ?? "no preference" }
-    /// Answered with something the current plan hasn't been drafted with.
-    var changesPlan: Bool { answer.map { $0 != defaultAnswer && $0 != plannedWith } ?? false }
+    /// Answered with something the current plan hasn't been drafted with: the
+    /// first draft assumed the recommendation, a later one the answers it saw.
+    var changesPlan: Bool { answer.map { $0 != (plannedWith ?? defaultAnswer) } ?? false }
 }
 
 /// Why a drafted plan can't be approved yet, or nil when it can.
@@ -107,6 +108,11 @@ func approvalBlocker(_ questions: [Question], run: String) -> String? {
         return "your answer to \(changed.joined(separator: ", ")) changes the plan — draft it again: agents loop replan \(run)"
     }
     return nil
+}
+
+struct PendingWaiver: Codable {
+    var criterion: String
+    var candidate: String
 }
 
 struct Evidence: Codable {
@@ -184,6 +190,8 @@ struct RunState: Codable {
     var decisions: [String]? = nil
     /// Criteria the user waived after a sign-off judged them impossible as written: id -> reason.
     var waived: [String: String]? = nil
+    /// The waiver a sign-off proposed and the commit it judged: the only one `waive` accepts.
+    var pendingWaiver: PendingWaiver? = nil
 
     func chunk(_ id: String) -> Chunk? { plan.chunks.first { $0.id == id } }
 

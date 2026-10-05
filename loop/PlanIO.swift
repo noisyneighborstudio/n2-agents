@@ -122,15 +122,27 @@ func describePlan(_ s: RunState, slots: [Slot]?) -> String {
 /// whole repair; the rest stay accepted. Returns root id -> absorbed ids.
 func coupledRepairs(_ reopened: [Chunk]) -> [String: [String]] {
     let ids = Set(reopened.map(\.id))
-    var group = Dictionary(uniqueKeysWithValues: reopened.map { ($0.id, $0.id) })
+    var group = Dictionary(reopened.map { ($0.id, $0.id) }, uniquingKeysWith: { a, _ in a })
     func find(_ x: String) -> String { group[x] == x ? x : find(group[x]!) }
     for c in reopened { for d in c.dependsOn where ids.contains(d) { group[find(c.id)] = find(d) } }
     var out: [String: [String]] = [:]
-    for members in Dictionary(grouping: reopened.map(\.id), by: find).values where members.count > 1 {
+    for members in Dictionary(grouping: Array(ids), by: find).values where members.count > 1 {
         let inGroup = Set(members)
         let roots = reopened.filter { inGroup.contains($0.id) && !$0.dependsOn.contains(where: inGroup.contains) }
         let root = roots.first?.id ?? members[0]
-        out[root] = reopened.map(\.id).filter { inGroup.contains($0) && $0 != root }
+        var seen = Set<String>()
+        out[root] = reopened.map(\.id).filter { inGroup.contains($0) && $0 != root && seen.insert($0).inserted }
     }
     return out
+}
+
+/// Whatever depends on an absorbed chunk, chunks a repair adds included,
+/// also waits for the repair root carrying its fix.
+func waitForCarriers(_ chunks: inout [Chunk], carriedBy: [String: String]) {
+    for i in chunks.indices {
+        for (id, root) in carriedBy.sorted(by: { $0.key < $1.key })
+        where chunks[i].dependsOn.contains(id) && chunks[i].id != root && !chunks[i].dependsOn.contains(root) {
+            chunks[i].dependsOn.append(root)
+        }
+    }
 }

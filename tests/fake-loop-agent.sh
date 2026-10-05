@@ -57,11 +57,16 @@ fi
 case $role in
   planner)
     if [ -f "$LOOP_FAKE/coupled" ]; then
-      echo 'N2_RESULT {"plan":{"goal":"Write a.txt and b.txt","criteria":[{"id":"has-a","description":"a.txt exists","verification":"look for a.txt"},{"id":"has-b","description":"b.txt says done","verification":"read b.txt"}],"verificationCommands":["test -f a.txt","grep -q done b.txt"],"chunks":[{"id":"a","title":"Write a","instructions":"Create a.txt","paths":["a.txt"],"criteria":["has-a"],"dependsOn":[],"effort":"light"},{"id":"b","title":"Write b","instructions":"Create b.txt","paths":["b.txt"],"criteria":["has-b"],"dependsOn":["a"],"effort":"deep"}]},"questions":[]}'
+      echo 'N2_RESULT {"plan":{"goal":"Write a.txt and b.txt","criteria":[{"id":"has-a","description":"a.txt exists","verification":"look for a.txt"},{"id":"has-b","description":"b.txt says done","verification":"read b.txt"}],"verificationCommands":["grep -q \"names b\" a.txt","grep -q \"names a\" b.txt"],"chunks":[{"id":"a","title":"Write a","instructions":"Create a.txt","paths":["a.txt"],"criteria":["has-a"],"dependsOn":[],"effort":"light"},{"id":"b","title":"Write b","instructions":"Create b.txt","paths":["b.txt"],"criteria":["has-b"],"dependsOn":["a"],"effort":"deep"}]},"questions":[]}'
       exit 0
     fi
     if [ -f "$LOOP_FAKE/ask" ]; then
-      case $prompt in *"→ c.txt"*) touch "$LOOP_FAKE/replanned-with-c" ;; esac
+      case $prompt in *"→ c.txt"*)
+        # The answer changes the plan: b's work lands in c.txt instead.
+        touch "$LOOP_FAKE/replanned-with-c"
+        echo 'N2_RESULT {"plan":{"goal":"Write a.txt and c.txt","criteria":[{"id":"has-a","description":"a.txt exists","verification":"look for a.txt"},{"id":"has-b","description":"c.txt says done","verification":"read c.txt"}],"verificationCommands":["test -f a.txt","grep -q done c.txt","test ! -e b.txt"],"chunks":[{"id":"a","title":"Write a","instructions":"Create a.txt","paths":["a.txt"],"criteria":["has-a"],"dependsOn":[],"effort":"light"},{"id":"c","title":"Write c","instructions":"Create c.txt","paths":["c.txt"],"criteria":["has-b"],"dependsOn":[],"effort":"deep"}]},"questions":[{"id":"where","question":"Where does b go?","options":[{"label":"b.txt","recommended":true},{"label":"c.txt","recommended":false}]}]}'
+        exit 0 ;;
+      esac
       echo 'N2_RESULT {"plan":{"goal":"Write a.txt and b.txt","criteria":[{"id":"has-a","description":"a.txt exists","verification":"look for a.txt"},{"id":"has-b","description":"b.txt says done","verification":"read b.txt"}],"verificationCommands":["test -f a.txt","grep -q done b.txt"],"chunks":[{"id":"a","title":"Write a","instructions":"Create a.txt","paths":["a.txt"],"criteria":["has-a"],"dependsOn":[],"effort":"light"},{"id":"b","title":"Write b","instructions":"Create b.txt","paths":["b.txt"],"criteria":["has-b"],"dependsOn":[],"effort":"deep"}]},"questions":[{"id":"where","question":"Where does b go?","options":[{"label":"b.txt","recommended":true},{"label":"c.txt","recommended":false}]}]}'
       exit 0
     fi
@@ -73,7 +78,11 @@ JSON
   worker)
     [ -f "$LOOP_FAKE/slow" ] && sleep 60
     n=$(( $(cat "$LOOP_FAKE/n" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$LOOP_FAKE/n"
-    echo "done by $profile, turn $n" > "$chunk.txt"
+    case $prompt in
+      *"also covers chunk b"*)   # the coupled repair: both files, each naming the other
+        echo "done, names b" > a.txt; echo "done, names a" > b.txt ;;
+      *) echo "done by $profile, turn $n" > "$chunk.txt" ;;
+    esac
     echo "N2_RESULT {\"status\":\"done\",\"summary\":\"wrote $chunk.txt\"}"
     ;;
   supervisor)

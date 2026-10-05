@@ -810,6 +810,9 @@ test -f "$loop_fake/replanned-with-c"
 [ "$(print -r -- "$replanned" | jq_ 'd["blocker"], d["questions"][0]["answer"]')" = "(None, 'c.txt')" ]
 loop approve "$run" >/dev/null
 wait_for DONE
+# The answer reached the result: c.txt, and no b.txt.
+git -C "$repo" show "n2/loop-${run[1,8]}:c.txt" | grep -q done
+! git -C "$repo" cat-file -e "n2/loop-${run[1,8]}:b.txt" 2>/dev/null
 
 # A slot out of quota costs the work nothing: planning and chunks fail over.
 new_loop quota-Home
@@ -883,6 +886,9 @@ new_loop slow
 # only once both have, or a TERM in that window kills one without a record.
 for _ in {1..100}; do [ "$(field 'len([t for t in s["turns"] if t["role"] == "worker" and not t.get("endedAt") and t.get("pgid")])')" = 2 ] && [ -e "$loop_fake/trapped-a" ] && [ -e "$loop_fake/trapped-b" ] && break; sleep 0.2; done
 pgids=(${(f)"$(field '"\n".join(str(t["pgid"]) for t in s["turns"] if t["role"] == "worker")')"})
+# A working run refuses a decision at once instead of racing its controller.
+! loop answer "$run" "too soon" >/dev/null 2>&1
+[ -z "$(field 's.get("decisions")')" ] || [ "$(field 's.get("decisions")')" = None ]
 # Whoever is waiting on the run hears about the pause, with its reason.
 loop wait "$run" --json --timeout 2m > "$loop_root/waited.json" &
 waiter=$!
@@ -893,6 +899,7 @@ import json,sys
 w=json.load(open(sys.argv[1]))
 assert w["status"]=="PAUSED" and w["reason"].startswith("paused by you"), w
 assert any(e["kind"]=="paused" for e in w["events"]), w
+assert w["controllerRunning"] is False, w   # answerable now: the controller has let go
 PYWAIT
 grep -q '] status: PAUSED — paused by you' "$loop_root/runs/$run/controller.log"
 [ "$(field 's["status"]')" = PAUSED ]
@@ -914,6 +921,9 @@ wait_for DONE
 grep -q 'repair: reopened a, b (as one: a+b)' "$loop_root/runs/$run/controller.log"
 [ "$(field '[(c["id"], c["turns"]) for c in s["plan"]["chunks"]]')" = "[('a', 2), ('b', 1)]" ]
 grep -lq 'also covers chunk b' "$loop_root/runs/$run"/turns/*-worker-a.prompt
+# Both requested repairs are on the result, made by the one chunk.
+[ "$(git -C "$repo" show "n2/loop-${run[1,8]}:a.txt")" = "done, names b" ]
+[ "$(git -C "$repo" show "n2/loop-${run[1,8]}:b.txt")" = "done, names a" ]
 
 # A criterion the sign-off judges impossible pauses for the user instead of
 # another repair round; only the user's waiver lets the run finish.
@@ -922,6 +932,7 @@ wait_for PAUSED
 [[ "$(field 's["reason"]')" == "the sign-off judges criterion has-b impossible as written"*"agents loop waive"* ]]
 [ "$(field 'sum(1 for t in s["turns"] if t["role"] == "worker")')" = 2 ]
 ! loop waive "$run" nosuch "why" >/dev/null 2>&1
+! loop waive "$run" has-a "not proposed" >/dev/null 2>&1   # only the proposed criterion
 loop waive "$run" has-b "a 1x1 terminal can't show it" >/dev/null
 wait_for DONE
 [ "$(field 's["status"]')" = DONE ]
@@ -935,6 +946,7 @@ wait_for PAUSED
 loop answer "$run" "keep the marker" >/dev/null
 wait_for DONE
 [ "$(field 's["decisions"]')" = "['keep the marker']" ]
+! loop waive "$run" has-b "nobody proposed it" >/dev/null 2>&1
 grep -lq -- '- keep the marker' "$loop_root/runs/$run"/turns/*-supervisor-b.prompt
 ! loop answer "$run" "too late" >/dev/null 2>&1
 
