@@ -43,7 +43,10 @@ final class LabRecord {
         var done = 0
         while done < bytes.count {
             let n = bytes[done...].withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
-            if n > 0 { done += n } else if n < 0 && errno == EINTR { continue } else { _ = ftruncate(fd, before.st_size); return }
+            if n > 0 { done += n } else if n < 0 && errno == EINTR { continue } else {
+                while ftruncate(fd, before.st_size) != 0 && errno == EINTR {}
+                return
+            }
         }
     }
 
