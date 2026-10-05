@@ -83,6 +83,8 @@ final class Controller {
 
     func run() throws {
         guard let lock = store.lock(s.id) else { throw LoopError("run \(s.shortId) already has a controller") }
+        // What was read before the lock may be stale: a resume can save in between.
+        s = try store.load(s.id)
         defer { flock(lock, LOCK_UN); close(lock) }
         signal(SIGTERM, SIG_IGN)
         signal(SIGINT, SIG_IGN)

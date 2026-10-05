@@ -35,12 +35,15 @@ final class LabRecord {
         defer { close(fd) }
         while flock(fd, LOCK_EX) != 0 { guard errno == EINTR else { return } }
         defer { flock(fd, LOCK_UN) }
-        // Write the whole line, through interruptions and short writes.
+        // Write the whole line, through interruptions and short writes; a
+        // write that fails partway is cut back so no half line is left.
+        var before = stat()
+        guard fstat(fd, &before) == 0 else { return }
         let bytes = [UInt8](line + Data("\n".utf8))
         var done = 0
         while done < bytes.count {
             let n = bytes[done...].withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
-            if n > 0 { done += n } else if n < 0 && errno == EINTR { continue } else { return }
+            if n > 0 { done += n } else if n < 0 && errno == EINTR { continue } else { _ = ftruncate(fd, before.st_size); return }
         }
     }
 
