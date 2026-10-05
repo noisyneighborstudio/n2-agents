@@ -203,6 +203,12 @@ import Darwin
         expect(abs(record.strength("codex", .deep) - 2.0) < 1e-9, "five outcomes averaging 0.5 measure 2.0")
         expect(record.strength("codex", .light) == 2, "other efforts keep their rating")
         expect(LabRecord(path: recordPath).outcomes.count == 5, "the record survives a restart")
+        // A torn line costs only itself: the next outcome starts on a line of its own.
+        let torn = NSTemporaryDirectory() + "lab-\(UUID().uuidString).jsonl"
+        defer { try? FileManager.default.removeItem(atPath: torn) }
+        try? Data("{\"slot\":\"codex|T\",\"chunk\":\"half".utf8).write(to: URL(fileURLWithPath: torn))
+        LabRecord(path: torn).add(Outcome(slot: "codex|T", chunk: "whole", effort: .light, score: 1, at: Date()))
+        expect(LabRecord(path: torn).outcomes.map(\.chunk) == ["whole"], "an outcome after a torn line is still readable")
         // Two runs appending at once lose nothing and corrupt nothing.
         let shared = NSTemporaryDirectory() + "lab-\(UUID().uuidString).jsonl"
         defer { try? FileManager.default.removeItem(atPath: shared) }

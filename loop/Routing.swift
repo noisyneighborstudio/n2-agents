@@ -30,7 +30,7 @@ final class LabRecord {
     func add(_ o: Outcome) {
         outcomes.append(o)
         guard let line = try? JSONEncoder.line.encode(o) else { return }
-        let fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0o600)
+        let fd = open(path, O_RDWR | O_CREAT | O_APPEND | O_CLOEXEC, 0o600)
         guard fd >= 0 else { return }
         defer { close(fd) }
         while flock(fd, LOCK_EX) != 0 { guard errno == EINTR else { return } }
@@ -39,7 +39,11 @@ final class LabRecord {
         // write that fails partway is cut back so no half line is left.
         var before = stat()
         guard fstat(fd, &before) == 0 else { return }
-        let bytes = [UInt8](line + Data("\n".utf8))
+        // A torn line left by a failure we couldn't roll back ends where the
+        // next begins: start fresh, so it costs only itself.
+        var last: UInt8 = 0x0A
+        if before.st_size > 0 { _ = pread(fd, &last, 1, before.st_size - 1) }
+        let bytes = (last == 0x0A ? [] : [0x0A]) + [UInt8](line + Data("\n".utf8))
         var done = 0
         while done < bytes.count {
             let n = bytes[done...].withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
