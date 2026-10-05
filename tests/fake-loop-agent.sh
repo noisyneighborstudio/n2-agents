@@ -5,8 +5,8 @@
 #   quota-<profile>   that slot is out of quota
 #   worker-quota-<profile>   holds n: that slot's next n worker turns hit a
 #                     limit that resets in two seconds
-#   slow              workers take a minute (time to pause them) and record
-#                     their chunk in $LOOP_FAKE/terminated when TERM reaches them
+#   slow              workers take a minute (time to pause them); with
+#                     LOOP_FAKE_STRUCTURED the wrapper records the TERM
 #   fail-b-once       the first verification rejects criterion has-b
 #   liar              the sign-off says done whatever the evidence says
 set -eu
@@ -55,10 +55,7 @@ N2_RESULT {"plan":{"goal":"Write a.txt and b.txt","criteria":[{"id":"has-a","des
 JSON
     ;;
   worker)
-    if [ -f "$LOOP_FAKE/slow" ]; then
-      trap 'echo "$chunk" >> "$LOOP_FAKE/terminated"; exit 143' TERM
-      sleep 60
-    fi
+    [ -f "$LOOP_FAKE/slow" ] && sleep 60
     n=$(( $(cat "$LOOP_FAKE/n" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$LOOP_FAKE/n"
     echo "done by $profile, turn $n" > "$chunk.txt"
     echo "N2_RESULT {\"status\":\"done\",\"summary\":\"wrote $chunk.txt\"}"
