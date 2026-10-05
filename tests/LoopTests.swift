@@ -209,6 +209,13 @@ import Darwin
         try? Data("{\"slot\":\"codex|T\",\"chunk\":\"half".utf8).write(to: URL(fileURLWithPath: torn))
         LabRecord(path: torn).add(Outcome(slot: "codex|T", chunk: "whole", effort: .light, score: 1, at: Date()))
         expect(LabRecord(path: torn).outcomes.map(\.chunk) == ["whole"], "an outcome after a torn line is still readable")
+        // Torn inside a multibyte character: the earlier and later lines survive.
+        let mangled = NSTemporaryDirectory() + "lab-\(UUID().uuidString).jsonl"
+        defer { try? FileManager.default.removeItem(atPath: mangled) }
+        LabRecord(path: mangled).add(Outcome(slot: "codex|T", chunk: "before", effort: .light, score: 1, at: Date()))
+        if let h = FileHandle(forWritingAtPath: mangled) { h.seekToEndOfFile(); h.write(Data([0x7B, 0x22, 0xE2, 0x82])); try? h.close() }
+        LabRecord(path: mangled).add(Outcome(slot: "codex|T", chunk: "after", effort: .light, score: 1, at: Date()))
+        expect(LabRecord(path: mangled).outcomes.map(\.chunk) == ["before", "after"], "invalid UTF-8 in one line costs only that line")
         // Two runs appending at once lose nothing and corrupt nothing.
         let shared = NSTemporaryDirectory() + "lab-\(UUID().uuidString).jsonl"
         defer { try? FileManager.default.removeItem(atPath: shared) }

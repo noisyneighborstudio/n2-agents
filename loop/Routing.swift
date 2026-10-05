@@ -21,8 +21,9 @@ final class LabRecord {
 
     init(path: String) {
         self.path = path
-        let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
-        outcomes = text.split(separator: "\n").compactMap { try? Store.decoder.decode(Outcome.self, from: Data($0.utf8)) }
+        // Line by line from the bytes: a damaged line, even invalid UTF-8, costs only itself.
+        let data = FileManager.default.contents(atPath: path) ?? Data()
+        outcomes = data.split(separator: 0x0A).compactMap { try? Store.decoder.decode(Outcome.self, from: Data($0)) }
     }
 
     /// One whole line per write, appended under a lock: runs sharing the
@@ -41,8 +42,13 @@ final class LabRecord {
         guard fstat(fd, &before) == 0 else { return }
         // A torn line left by a failure we couldn't roll back ends where the
         // next begins: start fresh, so it costs only itself.
+        // A read that fails counts as torn: an extra blank line is harmless.
         var last: UInt8 = 0x0A
-        if before.st_size > 0 { _ = pread(fd, &last, 1, before.st_size - 1) }
+        if before.st_size > 0 {
+            var n = pread(fd, &last, 1, before.st_size - 1)
+            while n < 0 && errno == EINTR { n = pread(fd, &last, 1, before.st_size - 1) }
+            if n != 1 { last = 0 }
+        }
         let bytes = (last == 0x0A ? [] : [0x0A]) + [UInt8](line + Data("\n".utf8))
         var done = 0
         while done < bytes.count {
