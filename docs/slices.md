@@ -107,6 +107,27 @@ stack found 12 defects Claude's own checks had passed; all are fixed with tests.
    sources carry version data). Claude's account skills (`skills/synced/`)
    and Codex's bundled `skills/.system/` are excluded: their tools update them.
 
+7. **Find past work by a loose query** (`find-local`).
+   Behavior: `agents find "appcast n2 agents"` ranks Claude and Codex sessions
+   from every profile on this Mac. Each term must match somewhere: title,
+   folder or branch, the user's prompts, or the agent's replies. Different
+   terms may match different fields, and one-letter typos still match. Rows
+   show profile, lab, session, last active, title, branch, whether the folder
+   exists and whether the branch is pushed, plus a resume command on the
+   session's own profile. It reads a per-Mac FTS5 index
+   (`~/.n2-agents/.find.v1.db`) that re-reads only changed transcripts. When
+   the index finds nothing, it scans raw transcripts and says so.
+   Evidence: `docs/audits/fleet-find-spike.md`.
+   Proof: fixture transcripts in a throwaway home. A term only in the body is
+   found; `apcast n2agents` finds a session in `n2-agents` about appcast;
+   a title match outranks a body match; a subagent transcript and the caller's
+   own session never appear; a deleted worktree reads as gone; a word only in
+   tool output is found only by the raw scan; a git call that hangs on one
+   folder doesn't stall the search; changing one transcript re-reads that one
+   file. Break the typo rule once; the test goes red.
+   Scope: one Mac. Peers (`find-fleet`), `--deep`, other labs and the tray
+   are later slices in the spike doc.
+
 Blocked on a decision:
 - `remote-machines` (docs/tray-redesign/08-slices.md S9): peer machines as Fleet
   sections needs a CLI source for profiles held on peers (open question Q1).
