@@ -739,8 +739,10 @@ exec_vendor() {  # vendor, profile, cfg, cli, args...
     esac
     exec /usr/bin/python3 "$scripts_dir/fleet-auth-bridge.py" --root "$root" --profile "$ev_profile" --config "$ev_cfg" --executable "$ev_cli" --tui -- "$@"
   fi
+  # Claude hands its slot's settings.json env, a long-lived token included, to
+  # every child. A launch from inside one session must not run on its token.
   # shellcheck disable=SC2046
-  exec env "$(vendor_env "$ev_vendor")=$(vendor_env_value "$ev_vendor" "$ev_cfg")" \
+  exec env -u CLAUDE_CODE_OAUTH_TOKEN "$(vendor_env "$ev_vendor")=$(vendor_env_value "$ev_vendor" "$ev_cfg")" \
     $(vendor_env_extra "$ev_vendor" "$ev_profile") "$@"
 }
 
@@ -806,6 +808,30 @@ login_slot() {
     echo "'$name' $(vendor_label "$v") is now:"
     # shellcheck disable=SC2086
     ( exec_vendor "$v" "$name" "$cfg" "$cli" $who ) || true
+  fi
+  [ "$v" = claude ] && claude_long_token
+  return 0
+}
+
+# A refreshable login breaks when two sessions or machines refresh it: each
+# refresh revokes the last. A `setup-token` token lasts a year and never
+# refreshes. On by default; Settings › Claude turns it off.
+claude_long_token() {
+  case ${N2_CLAUDE_LONG_TOKEN:-$(defaults read dev.sethwebster.n2agents claudeLongLivedToken 2>/dev/null || echo 1)} in
+    0|false|NO) return 0 ;;
+  esac
+  echo ""
+  echo "Now approve a long-lived token for '$name' with the same account, so sessions never have to refresh this login."
+  lt_dir=$(mktemp -d "${TMPDIR:-/tmp}/n2-token.XXXXXX") || die "could not create a private temp dir"
+  # script(1) keeps the terminal interactive and records what it shows,
+  # which is the only place setup-token puts the token.
+  if ( exec_vendor claude "$name" "$cfg" script -q "$lt_dir/out" "$cli" setup-token ) &&
+     /usr/bin/python3 "$scripts_dir/claude-token.py" capture "$cfg" "$lt_dir/out"; then
+    rm -rf "$lt_dir"
+    echo "'$name' Claude now uses its long-lived token."
+  else
+    rm -rf "$lt_dir"
+    die "no long-lived token was saved; '$name' keeps its refreshable login — sign in again to retry"
   fi
 }
 

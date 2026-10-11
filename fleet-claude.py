@@ -101,7 +101,8 @@ def run(binding, origin):
     try:
         journal.append('claude', binding['profile'], 'execution-started', dict(base,
             status='execution-unconfirmed', usageScope='unknown', attribution=dict.fromkeys(COUNTERS) | {'task': task}))
-        environment = dict(os.environ, CLAUDE_CONFIG_DIR=binding['config'])
+        # A slot's long-lived token comes from its own settings.json, never the caller's.
+        environment = {k: v for k, v in os.environ.items() if k != 'CLAUDE_CODE_OAUTH_TOKEN'} | {'CLAUDE_CONFIG_DIR': binding['config']}
         if pending: raise SystemExit(128+pending[0])
         reader, writer = os.pipe()
         try:

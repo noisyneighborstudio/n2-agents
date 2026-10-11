@@ -20,6 +20,8 @@ export SWIFT_MODULECACHE_PATH="$test_root/cache/swift"
 # whichever account/home the host coding agent inherited.
 unset CODEX_HOME CLAUDE_CONFIG_DIR GROK_HOME CURSOR_CONFIG_DIR XDG_CONFIG_HOME TBH_CREDENTIAL_BACKEND
 unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN CLAUDE_SECURESTORAGE_CONFIG_DIR
+# Claude sign-in reads the app's long-lived token setting; never the live one.
+export N2_CLAUDE_LONG_TOKEN=0
 
 
 # Fake vendor CLIs. Each echoes the config-dir env var it was handed, which is
@@ -395,6 +397,35 @@ echo '{}' > "$home/.n2-agents/Work/codex/auth.json"
 out=$(run_agents login Work --vendor codex 2>&1)
 test "$(print -r -- "$out" | grep -c "CODEX_HOME=$home/.n2-agents/Work/codex")" = 3
 rm "$home/.n2-agents/Work/codex/auth.json"
+
+# A Claude slot's long-lived token lives in its settings.json env, so every
+# launcher uses it. It counts as signed in; signing in again replaces it.
+claude_slot="$home/.n2-agents/Work/claude"
+token="sk-ant-oat01-$(printf 'x%.0s' {1..93})AA"
+printf '{"model": "opus", "env": {"CLAUDE_CODE_OAUTH_TOKEN": "%s"}}' "$token" > "$claude_slot/settings.json"
+authed=$(run_agents authed Work); print -r -- "$authed" | grep -qx 'claude	yes'
+# With the setting off, sign-in removes the token and keeps the rest.
+out=$(run_agents login Work --vendor claude 2>&1)
+[[ $out != *"long-lived token"* ]]
+test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])))' "$claude_slot/settings.json")" = "{'model': 'opus'}"
+authed=$(run_agents authed Work); print -r -- "$authed" | grep -qx 'claude	no'
+# With it on, setup-token runs pinned to the slot in a terminal it can read.
+# The fake prints no token, so nothing is saved and sign-in says so.
+if out=$(N2_CLAUDE_LONG_TOKEN=1 run_agents login Work --vendor claude 2>&1 </dev/null); then
+  echo "sign-in claimed a long-lived token the provider never showed" >&2; exit 1
+fi
+[[ $out == *"approve a long-lived token for 'Work'"* ]]
+test "$(print -r -- "$out" | grep -c "CLAUDE_CONFIG_DIR=$claude_slot")" -ge 3
+[[ $out == *"no long-lived token was saved"* ]]
+grep -q CLAUDE_CODE_OAUTH_TOKEN "$claude_slot/settings.json" && { echo "a failed token setup saved a token" >&2; exit 1; }
+ls "${TMPDIR:-/tmp}" | grep -q '^n2-token\.' && { echo "setup-token transcript left behind" >&2; exit 1; }
+rm "$claude_slot/settings.json"
+# A run started from inside another slot's session must not inherit its token.
+mkdir -p "$test_root/token-bin"
+printf '#!/bin/sh\necho "token=${CLAUDE_CODE_OAUTH_TOKEN:-none}"\n' > "$test_root/token-bin/claude"
+chmod +x "$test_root/token-bin/claude"
+out=$(HOME="$home" PATH="$test_root/token-bin:$fake_path" CLAUDE_CODE_OAUTH_TOKEN="$token" ./agents run Work --vendor claude 2>/dev/null)
+test "$out" = "token=none"
 
 # --- next best: no lab is anyone's default -------------------------------
 # Cursor and opencode keep their logins out of sight, so a slot of theirs can
@@ -982,6 +1013,7 @@ fi
 
 # --- fleet auth and profile identity ---------------------------------------
 if in_group auth; then
+python3 scripts/test-claude-token.py
 python3 scripts/test-profile-metadata.py
 python3 scripts/test-profile-routing.py
 python3 scripts/test-fleet-auth-response.py

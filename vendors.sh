@@ -285,6 +285,7 @@ PYMUSECLEAR
     return $?
   fi
   [ "$1" = claude ] || return 0
+  /usr/bin/python3 "$scripts_dir/claude-token.py" clear "$2" || return 1
   while IFS= read -r vc_svc; do
     vc_status=0
     security delete-generic-password -s "$vc_svc" >/dev/null 2>&1 || vc_status=$?
@@ -325,6 +326,7 @@ PYCLEAR
 vendor_authed() {  # vendor, slot dir, profile
   case $1 in
     claude)
+      /usr/bin/python3 "$scripts_dir/claude-token.py" has "$2" && return 0
       # Adopted profiles can have credentials under both the symlink and
       # resolved path. Default may also have a legacy unsuffixed entry.
       while IFS= read -r va_svc; do

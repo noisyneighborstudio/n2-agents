@@ -574,6 +574,19 @@ What this means for the fleet:
   environment *is* portable; an interactive keychain session is not, by the
   same evidence. **Supported sync target: env-supplied token/API key.
   Explicitly unsupported: transplanting an interactive keychain session.**
+* Implemented per slot: with Settings › Accounts › "Use long-lived token for
+  Claude" on (the default), `agents login` follows the Claude sign-in with
+  `claude setup-token`, recorded through script(1), and saves the token in the
+  slot's `settings.json` `env` block (`claude-token.py`). Claude Code applies
+  that block for every launcher and prefers it over the stored login, so the
+  login is never refreshed again. The token is saved only if a free token count
+  succeeds and its organization matches the slot's cached sign-in. Its scope is
+  `user:inference` only: `/api/oauth/usage` and `/api/oauth/profile` answer 403,
+  so usage comes from the `anthropic-ratelimit-unified-*` headers of a one-token
+  request, and identity is the cached login, `conflicting` when organizations
+  differ. N2 launches drop an inherited `CLAUDE_CODE_OAUTH_TOKEN`, since Claude
+  passes its env to every child. Sync treats a `settings.json` holding the token
+  like `auth.json`: it moves only with the auth opt-in.
 
 ### codex — file-based token set under `CODEX_HOME`
 
