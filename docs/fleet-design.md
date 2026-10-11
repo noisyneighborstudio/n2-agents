@@ -275,7 +275,8 @@ would undo everything above, so the joiner refuses instead. `join`/`pair`
 take `--host-key '<line>'` (or `--host-key-file`), which the operator reads
 off the other machine with `agents fleet id --host-key` and carries with the
 pairing code; `fleet invite` prints that line next to the code for exactly
-this reason. It is parsed by the same `fleet_host_line` filter, re-keyed to
+this reason, and the app's Settings › Fleet › Invite… shows both with a Copy
+button each, so neither side needs a terminal. It is parsed by the same `fleet_host_line` filter, re-keyed to
 the address actually being dialled — not to the name inside the line — and
 written to `$fleet_root/bootstrap/host.pub`, which `fleet_known_hosts` folds
 in. Without it, an ssh/tailscale enrollment stops before any bytes leave.
