@@ -29,12 +29,13 @@ _n2agents_cli() {
       sessions transfer fleet desktop shims loop porcelain profiles version update help
   elif [[ ${words[2]} == fleet ]]; then
     if (( CURRENT == 3 )); then
-      _values 'fleet verb' init id invite join pair pending approve deny revoke discover reconcile rehost route roster peers ping status sync tools task session send serve help
+      _values 'fleet verb' init id invite join pair pending approve deny revoke discover reconcile rehost route roster peers ping status sync tools task session claude-token send serve help
     elif (( CURRENT == 4 )); then
       case ${words[3]} in
         sync) _values 'sync verb' now tick auto service status scope conflicts show resolve review share except auth categories import-local ;;
         task) _values 'task verb' run preferences list show reconcile retry fetch distribute notices help ;;
         tools) _values 'tools verb' list add rm approve status apply install deferred ;;
+        claude-token) _values 'claude-token verb' pull push ;;
       esac
     fi
   elif [[ ${words[2]} == profiles ]]; then

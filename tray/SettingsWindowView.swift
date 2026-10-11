@@ -56,7 +56,7 @@ struct SettingsWindowView: View {
                             Toggle(isOn: $claudeLongLivedToken) {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text("Use long-lived token for Claude")
-                                    Text("Claude sign-in also approves a token that lasts a year and never refreshes, so sessions and Macs sharing a login stop signing each other out. Remote Control and Claude in Chrome need the regular login. Applies at the next sign-in.")
+                                    Text("Claude sign-in also approves a token that lasts a year and never refreshes, so sessions and Macs sharing a login stop signing each other out. Your other Macs signed in to the same account get the token too. Remote Control and Claude in Chrome need the regular login. Applies at the next sign-in.")
                                         .font(.system(size: 11)).foregroundStyle(Ink.secondary)
                                 }
                             }

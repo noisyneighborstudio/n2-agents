@@ -25,12 +25,13 @@ _n2agents_complete() {
     words="list vendors active use run best new delete adopt sessions transfer fleet desktop shims loop porcelain profiles version update help"
   elif [ "${COMP_WORDS[1]}" = "fleet" ]; then
     if [ "$COMP_CWORD" -eq 2 ]; then
-      words="init id invite join pair pending approve deny revoke discover reconcile rehost route roster peers ping status sync tools task session send serve help"
+      words="init id invite join pair pending approve deny revoke discover reconcile rehost route roster peers ping status sync tools task session claude-token send serve help"
     elif [ "$COMP_CWORD" -eq 3 ]; then
       case ${COMP_WORDS[2]} in
         sync) words="now tick auto service status scope conflicts show resolve review share except auth categories import-local" ;;
         task) words="run preferences list show reconcile retry fetch distribute notices help" ;;
         tools) words="list add rm approve status apply install deferred" ;;
+        claude-token) words="pull push" ;;
       esac
     fi
   elif [ "${COMP_WORDS[1]}" = "profiles" ]; then

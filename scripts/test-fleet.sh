@@ -1702,6 +1702,168 @@ check "negative: the refusal names the revocation" "revoked" "$out"
 peer fb fleet discover >/dev/null 2>&1
 check "negative: a revoked id is not re-adopted" "revoked" "$(raw fb "fleet_peer_state '$FC'")"
 
+# --- 41. a Claude token is shared with the same account ---------------------
+mark "41. a Claude token is shared with the same account"
+# ca saves a long-lived token for Work. cb holds Work with the same sign-in
+# (email in another case), cc with another member of the same organization.
+# The token rides the private carrier, so every hop is a real ssh login.
+# Seam: organization() is the only network call. Python loads sitecustomize
+# from PYTHONPATH at startup, so this section's peers run with one that
+# answers count_tokens from a hash->org table and refuses any other URL. No
+# product code reads it; anyone who can set PYTHONPATH can already run code.
+sshd_bin=$(command -v sshd 2>/dev/null || { [ -x /usr/sbin/sshd ] && echo /usr/sbin/sshd; })
+if [ -z "${sshd_bin:-}" ]; then
+  skip claude-token "no sshd binary on this host"
+else
+  ctd=$base/ctssh ctbin=$base/ctbin ctapi=$base/ctapi cttmp=$base/cttmp
+  mkdir -p "$ctd" "$ctbin" "$ctapi" "$cttmp"; chmod 700 "$ctd"
+  ctorg=11111111-1111-4111-8111-111111111111
+  ctpath=$ctbin:/usr/bin:/bin:/usr/sbin:/sbin
+  ctpeer() { h=$1; shift; env HOME="$base/$h" PATH="$ctpath" PYTHONPATH="$ctapi" TMPDIR="$cttmp" \
+    N2_FLEET_AGENTS="$repo/agents" "$repo/agents" "$@"; }
+  ctread() { /usr/bin/python3 -c 'import json,sys
+try: print(json.load(open(sys.argv[1]))["env"]["CLAUDE_CODE_OAUTH_TOKEN"])
+except (OSError, KeyError): print("none")' "$base/$1/.n2-agents/Work/claude/settings.json"; }
+  cttoken() { printf 'sk-ant-oat01-%sAA' "$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 93)"; }
+  ctknown() { printf '%s %s\n' "$(printf '%s' "$1" | shasum -a 256 | cut -d' ' -f1)" "$ctorg" >> "$ctapi/orgs"; }
+  cat > "$ctapi/sitecustomize.py" <<'PY'
+import hashlib, json, os, sys, urllib.error, urllib.request
+here = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(here, 'argv.log'), 'a') as log:
+    log.write(json.dumps(sys.argv) + '\n')
+class Reply:
+    def __init__(self, org): self.headers = {'anthropic-organization-id': org}
+    def __enter__(self): return self
+    def __exit__(self, *exc): return False
+def urlopen(request, *args, **kwargs):
+    url = getattr(request, 'full_url', request)
+    if url != 'https://api.anthropic.com/v1/messages/count_tokens':
+        raise OSError('offline test: ' + url)
+    digest = hashlib.sha256(request.get_header('Authorization').split()[1].encode()).hexdigest()
+    for line in open(os.path.join(here, 'orgs')):
+        if line.split()[0] == digest:
+            return Reply(line.split()[1])
+    raise urllib.error.HTTPError(url, 401, 'unknown token', {}, None)
+urllib.request.urlopen = urlopen
+PY
+  : > "$ctapi/orgs"
+  printf '#!/bin/sh\nprintf "%%s\\n" "ssh $*" >> "%s/argv.log"\nexec /usr/bin/ssh "$@"\n' "$ctapi" > "$ctbin/ssh"
+  printf '#!/bin/sh\nexit 44\n' > "$ctbin/security"
+  cat > "$ctbin/claude" <<EOF
+#!/bin/sh
+echo "\${HOME##*/} \$*" >> "$base/ct-claude-calls"
+[ "\$1 \${2:-}" = "auth login" ] &&
+  printf '{"oauthAccount": {"emailAddress": "%s", "organizationUuid": "$ctorg"}}' "\$FAKE_EMAIL" > "\$CLAUDE_CONFIG_DIR/.claude.json"
+exit 0
+EOF
+  chmod +x "$ctbin/ssh" "$ctbin/security" "$ctbin/claude"; : > "$base/ct-claude-calls"
+
+  for h in ca cb cc; do mkdir -p "$base/$h"; peer "$h" fleet init --machine "$h" >/dev/null; done
+  CA=$(fpof ca); CB=$(fpof cb); CC=$(fpof cc)
+  peer cb fleet pair --home "$base/ca" --code "$(peer ca fleet invite --peer "$CB" 2>/dev/null)" >/dev/null 2>&1
+  peer cc fleet pair --home "$base/ca" --code "$(peer ca fleet invite --peer "$CC" 2>/dev/null)" >/dev/null 2>&1
+  ctpid=$(/usr/bin/python3 -c 'import uuid; print(uuid.uuid4())')
+  for pair in ca:seth@example.com cb:Seth@Example.com cc:other@example.com; do
+    s=$base/${pair%%:*}/.n2-agents/Work; mkdir -p "$s/claude"
+    printf '{"profileId":"%s","schemaVersion":1}\n' "$ctpid" > "$s/.n2-profile"
+    printf '{"oauthAccount": {"emailAddress": "%s", "organizationUuid": "%s"}}' "${pair#*:}" "$ctorg" > "$s/claude/.claude.json"
+  done
+  cat "$base"/ca/.n2-agents/fleet/identity/id_ed25519.pub "$base"/cb/.n2-agents/fleet/identity/id_ed25519.pub \
+    "$base"/cc/.n2-agents/fleet/identity/id_ed25519.pub > "$ctd/authorized_keys"
+  ssh-keygen -q -t ed25519 -N '' -C ct-host -f "$ctd/hk" </dev/null
+  chmod 600 "$ctd/authorized_keys" "$ctd/hk"
+  ctport=0
+  for try in 22511 22537 22559 22583; do
+    cat > "$ctd/sshd_config" <<EOF
+Port $try
+ListenAddress 127.0.0.1
+HostKey $ctd/hk
+PidFile $ctd/sshd.pid
+AuthorizedKeysFile $ctd/authorized_keys
+StrictModes no
+UsePAM no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+PubkeyAuthentication yes
+LogLevel ERROR
+EOF
+    "$sshd_bin" -f "$ctd/sshd_config" -E "$ctd/sshd.log" 2>>"$ctd/sshd.err" && { ctport=$try; break; }
+  done
+  waited=0
+  while [ "$ctport" != 0 ] && [ ! -s "$ctd/sshd.pid" ] && [ "$waited" -lt 30 ]; do
+    waited=$((waited+1)); perl -e 'select undef,undef,undef,0.1' 2>/dev/null || true
+  done
+  if [ "$ctport" = 0 ] || [ ! -s "$ctd/sshd.pid" ]; then
+    skip claude-token "could not start a user-level sshd ($(tail -1 "$ctd/sshd.err" 2>/dev/null))"
+  else
+    ctsshd=$(cat "$ctd/sshd.pid")
+    cleanup() { is_main || return 0; kill "$ctsshd" 2>/dev/null; [ -n "${N2_FLEET_KEEP:-}" ] || { chmod -R u+w "$base" 2>/dev/null; rm -rf "$base"; }; }
+    ctroute() {  # ctroute <from> <to-id> <to-home>
+      raw "$1" "d=\"\$(fleet_peer_dir '$2')\"; fleet_meta_set \"\$d\" transport ssh
+        fleet_meta_set \"\$d\" address 127.0.0.1; fleet_meta_set \"\$d\" port $ctport
+        fleet_meta_set \"\$d\" user '$(id -un)'
+        fleet_meta_set \"\$d\" command 'env HOME=$base/$3 PATH=$ctpath PYTHONPATH=$ctapi TMPDIR=$cttmp N2_FLEET_AGENTS=$repo/agents $repo/agents'"
+      peer "$1" fleet rehost "$2" --host-key "ct-host $(awk '{print $1" "$2}' "$ctd/hk.pub")" >/dev/null
+    }
+    ctroute ca "$CB" cb; ctroute ca "$CC" cc; ctroute cb "$CA" ca; ctroute cc "$CA" ca
+
+    T=$(cttoken); ctknown "$T"
+    printf '{"model": "opus", "env": {"CLAUDE_CODE_OAUTH_TOKEN": "%s"}}\n' "$T" > "$base/ca/.n2-agents/Work/claude/settings.json"
+    out=$(ctpeer ca fleet claude-token push Work 2>&1)
+    check "claude-token: the same account pulls the token" "told	$CB	ok	saved" "$out"
+    check "claude-token: another member of the organization is skipped" "told	$CC	ok	skipped other-account" "$out"
+    if [ "$(ctread cb)" = "$T" ]; then ok "claude-token: cb holds the identical token"
+    else bad "claude-token: cb holds the identical token" "cb has $(ctread cb | cut -c1-16)…"; fi
+    check "claude-token: cc holds no token" "none" "$(ctread cc)"
+    out=$(ctpeer cc fleet claude-token pull Work 2>&1); rc=$?
+    denied "claude-token: another member cannot pull it" "$out" "$rc"
+    check "claude-token: cc still holds no token" "none" "$(ctread cc)"
+
+    # Sign-in asks the fleet before setup-token.
+    /usr/bin/python3 "$repo/claude-token.py" clear "$base/cb/.n2-agents/Work/claude"
+    out=$(FAKE_EMAIL=seth@example.com N2_CLAUDE_LONG_TOKEN=1 ctpeer cb login Work --vendor claude 2>&1 </dev/null); rc=$?
+    if [ "$rc" = 0 ]; then ok "claude-token: sign-in succeeds"; else bad "claude-token: sign-in succeeds" "rc=$rc: $out"; fi
+    check "claude-token: sign-in names the Mac the token came from" "uses the long-lived token from ca" "$out"
+    if [ "$(ctread cb)" = "$T" ]; then ok "claude-token: sign-in saved the fleet's token"
+    else bad "claude-token: sign-in saved the fleet's token" "cb has $(ctread cb | cut -c1-16)…"; fi
+    refute "claude-token: cb never ran setup-token" "cb setup-token" "$(cat "$base/ct-claude-calls")"
+    # Control: with no same-account token in the fleet, setup-token still runs.
+    out=$(FAKE_EMAIL=other@example.com N2_CLAUDE_LONG_TOKEN=1 ctpeer cc login Work --vendor claude 2>&1 </dev/null); rc=$?
+    denied "claude-token: a sign-in nobody shares with falls back to setup-token" "$out" "$rc"
+    check "claude-token: cc ran setup-token" "cc setup-token" "$(cat "$base/ct-claude-calls")"
+
+    # A pending or revoked peer gets nothing, by notice or by pull.
+    T2=$(cttoken); ctknown "$T2"
+    printf '{"env": {"CLAUDE_CODE_OAUTH_TOKEN": "%s"}}\n' "$T2" > "$base/ca/.n2-agents/Work/claude/settings.json"
+    raw ca "fleet_meta_set \"\$(fleet_peer_dir '$CB')\" state pending"
+    out=$(ctpeer ca fleet claude-token push Work 2>&1)
+    refute "claude-token: a pending peer is not told" "$CB" "$out"
+    out=$(ctpeer cb fleet claude-token pull Work 2>&1); rc=$?
+    denied "claude-token: a pending peer cannot pull" "$out" "$rc"
+    raw ca "fleet_meta_set \"\$(fleet_peer_dir '$CB')\" state approved"
+    peer ca fleet revoke "$CB" >/dev/null 2>&1
+    out=$(ctpeer cb fleet claude-token pull Work 2>&1); rc=$?
+    denied "claude-token: a revoked peer cannot pull" "$out" "$rc"
+    check "claude-token: cb kept the token it had" "$T" "$(ctread cb)"
+
+    # A member that cannot be reached is named, not hidden.
+    kill "$ctsshd" 2>/dev/null
+    out=$(ctpeer ca fleet claude-token push Work 2>&1)
+    check "claude-token: an unreachable member is reported" "could not share the 'Work' Claude token with $CC" "$out"
+
+    # The token lives only in the two settings files: never in fleet state,
+    # events, journals, temp files, logs or any process's arguments.
+    for t in "$T" "$T2"; do
+      found=$(grep -rlF "$t" "$base/ca" "$base/cb" "$base/cc" "$cttmp" "$ctapi" "$base/ct-claude-calls" 2>/dev/null |
+        grep -vx "$base/ca/.n2-agents/Work/claude/settings.json" | grep -vx "$base/cb/.n2-agents/Work/claude/settings.json")
+      if [ -z "$found" ]; then ok "claude-token: a token is stored only in the slots holding it"
+      else bad "claude-token: a token is stored only in the slots holding it" "$found"; fi
+    done
+    check "claude-token: argv was recorded" "claude-token.py" "$(cat "$ctapi/argv.log")"
+  fi
+fi
+
 # --- framing and decoding --------------------------------------------------
 # The declared payload length is signed, so a body that disagrees with it is
 # not the body that was signed. Before this check existed, a ping declaring
