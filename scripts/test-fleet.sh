@@ -239,42 +239,37 @@ if grep -rq "PRIVATE KEY" "$base/alpha/.n2-agents/fleet/events.log" 2>/dev/null;
   bad "secrets: no key material in events.log" "key material present"; else
   ok  "secrets: no key material in events.log"; fi
 
-# --- 13. hub-free discovery: learn a peer-of-a-peer, still needing approval --
-mark "13. hub-free discovery: learn a peer-of-a-peer, still needing approval"
-# epsilon is the only machine both zeta and eta enrolled through. Discovery
-# must let zeta and eta find each other through it — and then keep working
-# once epsilon is gone, which is what "no required central hub" means.
+# --- 13. hub-free trust: a member's approval is fleet-wide -----------------
+mark "13. hub-free trust: a member's approval is fleet-wide"
+# epsilon is the only machine both zeta and eta enrolled through. Its approval
+# of eta must reach zeta with no step on zeta, and eta must learn zeta, and
+# the link must keep working once epsilon is gone: no required central hub.
 for h in epsilon zeta eta; do mkdir -p "$base/$h"; peer "$h" fleet init --machine "$h" >/dev/null; done
 E=$(fpof epsilon); Z=$(fpof zeta); H=$(fpof eta)
 peer zeta fleet pair --home "$base/epsilon" --code "$(peer epsilon fleet invite --peer "$Z" 2>/dev/null)" >/dev/null 2>&1
-peer eta  fleet pair --home "$base/epsilon" --code "$(peer epsilon fleet invite --peer "$H" 2>/dev/null)" >/dev/null 2>&1
-check "discover: zeta enrolled on epsilon" "approved" "$(peer epsilon fleet peers --no-probe | grep -F "$Z")"
-
-out=$(peer zeta fleet discover 2>&1)
-check "discover: zeta finds eta through epsilon" "$H" "$out"
-check "discover: discovery reports the referring peer" "via $E" "$out"
-check "discover: discovered peer is only pending" "$H" "$(peer zeta fleet pending)"
-if peer zeta fleet peers --no-probe | grep -qF "$H"; then
-  bad "discover: discovery does not enroll" "eta entered zeta's roster without approval"; else
-  ok  "discover: discovery does not enroll"; fi
-out=$(peer zeta fleet ping "$H" 2>&1); rc=$?
-denied "discover: discovered peer cannot be called yet" "$out" "$rc"
-
+out=$(peer eta fleet pair --home "$base/epsilon" --code "$(peer epsilon fleet invite --peer "$H" 2>/dev/null)" 2>&1)
+check "fleet-wide: zeta enrolled on epsilon" "approved" "$(peer epsilon fleet peers --no-probe | grep -F "$Z")"
+check "fleet-wide: the newcomer adopts epsilon's members as it joins" "adopted	$Z" "$out"
+check "fleet-wide: zeta holds eta approved with no step on zeta" "approved" "$(raw zeta "fleet_peer_state '$H'")"
+check "fleet-wide: zeta records epsilon as the approver" "$E" \
+  "$(raw zeta "fleet_meta \"\$(fleet_peer_dir '$H')\" added_by")"
+check "fleet-wide: eta holds zeta approved" "approved" "$(raw eta "fleet_peer_state '$Z'")"
+check "fleet-wide: zeta -> eta round trip on the referrer's route" "pong eta" "$(peer zeta fleet ping "$H" 2>&1)"
+out=$(peer zeta fleet discover 2>&1); rc=$?
+if [ "$rc" = 0 ]; then ok "fleet-wide: discover with nothing new succeeds"
+else bad "fleet-wide: discover with nothing new succeeds" "rc=$rc: $out"; fi
+if [ -z "$(ls "$base/zeta/.n2-agents/fleet/pending" 2>/dev/null)" ]; then
+  ok "fleet-wide: discover files no pending request for a known member"
+else bad "fleet-wide: discover files no pending request for a known member" "$(ls "$base/zeta/.n2-agents/fleet/pending")"; fi
 # a neighbour that advertises a key not matching the id it names is dropped
-raw zeta "dspd=\$(fleet_pending_dir '$H'); fleet_fp \"\$dspd/key.pub\"" > "$base/dkey" 2>&1
-check "discover: recorded key matches the advertised peer id" "$H" "$(cat "$base/dkey")"
+raw zeta "fleet_fp \"\$(fleet_peer_dir '$H')/key.pub\"" > "$base/dkey" 2>&1
+check "fleet-wide: recorded key matches the advertised peer id" "$H" "$(cat "$base/dkey")"
 
-# --- 14. an approved discovery becomes a working link without the introducer -
-mark "14. an approved discovery becomes a working link without the introducer"
-peer eta fleet discover >/dev/null 2>&1
-peer zeta fleet approve "$H" >/dev/null 2>&1
-peer eta  fleet approve "$Z" >/dev/null 2>&1
-# discovery carries identity, not a route; the operator supplies reachability
-raw zeta "fleet_meta_set \"\$(fleet_peer_dir '$H')\" transport exec; fleet_meta_set \"\$(fleet_peer_dir '$H')\" home '$base/eta'" >/dev/null 2>&1
-raw eta  "fleet_meta_set \"\$(fleet_peer_dir '$Z')\" transport exec; fleet_meta_set \"\$(fleet_peer_dir '$Z')\" home '$base/zeta'" >/dev/null 2>&1
+# --- 14. an adopted member keeps working without the introducer ------------
+mark "14. an adopted member keeps working without the introducer"
 mv "$base/epsilon" "$base/epsilon.offline"   # introducer is gone
 out=$(peer zeta fleet ping "$H" 2>&1)
-check "independent: discovered peers talk with the introducer offline" "pong" "$out"
+check "independent: adopted peers talk with the introducer offline" "pong" "$out"
 out=$(peer zeta fleet peers 2>&1)
 check "independent: epsilon shows offline, not fatal" "offline" "$out"
 check "independent: eta still reachable in the same listing" "online" "$out"
@@ -323,7 +318,8 @@ raw alpha "rm -f \$(fleet_peer_dir '$B')/host.pub; fleet_known_hosts" >/dev/null
 
 # approval will not pin an ssh peer that arrived without a host key
 gpub=$(raw gamma 'cat "$(fleet_key).pub"' 2>/dev/null)
-mkpend() { raw alpha "pd=\$(fleet_pending_dir '$G'); rm -rf \$pd; mkdir -p \$pd; \
+# alpha adopted gamma when beta approved it (section 6); start from a request.
+mkpend() { raw alpha "rm -rf \$(fleet_peer_dir '$G'); pd=\$(fleet_pending_dir '$G'); rm -rf \$pd; mkdir -p \$pd; \
   printf '%s\n' \"$gpub\" > \$pd/key.pub; fleet_meta_set \$pd peer '$G'; \
   fleet_meta_set \$pd machine gamma; fleet_meta_set \$pd transport ssh; \
   fleet_meta_set \$pd address gamma.example; fleet_meta_set \$pd state pending; \
@@ -488,9 +484,9 @@ mutual() { # mutual <host-peer> <joining-peer-id> <joining-peer>
   peer "$3" fleet pair --home "$base/$1" --code "$c" 2>&1; }
 # Discard the join transcripts: only the rc2<->rc3 one below is asserted on,
 # and an uncaptured `mutual` prints the host-key line straight into the report.
+# rc1's approval of rc3 is fleet-wide, so rc2 holds rc3 approved with no
+# pairing of its own.
 mutual rc1 "$Z" rc2 >/dev/null; mutual rc1 "$T" rc3 >/dev/null
-mutout=$(mutual rc2 "$T" rc3)
-check "reconcile: rc3 enrolls with rc2 too" "approved" "$mutout"
 check "reconcile: rc2 starts out knowing rc3 approved" "approved" \
   "$(peer rc2 fleet peers --no-probe | grep -F "$T")"
 
@@ -1087,14 +1083,13 @@ for h in orig m1 m2 m3; do mkdir -p "$base/$h"; peer "$h" fleet init --machine "
 O=$(fpof orig); M1=$(fpof m1); M2=$(fpof m2); M3=$(fpof m3)
 peer m1 fleet pair --home "$base/orig" --code "$(peer orig fleet invite --peer "$M1" 2>/dev/null)" >/dev/null 2>&1
 peer m2 fleet pair --home "$base/orig" --code "$(peer orig fleet invite --peer "$M2" 2>/dev/null)" >/dev/null 2>&1
-peer m1 fleet discover >/dev/null 2>&1; peer m2 fleet discover >/dev/null 2>&1
-peer m1 fleet approve "$M2" >/dev/null 2>&1; peer m2 fleet approve "$M1" >/dev/null 2>&1
-# Discovery hands over identity, not routing: each survivor learns *who* the
-# other is through orig, but not a route it can dial itself. `fleet route` is
-# the supported repair, and using it here keeps this test on the CLI surface
-# instead of hand-editing peer meta.
+# orig's approval is fleet-wide, so the survivors already hold each other
+# approved, on orig's route. That route is orig's view of the network and may
+# not be dialable from here; `fleet route` is the supported repair, and using
+# it keeps this test on the CLI surface instead of hand-editing peer meta.
+check "nohub: orig's approval reached m1 with no step on m1" "approved" "$(raw m1 "fleet_peer_state '$M2'")"
 out=$(peer m1 fleet route "$M2" --transport exec --home "$base/m2" 2>&1)
-check "nohub: route re-points a discovered peer through the CLI" "routed" "$out"
+check "nohub: route re-points an adopted peer through the CLI" "routed" "$out"
 check "nohub: route reports the carrier it installed" "exec" "$out"
 peer m2 fleet route "$M1" --transport exec --home "$base/m1" >/dev/null 2>&1
 
@@ -1104,6 +1099,8 @@ out=$(peer m1 fleet route "$M2" --port 99999 2>&1); rc=$?
 denied "nohub: route rejects a port that is not a port" "$out" "$rc"
 out=$(peer m1 fleet route "$M2" --address '-oProxyCommand=touch /tmp/n2pwn' 2>&1); rc=$?
 denied "nohub: route rejects an address ssh would read as an option" "$out" "$rc"
+# m1 adopted m2 with orig's pin; drop it, as for a member approved --no-host-key.
+raw m1 "rm -f \"\$(fleet_peer_dir '$M2')/host.pub\"" >/dev/null 2>&1
 out=$(peer m1 fleet route "$M2" --transport ssh --address 198.51.100.7 2>&1); rc=$?
 denied "nohub: route refuses an ssh route with no pinned host key" "$out" "$rc"
 check "nohub: route says how to pin the missing host key" "--host-key" "$out"
@@ -1140,13 +1137,10 @@ check "nohub: the new machine is in the enroller's roster" "approved" \
   "$(peer m1 fleet peers --no-probe | grep -F "$M3")"
 check "nohub: the new machine can call its enroller" "pong m1" "$(peer m3 fleet ping "$M1" 2>&1)"
 
-# 3. the other survivor learns the newcomer through m1, still needing approval
-out=$(peer m2 fleet discover 2>&1)
-check "nohub: the second survivor discovers the newcomer" "$M3" "$out"
-check "nohub: discovery names m1 as the referrer" "via $M1" "$out"
-if peer m2 fleet peers --no-probe | grep -qF "$M3"; then
-  bad "nohub: discovery of the newcomer still needs approval" "m3 enrolled unapproved"
-else ok "nohub: discovery of the newcomer still needs approval"; fi
+# 3. the other survivor accepts the newcomer on m1's word, with no step of its own
+check "nohub: the second survivor holds the newcomer approved" "approved" "$(raw m2 "fleet_peer_state '$M3'")"
+check "nohub: the second survivor records m1 as the approver" "$M1" \
+  "$(raw m2 "fleet_meta \"\$(fleet_peer_dir '$M3')\" added_by")"
 
 # 4. and the fleet can shrink again without the originator
 out=$(peer m1 fleet revoke --propagate "$M3" 2>&1)
@@ -1246,7 +1240,7 @@ mark "35. a propagated revocation whose grant cannot be removed fails loudly"
 for h in rr1 rr2 rr3; do mkdir -p "$base/$h"; peer "$h" fleet init --machine "$h" >/dev/null; done
 R1=$(fpof rr1); R2=$(fpof rr2); R3=$(fpof rr3)
 mutual rr1 "$R2" rr2 >/dev/null; mutual rr1 "$R3" rr3 >/dev/null
-check "remote-revoke: rr3 enrolls with rr2" "approved" "$(mutual rr2 "$R3" rr3)"
+check "remote-revoke: rr2 holds rr3 through rr1's approval" "approved" "$(raw rr2 "fleet_peer_state '$R3'")"
 # The carrier here is `exec`, which needs no ssh grant; move rr2's record of
 # rr3 onto ssh and install the real grant so the revocation has an actual
 # inbound door to close (the same call `approve` makes for an ssh peer).
@@ -1299,7 +1293,7 @@ mark "36. unfinished revocation cleanup is retried on the pull path"
 for h in rp1 rp2 rp3; do mkdir -p "$base/$h"; peer "$h" fleet init --machine "$h" >/dev/null; done
 P1=$(fpof rp1); P2=$(fpof rp2); P3=$(fpof rp3)
 mutual rp1 "$P2" rp2 >/dev/null; mutual rp1 "$P3" rp3 >/dev/null
-check "reconcile-cleanup: rp3 enrolls with rp2" "approved" "$(mutual rp2 "$P3" rp3)"
+check "reconcile-cleanup: rp2 holds rp3 through rp1's approval" "approved" "$(raw rp2 "fleet_peer_state '$P3'")"
 raw rp2 'd=$(fleet_peer_dir "'"$P3"'"); fleet_meta_set "$d" transport ssh; fleet_authorize "'"$P3"'" "$d"' >/dev/null 2>&1
 rpak="$base/rp2/.ssh/authorized_keys"
 if grep -qF "n2-fleet:$P3" "$rpak" 2>/dev/null; then
@@ -1619,6 +1613,94 @@ else bad "concurrency: a recovered pid-less lock is not stolen from its next hol
 if [ "$ccnxacq" = 32 ]; then ok "concurrency: every waiter on a stranded pid-less lock completes"
 else bad "concurrency: every waiter on a stranded pid-less lock completes" \
   "$ccnxacq of 32 completed, $ccnxto failed"; fi
+
+# --- 40. approval is fleet-wide --------------------------------------------
+mark "40. approval is fleet-wide"
+# fa and fb are approved with each other. fc joins fa with no code and fa's
+# operator approves it. Nothing is run on fb or fc after that.
+for h in fa fb fc fd; do mkdir -p "$base/$h"; peer "$h" fleet init --machine "$h" >/dev/null; done
+FA=$(fpof fa); FB=$(fpof fb); FC=$(fpof fc); FD=$(fpof fd)
+peer fb fleet pair --home "$base/fa" --code "$(peer fa fleet invite --peer "$FB" 2>/dev/null)" >/dev/null 2>&1
+peer fc fleet join --home "$base/fa" >/dev/null 2>&1
+out=$(peer fa fleet approve "$FC" 2>&1); rc=$?
+if [ "$rc" = 0 ]; then ok "fleet-wide: approve succeeds"; else bad "fleet-wide: approve succeeds" "rc=$rc: $out"; fi
+check "fleet-wide: approve tells the other members" "told	$FB	ok" "$out"
+check "fleet-wide: fb lists fc approved" "approved" "$(peer fb fleet peers --no-probe | grep -F "$FC")"
+check "fleet-wide: fc lists fb approved" "approved" "$(peer fc fleet peers --no-probe | grep -F "$FB")"
+check "fleet-wide: fb -> fc signed round trip" "pong fc" "$(peer fb fleet ping "$FC" 2>&1)"
+check "fleet-wide: fc -> fb signed round trip" "pong fb" "$(peer fc fleet ping "$FB" 2>&1)"
+
+# Regression (the M4 and the mini): the joiner holds a peer record with a
+# pinned host key, and a stale request without one sits beside it, as the old
+# `discover` filed. The approval callback must use the pinned record.
+mkdir -p "$base/fm4" "$base/fmini"
+peer fm4 fleet init --machine fm4 >/dev/null; peer fmini fleet init --machine fmini >/dev/null
+FM4=$(fpof fm4); FMINI=$(fpof fmini)
+peer fm4 fleet join --home "$base/fmini" >/dev/null 2>&1
+ssh-keygen -q -t ed25519 -N '' -f "$base/fmini-host" </dev/null
+raw fm4 "pd=\$(fleet_peer_dir '$FMINI'); printf 'x %s\\n' \"\$(awk '{print \$1\" \"\$2}' '$base/fmini-host.pub')\" | fleet_pin_host \"\$pd\"; \
+  sd=\$(fleet_pending_dir '$FMINI'); mkdir -p \"\$sd\"; cp \"\$pd/key.pub\" \"\$sd/\"; \
+  fleet_meta_set \"\$sd\" peer '$FMINI'; fleet_meta_set \"\$sd\" transport ssh; fleet_meta_set \"\$sd\" state pending" >/dev/null 2>&1
+if [ -s "$base/fm4/.n2-agents/fleet/peers/$(raw fm4 "fleet_slug '$FMINI'")/host.pub" ] &&
+   [ -d "$base/fm4/.n2-agents/fleet/pending/$(raw fm4 "fleet_slug '$FMINI'")" ]; then
+  ok "regression: fixture has a pinned record and a stale host-key-less request"
+else bad "regression: fixture has a pinned record and a stale host-key-less request" "fixture not built"; fi
+out=$(peer fmini fleet approve "$FM4" 2>&1)
+check "regression: the approval callback lands" "notified" "$out"
+check "regression: the joiner approves its sponsor" "approved" "$(raw fm4 "fleet_peer_state '$FMINI'")"
+if [ -z "$(ls "$base/fm4/.n2-agents/fleet/pending" 2>/dev/null)" ]; then
+  ok "regression: the stale request is cleared by the approval"
+else bad "regression: the stale request is cleared by the approval" "$(ls "$base/fm4/.n2-agents/fleet/pending")"; fi
+refute "regression: no missing-host-key rejection" "missing-host-key" "$(cat "$base/fm4/.n2-agents/fleet/events.log")"
+# discover no longer files host-key-less requests: fa holds an ssh member
+# approved with no pinned host key, and fb must refuse it, not file it.
+ssh-keygen -q -t ed25519 -N '' -f "$base/fx-id" </dev/null
+FX=$(ssh-keygen -lf "$base/fx-id.pub" | awk '{print $2}')
+raw fa "xd=\$(fleet_peer_dir '$FX'); mkdir -p \"\$xd\"; cp '$base/fx-id.pub' \"\$xd/key.pub\"; \
+  fleet_meta_set \"\$xd\" peer '$FX'; fleet_meta_set \"\$xd\" machine fx; fleet_meta_set \"\$xd\" transport ssh; \
+  fleet_meta_set \"\$xd\" address 198.51.100.9; fleet_meta_set \"\$xd\" state approved" >/dev/null 2>&1
+out=$(peer fb fleet discover 2>&1); rc=$?
+denied "discover: a member without a pinned host key is refused" "$out" "$rc"
+check "discover: the refusal names the missing host key" "missing-host-key" "$out"
+if [ -z "$(ls "$base/fb/.n2-agents/fleet/pending" 2>/dev/null)" ]; then
+  ok "discover: no pending request is filed"
+else bad "discover: no pending request is filed" "$(ls "$base/fb/.n2-agents/fleet/pending")"; fi
+check "discover: the refused member stays unknown" "unknown" "$(raw fb "fleet_peer_state '$FX'")"
+raw fa "rm -rf \"\$(fleet_peer_dir '$FX')\"" >/dev/null 2>&1   # no undialable member for later fan-outs
+
+# Negatives. A roster line for a fresh identity, as an approved referrer sends it.
+ssh-keygen -q -t ed25519 -N '' -f "$base/fy-id" </dev/null
+FY=$(ssh-keygen -lf "$base/fy-id.pub" | awk '{print $2}')
+fykey=$(awk '{print $1"_"$2}' "$base/fy-id.pub")
+printf '%s\tfy\texec\tapproved\t-\t%s\t-\t-\t-\t%s\n' "$FY" "$fykey" "$base/fy" > "$base/fy.line"
+# fd is pending on fb, so its word adopts nothing.
+peer fd fleet join --home "$base/fb" >/dev/null 2>&1
+out=$(raw fd "fleet_envelope '$FB' admit '$base/fy.line'" 2>/dev/null | raw fb "fleet_serve" 2>&1); rc=$?
+denied "negative: a pending referrer's admit is refused" "$out" "$rc"
+check "negative: the refusal names the approval gate" "not-approved" "$out"
+out=$(raw fb "fleet_adopt '$FD' < '$base/fy.line'" 2>&1); rc=$?
+denied "negative: fleet_adopt refuses a non-approved referrer" "$out" "$rc"
+check "negative: nothing is adopted from a non-approved referrer" "unknown" "$(raw fb "fleet_peer_state '$FY'")"
+# Only entries the referrer itself holds approved.
+sed 's/	approved	/	pending	/' "$base/fy.line" > "$base/fy.pending"
+peer fa fleet send "$FB" --verb admit --payload-file "$base/fy.pending" >/dev/null 2>&1
+check "negative: an entry the referrer holds pending is not adopted" "unknown" "$(raw fb "fleet_peer_state '$FY'")"
+# A known id paired with another key is a conflict: refused, journaled, pin kept.
+fckey=$(cat "$base/fb/.n2-agents/fleet/peers/$(raw fb "fleet_slug '$FC'")/key.pub")
+printf '%s\tfc\texec\tapproved\t-\t%s\t-\t-\t-\t%s\n' "$FC" "$fykey" "$base/fy" > "$base/fc.conflict"
+out=$(peer fa fleet send "$FB" --verb admit --payload-file "$base/fc.conflict" 2>&1); rc=$?
+denied "negative: a conflicting key for an approved member is refused" "$out" "$rc"
+check "negative: the conflict reason is named" "key-mismatch" "$out"
+check "negative: the conflict is journaled" "adopt key-mismatch peer=$FC" "$(cat "$base/fb/.n2-agents/fleet/events.log")"
+check "negative: the approved record keeps its key" "$fckey" \
+  "$(cat "$base/fb/.n2-agents/fleet/peers/$(raw fb "fleet_slug '$FC'")/key.pub")"
+# A revoked id is never re-adopted, by admit or by discover.
+peer fb fleet revoke "$FC" >/dev/null 2>&1
+out=$(peer fa fleet approve "$FC" 2>&1)
+check "negative: re-approving elsewhere reports the member that refused" "told	$FB	fail" "$out"
+check "negative: the refusal names the revocation" "revoked" "$out"
+peer fb fleet discover >/dev/null 2>&1
+check "negative: a revoked id is not re-adopted" "revoked" "$(raw fb "fleet_peer_state '$FC'")"
 
 # --- framing and decoding --------------------------------------------------
 # The declared payload length is signed, so a body that disagrees with it is

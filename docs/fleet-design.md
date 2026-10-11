@@ -92,6 +92,35 @@ first successful use.
 Approval is never implicit: the founder machine (`agents fleet init`) is the
 only self-approved peer.
 
+**Trust is fleet-wide.** Enrollment joins the fleet, not one pair of Macs.
+When an approved member approves a machine (`approve`, or a bound code), it
+sends a signed `admit` with that machine's roster entry to every other
+approved member, and each one adopts it with no step of its own. The newcomer,
+once approved (the `enrolled` callback, or a bound-code `join`), reads its
+sponsor's roster and adopts the members the sponsor holds approved. A member
+that missed the `admit` catches up with `fleet discover`. `approve` prints a
+`told <peer> ok|fail` line per member and names any it could not reach.
+
+The security cost is deliberate: **any approved member can admit a machine to
+the whole fleet**, so approving on one Mac is approving on all of them. The
+adoption rule (`fleet_adopt`) keeps that from going further:
+
+* only entries the referrer itself holds `approved`, and only from a referrer
+  approved here (`admit` from anyone else is refused by `fleet_verify`);
+* never a revoked id: revocation still propagates (`revoke --propagate`,
+  `reconcile`), and a revoked id stays revoked whatever a roster says;
+* never a change to a record already held. The key must fingerprint to the
+  advertised id, so a known id paired with another key is refused as
+  `key-mismatch` and journaled; an existing pinned host key stays (`rehost`
+  is how a pin moves);
+* an ssh or tailscale member needs a pinned host key in the entry, as
+  `approve` does; without one it is refused, never filed host-key-less.
+
+A roster entry carries the peer id, machine, transport, approval state,
+address, public key, pinned host key, user, port and home. The referrer's
+route is the initial route. It is the referrer's view of the network and may
+not be dialable from here; `fleet route` is the repair.
+
 ## Transport
 
 A request is a signed envelope written to the peer's `agents fleet serve`
@@ -227,7 +256,7 @@ are identical, so a test peer cannot pass a check a real peer would fail.
     agents fleet approve <peerid> [--host-fp <fp>] [--no-host-key]
     agents fleet deny <peerid>
     agents fleet revoke [--propagate] <peerid>
-    agents fleet discover                       learn peers-of-peers (pending)
+    agents fleet discover                       adopt members approved peers approved
     agents fleet reconcile                      re-sync roster + revocations
                                                 after a spell offline
     agents fleet rehost --announce              publish a rotated ssh host key
@@ -396,19 +425,17 @@ member out of the roster.
 
 ## Discovery and revocation without a hub
 
-Discovery is a pull, never a push. `fleet discover` asks every *approved* peer
-for its roster (verb `roster`) and files each approved entry it does not
-already know into `pending/`. Three properties make that safe to run on a
-schedule:
+Approval pushes (`admit`, see "Trust is fleet-wide" under Enrollment);
+`fleet discover` is the pull that catches up a member that missed one. It asks
+every *approved* peer for its roster (verb `roster`) and adopts the approved
+entries under the same rule. It never files a `pending/` request: an entry
+for a machine already in `peers/` or `joined/` is left alone, and an entry it
+cannot adopt is refused by name.
 
-* A neighbour's trust is not our trust. A discovered peer lands in `pending`
-  and is unreachable until the operator runs `fleet approve`, so reachability
-  plus a referral still never equals enrollment.
-* The roster reply carries the peer's **public** key. `fleet_approve` refuses
-  it unless `ssh-keygen -lf` of that key equals the peer id it was advertised
-  under, so a lying introducer cannot bind a key it holds to someone else's id.
-* Discovery carries identity, not a route. The operator supplies reachability
-  (address/user, or `home` for the `exec` test carrier) when approving.
+`fleet_approve` also never lets a request filed in `pending/` shadow a peer
+record that already pins a host key. The joiner's side of `join` holds such a
+record; a stale host-key-less request beside it used to win, and the approval
+callback then failed `missing-host-key` (`test-fleet.sh` section 40).
 
 Revocation is local first and propagated second. `fleet revoke <id>` always
 takes effect here: the peer directory is removed and the id is appended to
@@ -493,7 +520,7 @@ all three completions until this check was made self-updating.
 
 `test-fleet.sh` section 32 is the strict version of that claim. Four peers,
 each a real `agents` process with its own HOME, key and roster: `m1` and `m2`
-enroll through `orig`, discover each other through it, and then `orig`'s home
+enroll through `orig`, which makes them members of each other, and then `orig`'s home
 directory is **deleted** — not moved aside, not merely unreachable. Its
 identity key, roster and invite state no longer exist anywhere. With the
 originator destroyed, the surviving pair must still:
@@ -503,8 +530,8 @@ originator destroyed, the surviving pair must still:
    fatal to the listing;
 3. mint a bound invite and enroll a **fourth** machine (`m3`) that `orig` never
    met, over the pairing door;
-4. let the other survivor learn `m3` hub-free via `discover`, still only as
-   `pending`, so growth without a hub does not become trust without approval;
+4. let the other survivor accept `m3` on `m1`'s approval, with no step of its
+   own, so growth without a hub needs no hub;
 5. shrink the fleet again — `revoke --propagate` from a survivor, after which
    `m3` is refused.
 
@@ -523,7 +550,8 @@ then back); 29 covers the case where it never comes back.
 * `fleet_verb_handler <verb>` — `serve` dispatches verified requests to
   `fleet_handle_<verb>`; `sync` and `execution` add handlers without touching
   the transport.
-* `fleet_discover` — pull-based peer discovery; writes `pending/` records only.
+* `fleet_adopt <referrer>` — adopts roster entries an approved referrer holds
+  approved; `fleet_discover` (pull) and the `admit` verb (push) both use it.
 * `fleet_event <kind> <detail>` — appends to `events.log`; the notification
   fan-out in `execution` and the tray read from it.
 

@@ -188,7 +188,7 @@ struct FleetEnrollSteps: View {
             step(String(localized: "On a Mac already in the fleet, choose Invite… and keep the window open. It shows the host key and a one-time code.", comment: "Enrollment help: step 2"), 2)
             step(String(localized: "On the new Mac, choose Join a fleet. Over Tailscale asks for the other Mac’s Tailscale name and its host key. Over SSH asks for user@host, the code and the host key.", comment: "Enrollment help: step 3"), 3)
             step(String(localized: "Back on the fleet Mac, approve the request. First check that its fingerprint matches the one under This Mac on the new Mac.", comment: "Enrollment help: step 4"), 4)
-            Text("Nothing moves until step 4: approval is what sends profiles and credentials. A code works once and expires after 15 minutes.",
+            Text("Nothing moves until step 4. Approving on one Mac admits the new Mac to the whole fleet and sends it profiles and credentials. A code works once and expires after 15 minutes.",
                  comment: "Enrollment help: footer")
                 .font(.system(size: 11.5)).foregroundStyle(Ink.secondary).fixedSize(horizontal: false, vertical: true)
         }
@@ -331,7 +331,7 @@ struct FleetBanners: View {
                 ForEach(fleet.pending) { p in
                     Banner(symbol: "desktopcomputer.and.arrow.down", ink: Ink.link,
                            title: String(localized: "\(p.machine.isEmpty ? "A Mac" : p.machine) wants to join", comment: "Banner: a Mac asks to join the fleet"),
-                           detail: String(localized: "Approving sends it shared profiles and credentials. Approve only if this fingerprint matches the one on that Mac.",
+                           detail: String(localized: "Approving admits it to every Mac in the fleet and sends it shared profiles and credentials. Approve only if this fingerprint matches the one on that Mac.",
                                           comment: "Banner: what approving does"),
                            code: p.id) {
                         Button(String(localized: "Deny", comment: "Banner: refuse the Mac")) { actions.fleetDeny(peer: p.id) }
