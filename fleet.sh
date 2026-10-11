@@ -447,19 +447,38 @@ fleet_handle_status() {
   fleet_ok "$3/out"
 }
 
+# One roster entry: everything a member needs to trust and dial this peer.
+# id machine transport state address key host user port home, tab separated.
+# The key and the pinned host key travel with '_' for their inner space, and
+# '-' stands for an empty field because `read` collapses adjacent tabs. All of
+# it is public material; fleet_adopt still refuses a key whose fingerprint is
+# not the advertised id.
+fleet_roster_line() {  # <peerdir>
+  rlid=$(fleet_meta "$1" peer) || return 1
+  rlkey=$([ -f "$1/key.pub" ] && awk '{print $1"_"$2}' "$1/key.pub")
+  rlhost=$([ -f "$1/host.pub" ] && awk '{print $2"_"$3}' "$1/host.pub")
+  rlmach=$(fleet_meta "$1" machine) rltrans=$(fleet_meta "$1" transport)
+  rladdr=$(fleet_meta "$1" address) rluser=$(fleet_meta "$1" user)
+  rlport=$(fleet_meta "$1" port) rlhome=$(fleet_meta "$1" home)
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$rlid" "${rlmach:--}" "${rltrans:--}" \
+    "$(fleet_peer_state "$rlid")" "${rladdr:--}" "${rlkey:--}" "${rlhost:--}" \
+    "${rluser:--}" "${rlport:--}" "${rlhome:--}"
+}
+
 fleet_handle_roster() {
   : > "$3/out"
   for dd in "$fleet_root/peers"/*; do
     [ -d "$dd" ] || continue
-    rpid=$(fleet_meta "$dd" peer)
-    # The public key travels so a discovering peer can build a pending record
-    # it could actually approve later. It is public material; `fleet_approve`
-    # still refuses it unless its fingerprint equals the advertised peer id.
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$rpid" "$(fleet_meta "$dd" machine)" \
-      "$(fleet_meta "$dd" transport)" "$(fleet_peer_state "$rpid")" \
-      "$(fleet_meta "$dd" address)" \
-      "$([ -f "$dd/key.pub" ] && awk '{print $1"_"$2}' "$dd/key.pub")" >> "$3/out"
+    fleet_roster_line "$dd" >> "$3/out"
   done
+  fleet_ok "$3/out"
+}
+
+# An approved peer telling us it admitted a machine. fleet_verify has already
+# proven the sender approved; fleet_adopt applies the rest of the trust rule.
+fleet_handle_admit() {
+  fleet_adopt "$1" < "$2" > "$3/out" ||
+    { echo "ERR admit-refused $(awk -F'\t' '$1=="refused" {print $3; exit}' "$3/out")"; return 1; }
   fleet_ok "$3/out"
 }
 
@@ -626,7 +645,11 @@ fleet_handle_enroll() {
 
   if [ -n "$epaired" ]; then fleet_meta_set "$hepd" paired yes; fi
   if [ -n "$eapprove" ]; then
-    if fleet_approve "$hefrom" "$(fleet_self_id)"; then eresult=approved; fi
+    if fleet_approve "$hefrom" "$(fleet_self_id)"; then
+      eresult=approved
+      # stdout is the reply; misses are journaled by fleet_admit_tell.
+      fleet_admit_tell "$hefrom" >/dev/null 2>&1
+    fi
   fi
   fleet_event enroll "peer=$hefrom machine=${machine:-unknown} result=$eresult"
   { printf 'result=%s\n' "$eresult"
@@ -849,10 +872,11 @@ fleet_auth_call() (
 
 # Best effort fan-out. An offline peer is a status, not a failure: the
 # disconnect path in `execution` depends on this never aborting the caller.
-fleet_broadcast() {  # fleet_broadcast <verb> [payload-file]
-  verb=$1 pf=${2:-/dev/null}
+fleet_broadcast() {  # fleet_broadcast <verb> [payload-file] [skip-peerid]
+  verb=$1 pf=${2:-/dev/null} bcskip=${3:-} bcme=$(fleet_self_id)
   fleet_peer_ids | while read -r pid; do
     [ -n "$pid" ] || continue
+    [ "$pid" = "$bcme" ] || [ "$pid" = "$bcskip" ] && continue
     fleet_approved "$pid" || { printf '%s\tskipped\t%s\n' "$pid" "$(fleet_peer_state "$pid")"; continue; }
     out=$(fleet_call "$pid" "$verb" "$pf" 2>&1) &&
       printf '%s\tok\t%s\n' "$pid" "$(printf '%s' "$out" | tr '\n' ' ')" ||
@@ -882,7 +906,10 @@ fleet_approve() {
   # meant a rejected approval (missing or mismatched host key) destroyed the
   # request: the operator could no longer `deny` it, nor retry with the
   # fingerprint they went and verified.
-  if [ -d "$fapd" ]; then fasrc=$fapd; else fasrc=$fad; fi
+  # A peer record that already pins a host key (the joiner's side of `join`)
+  # outranks a request filed beside it: a stale host-key-less pending dir must
+  # not shadow it, or the approval callback fails `missing-host-key`.
+  if [ -d "$fapd" ] && [ ! -s "$fad/host.pub" ]; then fasrc=$fapd; else fasrc=$fad; fi
   [ -d "$fasrc" ] || { echo "agents: no such enrollment request: $fapid" >&2; return 1; }
   [ -f "$fasrc/key.pub" ] && [ "$(fleet_fp "$fasrc/key.pub")" = "$fapid" ] ||
     { echo "agents: key does not match peer id" >&2; return 1; }
@@ -901,8 +928,9 @@ fleet_approve() {
   fi
   # Only now does the request become a peer.
   if [ "$fasrc" = "$fapd" ]; then
-    mkdir -p "$fad"; cp "$fapd"/* "$fad"/ 2>/dev/null; rm -rf "$fapd"
+    mkdir -p "$fad"; cp "$fapd"/* "$fad"/ 2>/dev/null
   fi
+  rm -rf "$fapd"
   # Incoming enrollment carries the sender's hostname. SSH connects with our
   # per-peer HostKeyAlias, so copying that line verbatim breaks the reverse hop.
   # Keep the verified key bytes and bind them to the same alias as outbound joins.
@@ -1256,49 +1284,120 @@ fleet_handle_enrolled() {
   [ -n "$ndmachine" ] && fleet_meta_set "$ndpeer" machine "$ndmachine"
   fleet_approve "$ndfrom" "$ndfrom" >/dev/null 2>&1 || { echo "ERR approve-failed"; return 1; }
   rm -f "$fleet_root/joined/$(fleet_slug "$ndfrom")"
+  # Approved by a member, so learn the members it trusts. stdout is the reply
+  # here; a failure is journaled and `fleet discover` repairs it.
+  fleet_learn "$ndfrom" >/dev/null 2>&1 || fleet_event learn-failed "via=$ndfrom"
   printf 'ack\n' > "$ndd/out"; fleet_ok "$ndd/out"
 }
 
+# --- fleet-wide trust -------------------------------------------------------
+# Approval is fleet-wide: a machine any approved member approved is approved
+# here too, without a second operator step. That makes every approved member
+# able to admit a machine to the whole fleet, so the rule is narrow: only
+# entries the referrer itself holds `approved`, only from a referrer approved
+# here, never a revoked id, and never a change to a record we already hold (an
+# existing pin stays; rehost is how a pin moves). The id is the fingerprint of
+# the key, so a referrer that pairs a known id with another key is refused.
+fleet_adopt() {  # fleet_adopt <referrer> ; roster lines on stdin, results on stdout
+  adoref=$1 adorc=0 adome=$(fleet_self_id)
+  fleet_approved "$adoref" || { printf 'refused\t%s\tnot-approved-referrer\n' "$adoref"; return 1; }
+  adotmp=$(mktemp -d "${TMPDIR:-/tmp}/n2adopt.XXXXXX") || return 1
+  while IFS="$(printf '\t')" read -r adoid adomach adotrans adostate adoaddr adokey adohost adouser adoport adohome; do
+    case $adoid in SHA256:*) ;; *) continue ;; esac
+    [ "$adostate" = approved ] && [ "$adoid" != "$adome" ] || continue
+    adowhy=
+    printf '%s\n' "$adokey" | tr '_' ' ' > "$adotmp/key.pub"
+    : > "$adotmp/host.pub"
+    [ "$adohost" = - ] || printf 'n2 %s\n' "$adohost" | tr '_' ' ' | fleet_host_line > "$adotmp/host.pub"
+    if fleet_revoked "$adoid"; then adowhy=revoked
+    elif [ "$(fleet_fp "$adotmp/key.pub")" != "$adoid" ]; then adowhy=key-mismatch
+    elif [ -d "$(fleet_peer_dir "$adoid")" ] || [ -f "$fleet_root/joined/$(fleet_slug "$adoid")" ]; then continue
+    else
+      case $adotrans in
+        ssh|tailscale) [ -s "$adotmp/host.pub" ] || adowhy=missing-host-key ;;
+        exec) case $adohome in /*) ;; *) adowhy=no-route ;; esac ;;
+        *) adowhy=no-route ;;
+      esac
+    fi
+    if [ -n "$adowhy" ]; then
+      fleet_event reject "adopt $adowhy peer=$adoid via=$adoref"
+      printf 'refused\t%s\t%s\tvia %s\n' "$adoid" "$adowhy" "$adoref"; adorc=1; continue
+    fi
+    # Recorded from the referrer's view, then approved through the one
+    # approval path, so every check and grant there applies here too. mkdir is
+    # the reservation: of two adopters racing for one id, one writes the record
+    # and the other sees it known. The machine's own request, if it sent us
+    # one, is superseded. The referrer's route is the initial route; `fleet
+    # route` repairs it.
+    adopd=$(fleet_peer_dir "$adoid")
+    mkdir "$adopd" 2>/dev/null || continue
+    cp "$adotmp/key.pub" "$adopd/key.pub"
+    [ -s "$adotmp/host.pub" ] && cp "$adotmp/host.pub" "$adopd/host.pub"
+    for adof in "peer=$adoid" "machine=$adomach" "transport=$adotrans" "address=$adoaddr" "user=$adouser" "home=$adohome"; do
+      [ "${adof#*=}" = - ] || fleet_meta_set "$adopd" "${adof%%=*}" "${adof#*=}"
+    done
+    if fleet_valid_port "$adoport"; then fleet_meta_set "$adopd" port "$adoport"; fi
+    fleet_meta_set "$adopd" state pending
+    rm -rf "$(fleet_pending_dir "$adoid")"
+    if fleet_approve "$adoid" "$adoref"; then
+      fleet_event adopt "peer=$adoid via=$adoref"
+      printf 'adopted\t%s\t%s\tvia %s\n' "$adoid" "$adomach" "$adoref"
+    else
+      # A grant that did not land leaves the approval standing (fleet_approve
+      # said so on stderr); anything else leaves no record behind.
+      fleet_approved "$adoid" || rm -rf "$adopd"
+      printf 'refused\t%s\tapprove-failed\tvia %s\n' "$adoid" "$adoref"; adorc=1
+    fi
+  done
+  rm -rf "$adotmp"
+  return $adorc
+}
+
+# Pull a member's roster and adopt the machines it approved.
+fleet_learn() {  # <referrer>
+  lrnf=$(mktemp "${TMPDIR:-/tmp}/n2learn.XXXXXX") || return 1
+  if ! fleet_call "$1" roster > "$lrnf"; then rm -f "$lrnf"; return 2; fi
+  lrnrc=0; fleet_adopt "$1" < "$lrnf" || lrnrc=1
+  rm -f "$lrnf"
+  return $lrnrc
+}
+
+# Tell every other approved member that this machine approved <peerid>, so
+# they adopt it now rather than on their next `discover`. Best effort like the
+# approval callback: a member that missed it is named, never hidden.
+fleet_admit_tell() {  # <peerid>
+  atpf=$(mktemp "${TMPDIR:-/tmp}/n2admit.XXXXXX") || return 1
+  fleet_roster_line "$(fleet_peer_dir "$1")" > "$atpf"
+  fleet_broadcast admit "$atpf" "$1" > "$atpf.out"
+  rm -f "$atpf"
+  while IFS="$(printf '\t')" read -r atpid atres atwhy; do
+    case $atres in skipped) continue ;; esac
+    printf 'told\t%s\t%s\n' "$atpid" "$atres"
+    [ "$atres" = ok ] && continue
+    fleet_event admit-failed "peer=$1 member=$atpid $atwhy"
+    echo "agents: could not tell $atpid that $1 is approved ($atwhy); it learns on its next 'agents fleet discover'" >&2
+  done < "$atpf.out"
+  rm -f "$atpf.out"
+}
+
 # --- discovery -------------------------------------------------------------
-# Hub-free discovery: ask every approved peer for its roster and file anything
-# we do not already know as *pending*. Reachability and a neighbour's trust
-# are not enrollment approval — the operator still runs `fleet approve`.
+# Hub-free catch-up: ask every approved peer for its roster and adopt its
+# approved members (fleet_adopt). Only a missed admit needs this.
 fleet_discover() {
-  dscount=0
-  # Coming back online: learn about revocations before adopting new pending
-  # records, so a peer the fleet cut off while we were away is not re-filed.
+  dscount=0 dsrc=0
+  # Coming back online: learn about revocations before adopting anyone, so a
+  # peer the fleet cut off while we were away is not re-adopted.
   fleet_reconcile 2>/dev/null | sed 's/^/reconcile\t/'
 
   for dspid in $(fleet_peer_ids); do
-    [ -n "$dspid" ] || continue
     [ "$dspid" = "$(fleet_self_id)" ] && continue
     fleet_approved "$dspid" || continue
-    dsout=$(fleet_call "$dspid" roster 2>/dev/null) || continue
-    printf '%s\n' "$dsout" | while IFS="$(printf '\t')" read -r cid cmach ctrans cstate caddr ckey; do
-      [ -n "$cid" ] || continue
-      case $cid in SHA256:*) ;; *) continue ;; esac
-      [ "$cid" = "$(fleet_self_id)" ] && continue
-      [ "$cstate" = approved ] || continue
-      fleet_revoked "$cid" && continue
-      [ "$(fleet_peer_state "$cid")" = unknown ] || continue
-      [ -n "$ckey" ] || continue
-      dspd=$(fleet_pending_dir "$cid"); mkdir -p "$dspd"
-      printf '%s\n' "$ckey" | tr '_' ' ' > "$dspd/key.pub"
-      # A neighbour that lies about a key cannot make it stick: the
-      # fingerprint must equal the id it was advertised under.
-      if [ "$(fleet_fp "$dspd/key.pub")" != "$cid" ]; then rm -rf "$dspd"; continue; fi
-      fleet_meta_set "$dspd" peer "$cid"; fleet_meta_set "$dspd" machine "$cmach"
-      fleet_meta_set "$dspd" transport "$ctrans"; fleet_meta_set "$dspd" address "$caddr"
-      fleet_meta_set "$dspd" state pending
-      fleet_meta_set "$dspd" discovered_from "$dspid"
-      fleet_meta_set "$dspd" requested_at "$(fleet_now)"
-      fleet_event discover "peer=$cid via=$dspid"
-      printf 'discovered\t%s\t%s\tvia %s\n' "$cid" "$cmach" "$dspid"
-    done
+    fleet_learn "$dspid" 2>/dev/null; dslrc=$?
+    case $dslrc in 0) ;; 2) printf 'unreachable\t%s\n' "$dspid"; continue ;; *) dsrc=1 ;; esac
     dscount=$((dscount+1))
   done
   [ "$dscount" -gt 0 ] || echo "agents: no approved peers to ask" >&2
-  return 0
+  return $dsrc
 }
 
 # Reconnect reconciliation for revocation. Pull each approved neighbour's
@@ -1703,7 +1802,7 @@ agents fleet <verb>
   approve <peerid> [--host-fp <fp>] [--no-host-key]
   deny <peerid>
   revoke [--propagate] <peerid>
-  discover                                 learn peers-of-peers (stay pending)
+  discover                                 adopt the members approved peers approved
   reconcile [--no-sync]                    revocations + roster + one sync round after time offline
   route <peerid> [--transport t] [--address a] [--port n] [--user u]
         [--home p] [--command c] [--host-key <line>|--host-key-file <f>]
@@ -1794,6 +1893,11 @@ cmd_fleet() {
       fleet_record_reply "$jtmp/rep" "$t" "$addr" "$user" "$home" "$code" "$jport"
       jrc=$?
       rm -rf "$jtmp"
+      # A bound code approved us on the spot: learn the rest of the fleet now.
+      # (Approval-only joins learn it when the approval callback arrives.)
+      if [ "$jrc" = 0 ] && fleet_approved "$rpeer"; then
+        fleet_learn "$rpeer" || { jrc=1; echo "agents: joined, but could not adopt the rest of the fleet from $rpeer; run 'agents fleet discover'" >&2; }
+      fi
       return $jrc
       ;;
     pending)
@@ -1819,6 +1923,7 @@ cmd_fleet() {
         echo "agents: approved $1, but could not tell it (offline?) — re-run 'agents fleet join' there, or 'agents fleet approve' again once it is reachable" >&2
       fi
       printf 'approved\t%s\t%s\n' "$1" "$ansent"
+      fleet_admit_tell "$1"
       ;;
     deny)
       fleet_need_id; [ -n "${1:-}" ] || fleet_die "usage: agents fleet deny <peerid>"

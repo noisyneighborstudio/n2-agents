@@ -138,6 +138,15 @@ Blocked on authorization:
 
 ## Noticed
 
+- `fleet pair --code` against a Mac that already adopted the joiner fails with
+  "responder did not prove it holds the pairing code": its already-approved
+  reply carries no `rtag`. Pairing each pair is no longer needed, but the
+  message reads like an impersonation. Validate the code before that branch.
+
+- The roster line grew from 6 to 10 fields (`-` for empty). A Mac on an older
+  build sends 6, which `fleet_adopt` refuses (no route or host key). Update
+  every enrolled Mac before relying on fleet-wide approval.
+
 - The event site trial 2 built (branch n2/loop-2c6b76f7 in
   ~/Development/fanout-trial-events) mails sign-in links for 127.0.0.1 and
   prints 127.0.0.1 whatever --host says. Trial artifact, not N2 code.

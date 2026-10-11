@@ -65,7 +65,8 @@ Use Tailscale DNS names as the SSH addresses. No host verification is disabled.
    set `N2_FLEET_SELF_ADDRESS` to name a different one, such as its tailnet DNS
    name. Codes bound to that exact identity constitute approval; unbound
    requests remain pending for approval.
-4. Repeat for the other peer pairs. Check `fleet peers` from every Mac.
+4. The other Macs adopt the new one from the Mac that approved it; there is no
+   pairing per pair. Check `fleet peers` from every Mac.
 
 Enrollment adds tagged, restricted QA fleet-key entries to `~/.ssh/authorized_keys`.
 Those entries only run the fleet responder. Each Mac retains its own identity,

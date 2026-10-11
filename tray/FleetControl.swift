@@ -199,7 +199,7 @@ extension AppDelegate {
         let confirm = NSAlert()
         let machine = model.fleet?.pending.first { $0.id == peer }?.machine
         confirm.messageText = machine.map { "Approve \($0)?" } ?? "Approve this machine?"
-        confirm.informativeText = "Approving sends it shared profiles and credentials. Approve only if this fingerprint matches the one on that Mac."
+        confirm.informativeText = "Approving admits it to every Mac in the fleet and sends it shared profiles and credentials. Approve only if this fingerprint matches the one on that Mac."
         // The fingerprint is compared character by character: its own line,
         // monospaced, and never broken with a hyphen.
         let fingerprint = NSTextField(wrappingLabelWithString: peer)
