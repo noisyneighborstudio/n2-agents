@@ -1014,6 +1014,7 @@ fi
 # --- fleet auth and profile identity ---------------------------------------
 if in_group auth; then
 python3 scripts/test-claude-token.py
+python3 scripts/test-fleet-claude-token.py
 python3 scripts/test-profile-metadata.py
 python3 scripts/test-profile-routing.py
 python3 scripts/test-fleet-auth-response.py

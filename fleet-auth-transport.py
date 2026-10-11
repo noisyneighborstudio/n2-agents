@@ -30,16 +30,18 @@ def bounded_file(path, maximum):
         os.close(descriptor)
 
 
-def login_codec():
-    spec=importlib.util.spec_from_file_location('n2_login_wire',ROOT/'fleet-auth-login-wire.py')
+def wire(protocol):
+    """The request codec of a non-token protocol: login control or a Claude token."""
+    files={'login':'fleet-auth-login-wire.py','claude':'fleet-claude-token.py'}
+    if protocol not in files:raise ValueError('unknown auth protocol')
+    spec=importlib.util.spec_from_file_location('n2_'+protocol+'_wire',ROOT/files[protocol])
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
 
 
 def validate_request(root, peer, path, protocol='token'):
     context = codec.decode_json(bounded_file(path, 4096))
     if protocol=='token':codec.validate_context(context,time.time())
-    elif protocol=='login':login_codec().validate_context(context)
-    else:raise ValueError('unknown auth protocol')
+    else:wire(protocol).validate_context(context)
     identity, _ = codec.public_identity(bounded_file(Path(root) / 'fleet/identity/id_ed25519.pub', 1024))
     if context['owner'] != peer or context['recipient'] != identity:
         raise ValueError('request belongs to another machine')
@@ -56,8 +58,7 @@ def exchange(root, context, owner_public_key, deadline, agents=None, protocol='t
     process = None
     try:
         if protocol=='token':verifier=codec.ResponseVerifier(context,owner_public_key,deadline)
-        elif protocol=='login':verifier=login_codec().Verifier(context,owner_public_key,deadline)
-        else:raise ValueError('unknown auth protocol')
+        else:verifier=wire(protocol).Verifier(context,owner_public_key,deadline)
         context = verifier.context
         root = str(Path(root).resolve(strict=True))
         with tempfile.TemporaryDirectory(prefix='n2-auth-request-') as directory:
@@ -66,7 +67,7 @@ def exchange(root, context, owner_public_key, deadline, agents=None, protocol='t
             payload.write_bytes(codec.canonical(context))
             validate_request(root,context['owner'],payload,protocol)
             command=[str(agents or ROOT/'agents'),'_fleet-auth-call',context['owner'],str(payload)]
-            if protocol=='login':command.append('login')
+            if protocol!='token':command.append(protocol)
             process = subprocess.Popen(command,
                                        env=dict(os.environ, N2_AGENTS_ROOT=root, N2_FLEET_DEBUG=''),
                                        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,

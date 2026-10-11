@@ -403,6 +403,21 @@ fleet_handle_auth_login() {
   python3 "$scripts_dir/fleet-auth-login.py" serve "$root" "$1" "$2"
 }
 
+# A Claude long-lived token, shared only with the same account (see
+# fleet-claude-token.py). The reply rides the private carrier like auth-token.
+fleet_handle_claude_token() {
+  [ -n "${SSH_CONNECTION:-}" ] || { echo "ERR encrypted-carrier-required" >&2; return 1; }
+  /usr/bin/python3 "$scripts_dir/fleet-claude-token.py" serve "$root" "$1" "$2"
+}
+
+# A peer saved a new token. The notice is public; this Mac pulls the token
+# back over the private carrier only when it holds the same account.
+fleet_handle_claude_token_notice() {
+  /usr/bin/python3 "$scripts_dir/fleet-claude-token.py" notice "$root" "$1" "$2" > "$3/out" ||
+    { echo "ERR claude-token-pull-failed"; return 1; }
+  fleet_ok "$3/out"
+}
+
 fleet_handle_migration_prepare() (
   migration_name=$(/usr/bin/python3 "$scripts_dir/fleet-auth-migration.py" "$root" "$1" "$2") || return 1
   fleet_auth_manage migration-accept "$migration_name" --peer "$1" --payload "$2" > "$3/ack" || return 1
@@ -820,7 +835,7 @@ fleet_carry() {  # fleet_carry <peerdir> ; message on stdin, reply on stdout
 fleet_call() {  # fleet_call <peerid> <verb> [payload-file] -> payload on stdout
   pid=$1 verb=$2 pf=${3:-/dev/null}
   case $verb in ''|*[!a-z-]*) echo "ERR malformed-verb" >&2; return 1 ;; esac
-  case $verb in auth-token|auth-login) echo "ERR private-carrier-required" >&2; return 1 ;; esac
+  case $verb in auth-token|auth-login|claude-token) echo "ERR private-carrier-required" >&2; return 1 ;; esac
   d=$(fleet_peer_dir "$pid")
   [ -d "$d" ] || { echo "ERR unknown-peer" >&2; return 1; }
   fleet_approved "$pid" || { echo "ERR not-approved" >&2; return 1; }
@@ -853,7 +868,7 @@ fleet_auth_call() (
   set +e
   [ "$#" = 2 ] || [ "$#" = 3 ] || return 1
   ac_peer=$1 ac_payload=$2 ac_protocol=${3:-token}
-  case $ac_protocol in token) ac_verb=auth-token ;; login) ac_verb=auth-login ;; *) return 1 ;; esac
+  case $ac_protocol in token) ac_verb=auth-token ;; login) ac_verb=auth-login ;; claude) ac_verb=claude-token ;; *) return 1 ;; esac
   /usr/bin/python3 "$scripts_dir/fleet-auth-transport.py" validate-request "$root" "$ac_peer" "$ac_payload" "$ac_protocol" 2>/dev/null || return 1
   ac_dir=$(fleet_peer_dir "$ac_peer")
   fleet_approved "$ac_peer" || return 1
@@ -1380,6 +1395,36 @@ fleet_admit_tell() {  # <peerid>
   rm -f "$atpf.out"
 }
 
+# Tell every approved member that this Mac saved a new Claude token for
+# <Profile>. Like fleet_admit_tell, a member that missed it is named.
+fleet_claude_token_push() {  # <Profile>
+  ctpf=$(mktemp "${TMPDIR:-/tmp}/n2claude.XXXXXX") || return 1
+  /usr/bin/python3 "$scripts_dir/fleet-claude-token.py" announce "$root" "$1" > "$ctpf" || { rm -f "$ctpf"; return 1; }
+  fleet_broadcast claude-token-notice "$ctpf" > "$ctpf.out"
+  rm -f "$ctpf"
+  while IFS="$(printf '\t')" read -r ctpid ctres ctwhy; do
+    case $ctres in skipped) continue ;; esac
+    printf 'told\t%s\t%s\t%s\n' "$ctpid" "$ctres" "$ctwhy"
+    [ "$ctres" = ok ] && continue
+    fleet_event claude-token-failed "profile=$1 member=$ctpid $ctwhy"
+    echo "agents: could not share the '$1' Claude token with $ctpid ($ctwhy); run 'agents fleet claude-token pull $1' there" >&2
+  done < "$ctpf.out"
+  rm -f "$ctpf.out"
+}
+
+# Save <Profile>'s token from the first approved member holding the same
+# account, and print that member's machine name.
+fleet_claude_token_pull() {  # <Profile>
+  ctme=$(fleet_self_id) || return 1
+  for ctpid in $(fleet_peer_ids); do
+    [ "$ctpid" != "$ctme" ] && fleet_approved "$ctpid" || continue
+    if /usr/bin/python3 "$scripts_dir/fleet-claude-token.py" pull "$root" "$1" "$ctpid" 2>/dev/null; then
+      fleet_meta "$(fleet_peer_dir "$ctpid")" machine; return 0
+    fi
+  done
+  return 1
+}
+
 # --- discovery -------------------------------------------------------------
 # Hub-free catch-up: ask every approved peer for its roster and adopt its
 # approved members (fleet_adopt). Only a missed admit needs this.
@@ -1817,6 +1862,7 @@ agents fleet <verb>
   task <verb>                              dispatch, handoff and task lifecycle (task help)
   session send THREAD --peer PEER --cwd PATH  transfer saved account-bound history
   send <peerid> --verb <v> [--payload-file <f>]   raw signed request
+  claude-token <pull|push> <Profile>       share a Claude long-lived token with the same account
   auth <register|status|allow|deny|login|reconcile|retire|grants|allow-login|deny-login|migration-status|migration-begin|migration-archive|migration-abandon|migration-allow|migration-deny|migration-prepare> Profile  owner binding and explicit peer consent
   serve                                    stdio responder (the remote end)
   help                                     this list
@@ -1836,6 +1882,16 @@ cmd_fleet() {
   verb=${1:-status}; [ $# -ge 1 ] && shift
   case $verb in
     auth) fleet_auth_manage "$@" ;;
+    claude-token)
+      fleet_need_id; ctact=${1:-}
+      ctname=$(resolve_profile "${2:-}") || fleet_die "usage: agents fleet claude-token <pull|push> <Profile>"
+      case $ctact in
+        pull) ctfrom=$(fleet_claude_token_pull "$ctname") ||
+                fleet_die "no approved peer shared a '$ctname' Claude token for this account"
+              printf 'saved\t%s\t%s\n' "$ctname" "$ctfrom" ;;
+        push) fleet_claude_token_push "$ctname" ;;
+        *) fleet_die "usage: agents fleet claude-token <pull|push> <Profile>" ;;
+      esac ;;
     session) fleet_session_send "$@" ;;
     init)
       machine=$(hostname -s 2>/dev/null || echo unknown)

@@ -820,6 +820,12 @@ claude_long_token() {
   case ${N2_CLAUDE_LONG_TOKEN:-$(defaults read dev.sethwebster.n2agents claudeLongLivedToken 2>/dev/null || echo 1)} in
     0|false|NO) return 0 ;;
   esac
+  # Another Mac in the fleet may already hold one for this account.
+  if fleet_have_identity && lt_from=$(fleet_claude_token_pull "$name"); then
+    echo ""
+    echo "'$name' Claude now uses the long-lived token from $lt_from."
+    return 0
+  fi
   echo ""
   echo "Now approve a long-lived token for '$name' with the same account, so sessions never have to refresh this login."
   lt_dir=$(mktemp -d "${TMPDIR:-/tmp}/n2-token.XXXXXX") || die "could not create a private temp dir"
@@ -829,6 +835,7 @@ claude_long_token() {
      /usr/bin/python3 "$scripts_dir/claude-token.py" capture "$cfg" "$lt_dir/out"; then
     rm -rf "$lt_dir"
     echo "'$name' Claude now uses its long-lived token."
+    if fleet_have_identity; then fleet_claude_token_push "$name" || true; fi
   else
     rm -rf "$lt_dir"
     die "no long-lived token was saved; '$name' keeps its refreshable login — sign in again to retry"
