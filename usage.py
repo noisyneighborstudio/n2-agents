@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 def claude_creds(cfg, is_default):
     # agents run always sets CLAUDE_CONFIG_DIR to this literal path. Other
     # paths and the unscoped Keychain entry can belong to different accounts.
-    if any(os.environ.get(k) for k in ('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN')):
+    # It drops an inherited CLAUDE_CODE_OAUTH_TOKEN: a slot's token is its own.
+    if any(os.environ.get(k) for k in ('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN')):
         return None, 'credential-override'
     if os.environ.get('ANTHROPIC_BASE_URL', 'https://api.anthropic.com').rstrip('/') != 'https://api.anthropic.com':
         return None, 'credential-override'
@@ -48,12 +49,16 @@ def claude_creds(cfg, is_default):
         return None, 'stale-token'
     return credential, 'ok' if expires / 1000 > time.time() else 'stale-token'
 
+def claude_env(cfg):
+    return {k: v for k, v in os.environ.items() if k != 'CLAUDE_CODE_OAUTH_TOKEN'} | {'CLAUDE_CONFIG_DIR': cfg}
+
+
 def claude_identity(cfg):
     """Ask the provider CLI which login its literal configured route selects."""
     with tempfile.TemporaryDirectory(prefix='n2-claude-identity-') as cwd:
         try:
             result = subprocess.run(['claude', 'auth', 'status', '--json'],
-                                    env=dict(os.environ, CLAUDE_CONFIG_DIR=cfg), cwd=cwd,
+                                    env=claude_env(cfg), cwd=cwd,
                                     capture_output=True, text=True, timeout=10)
             value = json.loads(result.stdout)
             if result.returncode != 0 or not isinstance(value, dict) or not value.get('loggedIn'):
@@ -119,13 +124,43 @@ def claude_renew(cfg):
     with tempfile.TemporaryDirectory(prefix='n2-claude-renew-') as cwd:
         try:
             subprocess.run(['claude', '-p', '/usage', '--no-session-persistence', '--strict-mcp-config'],
-                           env=dict(os.environ, CLAUDE_CONFIG_DIR=cfg), cwd=cwd, stdin=subprocess.DEVNULL,
+                           env=claude_env(cfg), cwd=cwd, stdin=subprocess.DEVNULL,
                            capture_output=True, text=True, timeout=20)
         except (OSError, subprocess.SubprocessError):
             pass  # the re-read reports the token still expired
 
 
+def claude_token_module():
+    spec = importlib.util.spec_from_file_location('n2_claude_token', os.path.join(os.path.dirname(__file__), 'claude-token.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def claude_token_read(module, cfg, token):
+    """A long-lived token cannot read the OAuth usage or profile endpoints.
+    Its organization must match the slot's cached sign-in to count as that login."""
+    result = module.allowance(token)
+    organization, login = result.pop('_organization'), module.login_organization(cfg)
+    try:
+        with open(os.path.join(cfg, '.claude.json')) as f:
+            email = (json.load(f).get('oauthAccount') or {}).get('emailAddress')
+    except (OSError, ValueError, AttributeError):
+        email = None
+    if not organization or not login or not isinstance(email, str) or not email:
+        result['_identity'] = {'status': 'unknown'}
+    elif organization != login:
+        result['_identity'] = {'status': 'conflicting'}
+    else:
+        result['_identity'] = {'status': 'login-only', 'loginHash': hashlib.sha256(email.lower().encode()).hexdigest()}
+    return result
+
+
 def claude(name, cfg):
+    module = claude_token_module()
+    token = module.read(cfg)
+    if token:
+        return 'ok', lambda: claude_token_read(module, cfg, token)
     c, status = claude_creds(cfg, name == 'Default')
     if status == 'stale-token' and c and c.get('refreshToken'):
         claude_renew(cfg)

@@ -8,6 +8,8 @@ struct SettingsWindowView: View {
     /// activity), supplied by the app: the popover never manages.
     var fleet: AnyView = AnyView(EmptyView())
     @State private var cliInstallMessage: String?
+    /// Read by `agents login` (claude_long_token) from the same defaults domain.
+    @AppStorage("claudeLongLivedToken") private var claudeLongLivedToken = true
 
     // "1.2.0 (16)": a prerelease counter resets with every stable release; the
     // build number always climbs.
@@ -50,6 +52,15 @@ struct SettingsWindowView: View {
                                 }
                             }
                             .disabled(model.resettingAccounts || model.data?.profiles.contains { !$0.slots.isEmpty } != true)
+                            Divider()
+                            Toggle(isOn: $claudeLongLivedToken) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Use long-lived token for Claude")
+                                    Text("Claude sign-in also approves a token that lasts a year and never refreshes, so sessions and Macs sharing a login stop signing each other out. Remote Control and Claude in Chrome need the regular login. Applies at the next sign-in.")
+                                        .font(.system(size: 11)).foregroundStyle(Ink.secondary)
+                                }
+                            }
+                            .toggleStyle(.switch)
                         }
                         .padding(13)
                         .frame(maxWidth: .infinity, alignment: .leading)
