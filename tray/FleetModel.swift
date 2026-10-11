@@ -544,6 +544,23 @@ enum FleetPins {
     }
 }
 
+/// What a joining Mac needs from this one: `agents fleet invite` prints the
+/// one-time code as its last line (its notes go to stderr, which the app reads
+/// merged), and `agents fleet id --host-key` prints the ssh host key line. A
+/// Mac with no ssh host key has none to give, so `hostKey` is then nil.
+struct FleetInvite: Equatable {
+    let code: String
+    let hostKey: String?
+
+    init?(inviteOutput: String, hostKeyOutput: String) {
+        guard let last = inviteOutput.split(whereSeparator: \.isNewline).last.map(String.init),
+              last.count == 48, last.allSatisfy(\.isHexDigit) else { return nil }
+        code = last
+        let line = hostKeyOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+        hostKey = line.split(separator: " ").count >= 3 ? line : nil
+    }
+}
+
 /// Which notices deserve a desktop banner, and which were already announced.
 ///
 /// The feed is durable and re-read on every refresh, so without a seen-set the

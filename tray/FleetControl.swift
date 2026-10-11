@@ -156,18 +156,41 @@ extension AppDelegate {
             guard let addr = ask("Join a fleet over Tailscale",
                                  "Enter the Tailscale hostname of a Mac already in the fleet. It still has to approve this machine before any profile or credential moves.",
                                  placeholder: "seths-mac-mini") else { return }
-            guard let key = ask("Peer SSH host key", "Paste the output of agents fleet id --host-key from that Mac, obtained through a trusted connection.", placeholder: "ssh-ed25519 …") else { return }
+            guard let key = ask("Peer SSH host key", "Paste the host key from that Mac’s Settings › Fleet › Invite a Mac, copied through a trusted connection.", placeholder: "ssh-ed25519 …") else { return }
             runInTerminal("\"\(cliPath)\" fleet join --to \(shellQuote(addr)) --host-key \(shellQuote(key))")
         case "ssh":
             guard let addr = ask("Pair over SSH",
-                                 "Enter user@host of the Mac to pair with, then the one-time code it printed with “agents fleet invite”.",
+                                 "Enter user@host of a Mac already in the fleet. On that Mac, Settings › Fleet › Invite a Mac shows the code and host key you need next.",
                                  placeholder: "seth@192.168.1.20") else { return }
-            guard let code = ask("Pairing code", "Paste the one-time code from the other Mac.", placeholder: "") else { return }
-            guard let key = ask("Peer SSH host key", "Paste the output of agents fleet id --host-key from that Mac, obtained through a trusted connection.", placeholder: "ssh-ed25519 …") else { return }
+            guard let code = ask("Pairing code", "Paste the one-time code from that Mac’s Invite a Mac. It works once and expires after 15 minutes.", placeholder: "") else { return }
+            guard let key = ask("Peer SSH host key", "Paste the host key from the same Invite a Mac window, copied through a trusted connection.", placeholder: "ssh-ed25519 …") else { return }
             runInTerminal("\"\(cliPath)\" fleet pair --to \(shellQuote(addr)) --code \(shellQuote(code)) --host-key \(shellQuote(key))")
         default:
             break
         }
+    }
+
+    /// Mints a one-time code and shows it with this Mac's host key: everything
+    /// the joining Mac asks for, with nothing left to look up in a terminal.
+    func fleetInvite() {
+        dismissPanel()
+        defer { returnToPanel() }
+        let minted = runCLI(["fleet", "invite"])
+        guard minted.status == 0,
+              let invite = FleetInvite(inviteOutput: minted.output,
+                                       hostKeyOutput: runCLI(["fleet", "id", "--host-key"]).output) else {
+            alert("Couldn't create an invite", minted.output)
+            return
+        }
+        let sheet = NSAlert()
+        sheet.messageText = "Invite a Mac"
+        sheet.informativeText = "On the new Mac, open Settings › Fleet and choose Join. Over Tailscale needs only the host key; over SSH needs the code too. Approve the request here once it arrives."
+        let details = NSHostingView(rootView: FleetInviteDetails(invite: invite))
+        details.frame = NSRect(origin: .zero, size: NSSize(width: 360, height: details.fittingSize.height))
+        sheet.accessoryView = details
+        sheet.addButton(withTitle: "Done")
+        NSApp.activate(ignoringOtherApps: true)
+        sheet.runModal()
     }
 
     func fleetApprove(peer: String) {

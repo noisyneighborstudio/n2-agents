@@ -23,6 +23,7 @@ private enum FM {
 /// never spawns a process, the delegate does.
 protocol FleetActions: AnyObject {
     func fleetInit()
+    func fleetInvite()
     func fleetEnroll(transport: String)          // "tailscale" | "ssh"
     func fleetApprove(peer: String)
     func fleetDeny(peer: String)
@@ -62,7 +63,15 @@ struct FleetSettingsSection: View {
                         .textSelection(.enabled).padding(.horizontal, 13).padding(.bottom, 10)
                     Divider().padding(.leading, 13)
                     HStack {
-                        Label(String(localized: "Add a Mac", comment: "Settings › Fleet: pair another Mac"), systemImage: "desktopcomputer")
+                        Label(String(localized: "Invite a Mac", comment: "Settings › Fleet: bring another Mac into this fleet"), systemImage: "desktopcomputer")
+                        FleetEnrollHelp()
+                        Spacer()
+                        Button(String(localized: "Invite…", comment: "Settings › Fleet: show a pairing code and host key")) { actions.fleetInvite() }
+                    }
+                    .padding(.horizontal, 13).frame(height: 46)
+                    Divider().padding(.leading, 13)
+                    HStack {
+                        Label(String(localized: "Join a fleet", comment: "Settings › Fleet: this Mac joins another Mac's fleet"), systemImage: "arrow.right.circle")
                         Spacer()
                         Button(String(localized: "Over Tailscale…", comment: "Settings › Fleet: enroll")) { actions.fleetEnroll(transport: "tailscale") }
                         Button(String(localized: "Over SSH…", comment: "Settings › Fleet: pair")) { actions.fleetEnroll(transport: "ssh") }
@@ -131,10 +140,13 @@ struct FleetSettingsSection: View {
                 card {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("This Mac isn’t in a fleet yet.", comment: "Settings › Fleet: first run").font(.system(size: 13, weight: .medium))
-                        Text("Creating an identity generates a key for this Mac. Other Macs still have to be approved before they receive profiles or credentials.",
+                        Text("Creating an identity generates a key for this Mac. To join a fleet another Mac is already in, create one here, then choose Join a fleet.",
                              comment: "Settings › Fleet: first run")
                             .font(.system(size: 12)).foregroundStyle(Ink.secondary).fixedSize(horizontal: false, vertical: true)
-                        Button(String(localized: "Create Fleet Identity", comment: "Settings › Fleet: first run")) { actions.fleetInit() }
+                        HStack {
+                            Button(String(localized: "Create Fleet Identity", comment: "Settings › Fleet: first run")) { actions.fleetInit() }
+                            FleetEnrollHelp()
+                        }
                     }
                     .padding(13)
                 }
@@ -151,6 +163,79 @@ struct FleetSettingsSection: View {
     private func row(_ title: String, detail: String) -> some View {
         HStack { Text(verbatim: title); Spacer(); Text(verbatim: detail).foregroundStyle(Ink.secondary) }
             .font(.system(size: 13)).padding(.horizontal, 13).frame(height: 40)
+    }
+}
+
+/// The (?) beside enrollment: the whole flow, both Macs' sides, in one place.
+/// Every step names the button it uses, so nothing needs a terminal.
+struct FleetEnrollHelp: View {
+    @State private var shown = false
+
+    var body: some View {
+        Button { shown.toggle() } label: { Image(systemName: "questionmark.circle") }
+            .buttonStyle(.borderless)
+            .help(String(localized: "How to add a Mac", comment: "Settings › Fleet: enrollment help"))
+            .accessibilityLabel(String(localized: "How to add a Mac", comment: "Settings › Fleet: enrollment help"))
+            .popover(isPresented: $shown, arrowEdge: .bottom) { FleetEnrollSteps() }
+    }
+}
+
+struct FleetEnrollSteps: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Adding a Mac to the fleet", comment: "Enrollment help: title").font(.system(size: 13, weight: .semibold))
+            step(String(localized: "On the new Mac, create a fleet identity if it has none.", comment: "Enrollment help: step 1"), 1)
+            step(String(localized: "On a Mac already in the fleet, choose Invite… and keep the window open. It shows the host key and a one-time code.", comment: "Enrollment help: step 2"), 2)
+            step(String(localized: "On the new Mac, choose Join a fleet. Over Tailscale asks for the other Mac’s Tailscale name and its host key. Over SSH asks for user@host, the code and the host key.", comment: "Enrollment help: step 3"), 3)
+            step(String(localized: "Back on the fleet Mac, approve the request. First check that its fingerprint matches the one under This Mac on the new Mac.", comment: "Enrollment help: step 4"), 4)
+            Text("Nothing moves until step 4: approval is what sends profiles and credentials. A code works once and expires after 15 minutes.",
+                 comment: "Enrollment help: footer")
+                .font(.system(size: 11.5)).foregroundStyle(Ink.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16).frame(width: 340)
+    }
+
+    private func step(_ text: String, _ n: Int) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(verbatim: "\(n).").font(.system(size: 12, weight: .semibold)).monospacedDigit()
+            Text(verbatim: text).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+/// The invite window's body: each value on its own selectable line with a
+/// Copy beside it, because both are pasted on another Mac character for character.
+struct FleetInviteDetails: View {
+    let invite: FleetInvite
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let key = invite.hostKey {
+                field(String(localized: "Host key", comment: "Invite: ssh host key line"), key)
+            } else {
+                Text("This Mac has no SSH host key to share, so no Mac can pin it. Turn on Remote Login in System Settings › General › Sharing, then invite again.",
+                     comment: "Invite: no host key")
+                    .font(.system(size: 11.5)).foregroundStyle(Ink.amber).fixedSize(horizontal: false, vertical: true)
+            }
+            field(String(localized: "Code (SSH only)", comment: "Invite: one-time pairing code"), invite.code)
+        }
+        .frame(width: 360, alignment: .leading)
+    }
+
+    private func field(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(verbatim: title).font(.system(size: 11, weight: .medium)).foregroundStyle(Ink.secondary)
+                Spacer()
+                Button(String(localized: "Copy", comment: "Invite: copy a value")) {
+                    Clipboard.copy(value)
+                    Clipboard.announceCopied()
+                }
+                .controlSize(.small)
+            }
+            Text(verbatim: value).font(.system(size: 10.5, design: .monospaced)).textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 

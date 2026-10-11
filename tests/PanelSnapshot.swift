@@ -276,6 +276,7 @@ enum Fixture {
 
 final class NoActions: PanelActions, FleetActions {
     func fleetInit() {}
+    func fleetInvite() {}
     func fleetEnroll(transport: String) {}
     func fleetApprove(peer: String) {}
     func fleetDeny(peer: String) {}
