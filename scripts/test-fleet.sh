@@ -1704,8 +1704,8 @@ check "negative: a revoked id is not re-adopted" "revoked" "$(raw fb "fleet_peer
 
 # --- 41. a Claude token is shared with the same account ---------------------
 mark "41. a Claude token is shared with the same account"
-# ca saves a long-lived token for Work. cb holds Work with the same sign-in
-# (email in another case), cc with another member of the same organization.
+# ca saves a long-lived token for Work. cb holds Work and Default with the
+# same sign-in (email in another case), cc another member of the organization.
 # The token rides the private carrier, so every hop is a real ssh login.
 # Seam: organization() is the only network call. Python loads sitecustomize
 # from PYTHONPATH at startup, so this section's peers run with one that
@@ -1723,8 +1723,9 @@ else
     N2_FLEET_AGENTS="$repo/agents" "$repo/agents" "$@"; }
   ctread() { /usr/bin/python3 -c 'import json,sys
 try: print(json.load(open(sys.argv[1]))["env"]["CLAUDE_CODE_OAUTH_TOKEN"])
-except (OSError, KeyError): print("none")' "$base/$1/.n2-agents/Work/claude/settings.json"; }
-  cttoken() { printf 'sk-ant-oat01-%sAA' "$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 93)"; }
+except (OSError, KeyError): print("none")' "$base/$1/.n2-agents/${2:-Work}/claude/settings.json"; }
+  # A bounded read: `tr </dev/urandom | head` never ends where SIGPIPE is ignored.
+  cttoken() { printf 'sk-ant-oat01-%sAA' "$(od -An -N64 -tx1 /dev/urandom | tr -d ' \n' | cut -c1-93)"; }
   ctknown() { printf '%s %s\n' "$(printf '%s' "$1" | shasum -a 256 | cut -d' ' -f1)" "$ctorg" >> "$ctapi/orgs"; }
   cat > "$ctapi/sitecustomize.py" <<'PY'
 import hashlib, json, os, sys, urllib.error, urllib.request
@@ -1768,6 +1769,8 @@ EOF
     printf '{"profileId":"%s","schemaVersion":1}\n' "$ctpid" > "$s/.n2-profile"
     printf '{"oauthAccount": {"emailAddress": "%s", "organizationUuid": "%s"}}' "${pair#*:}" "$ctorg" > "$s/claude/.claude.json"
   done
+  # Default has no profile id; the account alone decides.
+  mkdir -p "$base/cb/.n2-agents/Default/claude"; cp "$base/cb/.n2-agents/Work/claude/.claude.json" "$base/cb/.n2-agents/Default/claude/"
   cat "$base"/ca/.n2-agents/fleet/identity/id_ed25519.pub "$base"/cb/.n2-agents/fleet/identity/id_ed25519.pub \
     "$base"/cc/.n2-agents/fleet/identity/id_ed25519.pub > "$ctd/authorized_keys"
   ssh-keygen -q -t ed25519 -N '' -C ct-host -f "$ctd/hk" </dev/null
@@ -1815,6 +1818,8 @@ EOF
     check "claude-token: another member of the organization is skipped" "told	$CC	ok	skipped other-account" "$out"
     if [ "$(ctread cb)" = "$T" ]; then ok "claude-token: cb holds the identical token"
     else bad "claude-token: cb holds the identical token" "cb has $(ctread cb | cut -c1-16)…"; fi
+    if [ "$(ctread cb Default)" = "$T" ]; then ok "claude-token: cb's Default, same account, holds it too"
+    else bad "claude-token: cb's Default, same account, holds it too" "cb Default has $(ctread cb Default | cut -c1-16)…"; fi
     check "claude-token: cc holds no token" "none" "$(ctread cc)"
     out=$(ctpeer cc fleet claude-token pull Work 2>&1); rc=$?
     denied "claude-token: another member cannot pull it" "$out" "$rc"
@@ -1856,7 +1861,8 @@ EOF
     # events, journals, temp files, logs or any process's arguments.
     for t in "$T" "$T2"; do
       found=$(grep -rlF "$t" "$base/ca" "$base/cb" "$base/cc" "$cttmp" "$ctapi" "$base/ct-claude-calls" 2>/dev/null |
-        grep -vx "$base/ca/.n2-agents/Work/claude/settings.json" | grep -vx "$base/cb/.n2-agents/Work/claude/settings.json")
+        grep -vx "$base/ca/.n2-agents/Work/claude/settings.json" | grep -vx "$base/cb/.n2-agents/Work/claude/settings.json" |
+        grep -vx "$base/cb/.n2-agents/Default/claude/settings.json")
       if [ -z "$found" ]; then ok "claude-token: a token is stored only in the slots holding it"
       else bad "claude-token: a token is stored only in the slots holding it" "$found"; fi
     done

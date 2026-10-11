@@ -57,7 +57,6 @@ class ClaudeTokenShareTests(wire.TransportTests):
     def setUp(self):
         super().setUp()
         (self.bin / 'ssh').write_text(SSH)
-        self.profile_id = str(uuid.uuid4())
         self.token = token()
         self.orgs({self.token: ORG})
         self.owner_slot = self.slot('owner', 'seth@example.com')
@@ -67,10 +66,11 @@ class ClaudeTokenShareTests(wire.TransportTests):
     def orgs(self, mapping):
         (self.base / 'orgs.json').write_text(json.dumps({hashlib.sha256(t.encode()).hexdigest(): o for t, o in mapping.items()}))
 
-    def slot(self, name, email, org=ORG):
-        profile = self.base / name / 'Work'
+    def slot(self, name, email, org=ORG, profile='Work'):
+        profile = self.base / name / profile
         (profile / 'claude').mkdir(parents=True, exist_ok=True)
-        (profile / '.n2-profile').write_text(json.dumps({'schemaVersion': 1, 'profileId': self.profile_id}))
+        if profile.name != 'Default':
+            (profile / '.n2-profile').write_text(json.dumps({'schemaVersion': 1, 'profileId': str(uuid.uuid4())}))
         (profile / 'claude/.claude.json').write_text(json.dumps({'oauthAccount': {'emailAddress': email, 'organizationUuid': org}}))
         return profile / 'claude'
 
@@ -88,6 +88,14 @@ class ClaudeTokenShareTests(wire.TransportTests):
         for path in self.base.rglob('*'):
             if path.is_file() and path not in allowed:
                 self.assertNotIn(self.token.encode(), path.read_bytes(), str(path))
+
+    def test_every_slot_of_the_account_gets_it_whatever_its_name(self):
+        default = self.slot('client', 'seth@example.com', profile='Default')
+        other = self.slot('client', 'someone-else@example.com', profile='Other')
+        self.pull()
+        self.assertEqual(share.claude.read(self.client_slot), self.token)
+        self.assertEqual(share.claude.read(default), self.token)
+        self.assertIsNone(share.claude.read(other))
 
     def test_other_member_of_the_organization_gets_nothing(self):
         self.slot('client', 'someone-else@example.com')
@@ -123,7 +131,7 @@ class ClaudeTokenShareTests(wire.TransportTests):
 
     def request_context(self, **change):
         value = {'schemaVersion': 1, 'owner': self.identities['owner'], 'recipient': self.identities['client'],
-                 'nonce': secrets.token_hex(32), 'expiresAt': time.time() + 20, 'profileId': self.profile_id,
+                 'nonce': secrets.token_hex(32), 'expiresAt': time.time() + 20,
                  'accountHash': share.account_hash(self.client_slot)}
         value.update(change)
         return value
@@ -154,13 +162,11 @@ class ClaudeTokenShareTests(wire.TransportTests):
         self.slot('client', 'someone-else@example.com')
         self.assertEqual(run(), 'skipped other-account')
         (self.client_slot / '.claude.json').unlink()
-        self.assertEqual(run(), 'skipped not-signed-in')
+        self.assertEqual(run(), 'skipped other-account')
         self.assertFalse((self.base / 'dialed').exists())
         self.slot('client', 'SETH@example.com')
         self.assertEqual(run(), 'saved')
         self.assertEqual(share.claude.read(self.client_slot), self.token)
-        (self.base / 'client/Work/.n2-profile').write_text(json.dumps({'schemaVersion': 1, 'profileId': str(uuid.uuid4())}))
-        self.assertEqual(run(), 'skipped no-profile')
 
     def test_serve_needs_the_encrypted_carrier_and_send_cannot_carry_it(self):
         request = self.base / 'request'; request.write_bytes(share.codec.canonical(self.request_context()))

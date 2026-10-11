@@ -618,19 +618,19 @@ What this means for the fleet:
   passes its env to every child. Sync treats a `settings.json` holding the token
   like `auth.json`: it moves only with the auth opt-in.
 * Shared fleet-wide, same account to same account only (`fleet-claude-token.py`).
-  Same account means the same profile id and a cached sign-in whose email
-  (case-insensitive) and organization both match; a team organization has
-  many members, so organization alone is not enough. A slot with no cached
-  sign-in never receives a token. After a Mac saves a token, it sends approved
-  peers a public `claude-token-notice` (profile id and an account hash, no
-  token), and each peer holding that account pulls the token with
-  `claude-token`. Before `setup-token`, `agents login` asks approved peers for
+  Same account means a cached sign-in whose email (case-insensitive) and
+  organization both match, whatever the profile is called or its id; a team
+  organization has many members, so organization alone is not enough. A slot
+  with no cached sign-in never receives a token. After a Mac saves a token, it
+  sends approved peers a public `claude-token-notice` (an account hash, no
+  token), and each peer with a slot signed in to that account pulls the token
+  with `claude-token` and saves it in every such slot. Before `setup-token`, `agents login` asks approved peers for
   a same-account token and skips `setup-token` if one verifies. `agents fleet
   claude-token pull|push <Profile>` runs either step by hand. The pull rides
   the private carrier of `fleet-auth-transport.py` (pinned ssh only, never
   `fleet send`, a fresh nonce, owner and recipient bound, 20 second expiry, one
   accepted reply, signed in its own namespace). The owner answers only an
-  approved requester whose claimed account matches its slot, after a token
+  approved requester whose claimed account matches one of its slots, after a token
   count shows the token's organization still matches its sign-in; the
   receiver repeats that check before writing. The token is never in a request,
   notice, event, temp file or argument. Unreachable peers are named and

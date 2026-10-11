@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Share a Claude slot's long-lived token with the same account on approved peers.
 
-Same account means the same profile id, and a cached sign-in whose email and
-organization both match: a team organization has many members. Requests and
-replies ride fleet-auth-transport, the private carrier built for Codex owner
+Same account means a cached sign-in whose email and organization both match,
+whatever the profile is called: a team organization has many members.
+Requests and replies ride fleet-auth-transport, the private carrier built for Codex owner
 tokens: pinned ssh only, a fresh nonce, exact owner and recipient binding, a
 short expiry and one accepted reply. The token exists only in memory and in
 each slot's settings.json. Nothing here prints it.
@@ -36,7 +36,8 @@ claude = load('n2_claude_share_token', 'claude-token.py')
 metadata = load('n2_claude_share_metadata', 'profile-metadata.py')
 codec = transport.codec
 NAMESPACE = 'n2-agents-claude-token-v1'
-FIELDS = {'schemaVersion', 'owner', 'recipient', 'nonce', 'expiresAt', 'profileId', 'accountHash'}
+FIELDS = {'schemaVersion', 'owner', 'recipient', 'nonce', 'expiresAt', 'accountHash'}
+NO_GRANT = '00000000-0000-0000-0000-000000000000'
 MAX_BYTES = 8192
 
 
@@ -53,13 +54,14 @@ def account_hash(cfg):
     return hashlib.sha256(f'n2-claude-account-v1\0{email.lower()}\0{org}'.encode()).hexdigest()
 
 
-def profile(root, name=None, profile_id=None):
-    """(name, id, Claude slot) of a fleet profile. Default is machine-local."""
+def slots(root, account):
+    """Every Claude slot on this Mac signed in to `account`."""
+    found = []
     for row in metadata.report(root, None)['profiles']:
-        if row['scope'] == 'fleet' and row['metadataStatus'] == 'ready' and (
-                row['name'] == name or row['profileId'] == profile_id):
-            return row['name'], row['profileId'], Path(root) / row['name'] / 'claude'
-    raise ValueError('profile has no fleet identity')
+        cfg = Path(root) / row['name'] / 'claude'
+        if cfg.is_dir() and account_hash(cfg) == account:
+            found.append(cfg)
+    return found
 
 
 def identity(root):
@@ -67,10 +69,9 @@ def identity(root):
 
 
 def validate_context(context):
-    if not isinstance(context, dict) or set(context) != FIELDS or not codec.valid_uuid(context['profileId']):
+    if not isinstance(context, dict) or set(context) != FIELDS:
         raise ValueError('invalid claude token request')
-    shared = {key: context[key] for key in FIELDS - {'profileId'}}
-    codec.validate_context(dict(shared, grantId=context['profileId'], ownershipGeneration=context['profileId'],
+    codec.validate_context(dict(context, grantId=NO_GRANT, ownershipGeneration=NO_GRANT,
                                 rejectedTokenGeneration=None), time.time())
 
 
@@ -136,58 +137,58 @@ def serve(root, sender, request):
     if context['owner'] != identity(root) or context['recipient'] != sender:
         raise ValueError('wrong endpoint binding')
     server.approved(root, sender)
-    _, _, cfg = profile(root, profile_id=context['profileId'])
-    token = claude.read(cfg)
-    if not token or account_hash(cfg) != context['accountHash']:
-        raise ValueError('no token for that account')
-    if claude.organization(token) != claude.login_organization(cfg):
-        raise ValueError('token belongs to another organization')
+    for cfg in slots(root, context['accountHash']):
+        token = claude.read(cfg)
+        if token and claude.organization(token) == claude.login_organization(cfg):
+            break
+    else:
+        raise ValueError('no working token for that account')
     reply = sign(context, token, root / 'fleet/identity/id_ed25519', time.monotonic() + min(9, context['expiresAt'] - time.time()))
     server.approved(root, sender)
     return reply
 
 
 def pull(root, name, peer):
-    """Fetch, re-check and save the token `peer` holds for this slot's account."""
-    root = Path(root).resolve(strict=True)
-    _, profile_id, cfg = profile(root, name=name)
-    account = account_hash(cfg)
+    """Save the token `peer` holds for this slot's account."""
+    account = account_hash(Path(root) / name / 'claude')
     if account is None:
         raise ValueError('this slot has no cached sign-in')
+    fetch(root, peer, account)
+
+
+def fetch(root, peer, account):
+    """Fetch the token `peer` holds for `account`, re-check it, and save it in
+    every slot here signed in to that account."""
+    root = Path(root).resolve(strict=True)
     slug = peer.replace('/', '_').replace('+', '_').replace(':', '_')
     key = transport.bounded_file(root / 'fleet/peers' / slug / 'key.pub', 1024)
     context = {'schemaVersion': 1, 'owner': peer, 'recipient': identity(root), 'nonce': secrets.token_hex(32),
-               'expiresAt': time.time() + 20, 'profileId': profile_id, 'accountHash': account}
+               'expiresAt': time.time() + 20, 'accountHash': account}
     token = transport.exchange(root, context, key, time.monotonic() + 20, protocol='claude')
-    if claude.organization(token) != claude.login_organization(cfg) or account_hash(cfg) != account:
+    targets = slots(root, account)  # after the exchange, so a sign-in that changed meanwhile is skipped
+    if not targets or claude.organization(token) != claude.login_organization(targets[0]):
         raise ValueError('the shared token belongs to another account')
-    claude.write(cfg, token)
+    for cfg in targets:
+        claude.write(cfg, token)
 
 
 def announce(root, name):
     """The public notice for a token this Mac just saved."""
-    _, profile_id, cfg = profile(root, name=name)
+    cfg = Path(root) / name / 'claude'
     account = account_hash(cfg)
     if not claude.read(cfg) or account is None:
         raise ValueError('this slot has no token to share')
-    return codec.canonical({'profileId': profile_id, 'accountHash': account})
+    return codec.canonical({'accountHash': account})
 
 
 def notice(root, sender, payload):
-    """A peer saved a token. Pull it when this Mac holds that profile with the same account."""
+    """A peer saved a token. Pull it when a slot here is signed in to that account."""
     value = codec.decode_json(transport.bounded_file(payload, 1024))
-    if not isinstance(value, dict) or set(value) != {'profileId', 'accountHash'}:
+    if not isinstance(value, dict) or set(value) != {'accountHash'} or not isinstance(value['accountHash'], str):
         raise ValueError('invalid notice')
-    try:
-        name, _, cfg = profile(root, profile_id=value['profileId'])
-    except ValueError:
-        return 'skipped no-profile'
-    account = account_hash(cfg)
-    if account is None:
-        return 'skipped not-signed-in'
-    if account != value['accountHash']:
+    if not slots(root, value['accountHash']):
         return 'skipped other-account'
-    pull(root, name, sender)
+    fetch(root, sender, value['accountHash'])
     return 'saved'
 
 
