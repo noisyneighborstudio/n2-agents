@@ -56,13 +56,22 @@ FAKE
 # `security` that finds nothing keeps tests off real logins (and the network).
 cat > "$fake_bin/security" <<'FAKE'
 #!/bin/sh
-case "$*" in *cursor-access-token*) [ -n "${FAKE_CURSOR_TOKEN:-}" ] && { echo "$FAKE_CURSOR_TOKEN"; exit 0; } ;; esac
 if [ "$*" = 'find-generic-password -s ai.meta.dev.credentials -a meta' ]; then
   [ "${FAKE_MUSE_KEYCHAIN:-}" = 1 ] && exit 0
 fi
 exit 44
 FAKE
 chmod +x "$fake_bin/security"
+# Muse's and Cursor's logins are read through the app; this stands in for it.
+cat > "$fake_bin/keychain-reader" <<'FAKE'
+#!/bin/sh
+if [ "$*" = 'keychain-read cursor-access-token cursor-user' ] && [ -n "${FAKE_CURSOR_TOKEN:-}" ]; then
+  echo "$FAKE_CURSOR_TOKEN"; exit 0
+fi
+exit 44
+FAKE
+chmod +x "$fake_bin/keychain-reader"
+export N2_KEYCHAIN_READER="$fake_bin/keychain-reader"
 fake_path="$fake_bin:/usr/bin:/bin"
 home="$test_root/home"
 mkdir -p "$home"

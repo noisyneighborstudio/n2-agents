@@ -153,6 +153,11 @@ Cursor is the same account, so its usage (a monthly billing cycle, tagged "mo")
 shows once, on Default; other profiles' Cursor rows say "shared login" and
 share Default's room in rotation.
 
+To read usage from those two keychain logins, the app asks macOS once:
+"N2 Agents wants to use your confidential information". Choose **Always
+Allow** and it won't ask again, updates included. Muse and Cursor keep working
+either way.
+
 To check every account from scratch, open **Settings → Accounts → Sign Out of
 All Accounts and Set Up Again**. The app signs out the listed accounts,
 including Default, then the original setup window opens for each profile.
