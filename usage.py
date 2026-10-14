@@ -473,13 +473,20 @@ def grok_row(r):
         .strftime('%Y-%m-%dT%H:%M') if end else '-'
     return '-', c.get('creditUsagePercent', '-'), '-', reset
 
+# The app reads other labs' keychain logins for the CLI (keychain-read in
+# tray/main.swift). Beside a checkout there is no app, so no reader.
+KEYCHAIN_READER = os.environ.get('N2_KEYCHAIN_READER') or os.path.join(
+    os.path.dirname(os.path.realpath(__file__)), '..', 'MacOS', 'N2 Agents')
+
 def credential_store(service, account):
+    # The first read raises a keychain dialog. Killing the read while it's open
+    # turns "Always Allow" into a no-op, so wait for a person to answer it.
     try:
-        result = subprocess.run(['security', 'find-generic-password', '-s', service,
-                                 '-a', account, '-w'], capture_output=True, text=True, timeout=5)
+        result = subprocess.run([KEYCHAIN_READER, 'keychain-read', service, account],
+                                capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.TimeoutExpired):
         return 'credential-store-unavailable', ''
-    # security can collapse earlier search failures into item-not-found (44).
+    # A denied or failed search can look like item-not-found (44).
     # No nonzero exit establishes that the user is signed out.
     if result.returncode != 0:
         return 'credential-store-unavailable', ''

@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import Security
 import SwiftUI
 import UserNotifications
 #if canImport(Sparkle)
@@ -1343,6 +1344,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UpdaterDelegateProtoco
         NSApp.activate(ignoringOtherApps: true)
         alert.runModal()
     }
+}
+
+// `N2 Agents keychain-read <service> <account>` prints a login another lab's
+// signed app keeps in the keychain (Muse, Cursor), for the CLI's usage reads.
+// Asked by `security`, "Always Allow" never stuck; asked by this app, it's
+// granted once to N2's signature, across updates, and to nothing else.
+if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "keychain-read" {
+    var item: CFTypeRef?
+    let status = SecItemCopyMatching([
+        kSecClass: kSecClassGenericPassword, kSecAttrService: CommandLine.arguments[2],
+        kSecAttrAccount: CommandLine.arguments[3], kSecReturnData: true, kSecMatchLimit: kSecMatchLimitOne,
+    ] as CFDictionary, &item)
+    if status == errSecSuccess, let data = item as? Data {
+        FileHandle.standardOutput.write(data)
+        exit(0)
+    }
+    exit(status == errSecItemNotFound ? 44 : 1)
 }
 
 let app = NSApplication.shared

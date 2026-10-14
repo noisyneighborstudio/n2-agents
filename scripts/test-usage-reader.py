@@ -492,7 +492,10 @@ class ReaderTests(unittest.TestCase):
                     status, request = getattr(u, vendor)('Default', cfg)
                 self.assertEqual(status, 'ok')
                 self.assertEqual(request.get_header('Authorization'), 'Bearer '+token)
-                self.assertEqual(run.call_args.kwargs['timeout'], 5)
+                self.assertEqual(run.call_args.args[0][1:], ['keychain-read', *{
+                    'cursor': ['cursor-access-token', 'cursor-user'],
+                    'muse': ['ai.meta.dev.credentials', 'meta']}[vendor]])
+                self.assertEqual(run.call_args.kwargs['timeout'], 120)
 
     def test_locked_keychain_is_not_logged_out(self):
         with patch.dict(os.environ, {}, clear=True), patch.object(u.subprocess, 'run',
